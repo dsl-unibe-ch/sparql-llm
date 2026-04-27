@@ -16,26 +16,28 @@ def plot_hyperparameter_tuning_results(
     proportion_results: pd.DataFrame,
     embeddings_results: pd.DataFrame,
     examples_results: pd.DataFrame,
+    triple_patterns_results: pd.DataFrame,
+    model_results: pd.DataFrame,
     ablation_results: pd.DataFrame,
     baseline_results: pd.DataFrame,
-    model_results: pd.DataFrame,
     save_plot: bool = False,
 ) -> None:
     """Plot the hyperparameter tuning results for TEXT2SPARQL"""
 
-    sns.set_theme(context="paper", style="white", color_codes=True, font_scale=3)
-    fig = plt.figure(figsize=(20, 20))
-    gs = GridSpec(3, 4, figure=fig)
+    sns.set_theme(context="paper", style="white", color_codes=True, font_scale=1.5)
+    fig = plt.figure(figsize=(20, 10))
+    gs = GridSpec(2, 3, figure=fig)
 
     ax = [
-        fig.add_subplot(gs[0, 0:2]),
-        fig.add_subplot(gs[0, 2:4]),
-        fig.add_subplot(gs[1, 0:2]),
-        fig.add_subplot(gs[1, 2:4]),
-        fig.add_subplot(gs[2, 1:3]),
+        fig.add_subplot(gs[0, 0:1]),
+        fig.add_subplot(gs[0, 1:2]),
+        fig.add_subplot(gs[0, 2:3]),
+        fig.add_subplot(gs[1, 0:1]),
+        fig.add_subplot(gs[1, 1:2]),
+        fig.add_subplot(gs[1, 2:3]),
     ]
 
-    plt.subplots_adjust(hspace=0.5, wspace=3)
+    plt.subplots_adjust(hspace=0.4, wspace=0.7)
 
     # First subplot - proportion tuning
     sns.lineplot(
@@ -95,7 +97,27 @@ def plot_hyperparameter_tuning_results(
     ax[2].set_yticks([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7], [".1", ".2", ".3", ".4", ".5", ".6", ".7"])
     ax[2].get_legend().remove()
 
-    # Fourth subplot - model selection
+    # Fourth subplot - examples tuning
+    sns.lineplot(
+        data=triple_patterns_results,
+        x="triple_patterns",
+        y="F1 Score",
+        hue="dataset",
+        hue_order=["DBpedia (EN)", "DBpedia (ES)", "Corporate"],
+        linewidth=5,
+        palette=sns.color_palette("Set2")[:3],
+        ax=ax[3],
+    )
+
+    ax[3].set_title("(iv) Triple Patterns of Provided Examples", fontweight="bold", y=1.05)
+    ax[3].set_xlim(0, 3)
+    ax[3].set_xticks([0, 1, 2, 3], ["0", "≤\u20091", "≤\u20092", "∞"])
+    ax[3].set_xlabel("")
+    ax[3].set_ylim(0, 0.75)
+    ax[3].set_yticks([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7], [".1", ".2", ".3", ".4", ".5", ".6", ".7"])
+    ax[3].get_legend().remove()
+
+    # Fifth subplot - model selection
     sns.barplot(
         data=model_results,
         x="F1 Score",
@@ -104,16 +126,16 @@ def plot_hyperparameter_tuning_results(
         orient="h",
         hue_order=["DBpedia (EN)", "DBpedia (ES)", "Corporate"],
         palette=sns.color_palette("Set2")[:3],
-        ax=ax[3],
+        ax=ax[4],
     )
 
-    ax[3].set_title("(iv) Large Language Model", fontweight="bold", y=1.05)
-    ax[3].set_xlim(0, 0.7)
-    ax[3].set_xticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7], ["0", ".1", ".2", ".3", ".4", ".5", ".6", ".7"])
-    ax[3].set_ylabel("")
-    ax[3].get_legend().remove()
+    ax[4].set_title("(v) Large Language Model", fontweight="bold", y=1.05)
+    ax[4].set_xlim(0, 0.7)
+    ax[4].set_xticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7], ["0", ".1", ".2", ".3", ".4", ".5", ".6", ".7"])
+    ax[4].set_ylabel("")
+    ax[4].get_legend().remove()
 
-    # Fifth subplot - ablation study
+    # Sixth subplot - ablation study
     sns.barplot(
         data=ablation_results,
         x="F1 Score",
@@ -122,40 +144,40 @@ def plot_hyperparameter_tuning_results(
         orient="h",
         hue_order=["DBpedia (EN)", "DBpedia (ES)", "Corporate"],
         palette=sns.color_palette("Set2")[:3],
-        ax=ax[4],
+        ax=ax[5],
     )
 
-    ax[4].axvline(
+    ax[5].axvline(
         baseline_results[baseline_results["dataset"] == "DBpedia (EN)"]["F1 Score"].mean(),
         color=sns.color_palette("Set2")[0],
         linestyle="--",
         linewidth=5,
     )
-    ax[4].axvline(
+    ax[5].axvline(
         baseline_results[baseline_results["dataset"] == "DBpedia (ES)"]["F1 Score"].mean(),
         color=sns.color_palette("Set2")[1],
         linestyle="--",
         linewidth=5,
     )
-    ax[4].axvline(
+    ax[5].axvline(
         baseline_results[baseline_results["dataset"] == "Corporate"]["F1 Score"].mean(),
         color=sns.color_palette("Set2")[2],
         linestyle="--",
         linewidth=5,
     )
 
-    ax[4].set_title("(v) Ablation Study", fontweight="bold", y=1.05)
-    ax[4].set_xlim(0, 0.7)
-    ax[4].set_xticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7], ["0", ".1", ".2", ".3", ".4", ".5", ".6", ".7"])
-    ax[4].set_ylabel("")
-    ax[4].get_legend().remove()
+    ax[5].set_title("(vi) Ablation Study", fontweight="bold", y=1.05)
+    ax[5].set_xlim(0, 0.7)
+    ax[5].set_xticks([0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7], ["0", ".1", ".2", ".3", ".4", ".5", ".6", ".7"])
+    ax[5].set_ylabel("")
+    ax[5].get_legend().remove()
 
     fig.legend(
         *ax[1].get_legend_handles_labels(),
-        bbox_to_anchor=(0.5, 1),
+        bbox_to_anchor=(0.5, 1.02),
         loc="upper center",
         ncol=3,
-        title="TEXT2SPARQL Corpus",
+        title="TEXT2SPARQL 2025 Corpus",
     )
     sns.despine(top=True, right=True)
 
@@ -194,7 +216,7 @@ def plot_overall_results(overall_results: pd.DataFrame, sota_results: pd.DataFra
         color=sns.color_palette("Set1")[3],
         linestyle="--",
         linewidth=9,
-        label="TEXT2SPARQL Winners",
+        label="TEXT2SPARQL 2025 Winners",
     )
     ax.axvline(
         sota_results[sota_results["dataset"] == "DBpedia (ES)"]["F1 Score"].iloc[0],
@@ -283,7 +305,7 @@ def plot_cost_analysis_results(
         color=sns.color_palette("Set1")[3],
         linestyle="--",
         linewidth=9,
-        label="TEXT2SPARQL Winners",
+        label="TEXT2SPARQL 2025 Winners",
     )
     ax[0].axvline(
         sota_time_results[sota_time_results["dataset"] == "Corporate"]["time"].iloc[0],
@@ -534,6 +556,47 @@ if __name__ == "__main__":
             {"examples": 20, "dataset": "Corporate", "F1 Score": 0.3172732269160719},
             {"examples": 20, "dataset": "Corporate", "F1 Score": 0.31406279363728284},
             {"examples": 20, "dataset": "Corporate", "F1 Score": 0.2903667217004962},
+        ]
+    )
+
+    triple_patterns_results = pd.DataFrame(
+        [
+            {"triple_patterns": 0, "dataset": "DBpedia (EN)", "F1 Score": 0.2669183689242966},
+            {"triple_patterns": 0, "dataset": "DBpedia (EN)", "F1 Score": 0.2648311874783169},
+            {"triple_patterns": 0, "dataset": "DBpedia (EN)", "F1 Score": 0.25614395814988583},
+            {"triple_patterns": 1, "dataset": "DBpedia (EN)", "F1 Score": 0.5614233757996576},
+            {"triple_patterns": 1, "dataset": "DBpedia (EN)", "F1 Score": 0.554608840000016},
+            {"triple_patterns": 1, "dataset": "DBpedia (EN)", "F1 Score": 0.6093642673362183},
+            {"triple_patterns": 2, "dataset": "DBpedia (EN)", "F1 Score": 0.6199564120256347},
+            {"triple_patterns": 2, "dataset": "DBpedia (EN)", "F1 Score": 0.640159126881995},
+            {"triple_patterns": 2, "dataset": "DBpedia (EN)", "F1 Score": 0.6295966685729889},
+            {"triple_patterns": 3, "dataset": "DBpedia (EN)", "F1 Score": 0.5687752461961733},
+            {"triple_patterns": 3, "dataset": "DBpedia (EN)", "F1 Score": 0.5922204789182033},
+            {"triple_patterns": 3, "dataset": "DBpedia (EN)", "F1 Score": 0.5704949816495726},
+            {"triple_patterns": 0, "dataset": "DBpedia (ES)", "F1 Score": 0.23942766903879126},
+            {"triple_patterns": 0, "dataset": "DBpedia (ES)", "F1 Score": 0.22342740782734746},
+            {"triple_patterns": 0, "dataset": "DBpedia (ES)", "F1 Score": 0.24673908560233304},
+            {"triple_patterns": 1, "dataset": "DBpedia (ES)", "F1 Score": 0.5424241293270194},
+            {"triple_patterns": 1, "dataset": "DBpedia (ES)", "F1 Score": 0.5500482979753085},
+            {"triple_patterns": 1, "dataset": "DBpedia (ES)", "F1 Score": 0.5661079897716089},
+            {"triple_patterns": 2, "dataset": "DBpedia (ES)", "F1 Score": 0.5991270881333546},
+            {"triple_patterns": 2, "dataset": "DBpedia (ES)", "F1 Score": 0.599206520082045},
+            {"triple_patterns": 2, "dataset": "DBpedia (ES)", "F1 Score": 0.6311623118397751},
+            {"triple_patterns": 3, "dataset": "DBpedia (ES)", "F1 Score": 0.5705790029500079},
+            {"triple_patterns": 3, "dataset": "DBpedia (ES)", "F1 Score": 0.5723625811112105},
+            {"triple_patterns": 3, "dataset": "DBpedia (ES)", "F1 Score": 0.589287526153517},
+            {"triple_patterns": 0, "dataset": "Corporate", "F1 Score": 0.26983264166750176},
+            {"triple_patterns": 0, "dataset": "Corporate", "F1 Score": 0.2912720356068957},
+            {"triple_patterns": 0, "dataset": "Corporate", "F1 Score": 0.30635243887382946},
+            {"triple_patterns": 1, "dataset": "Corporate", "F1 Score": 0.4646748221108715},
+            {"triple_patterns": 1, "dataset": "Corporate", "F1 Score": 0.45315054886821216},
+            {"triple_patterns": 1, "dataset": "Corporate", "F1 Score": 0.4671796595565088},
+            {"triple_patterns": 2, "dataset": "Corporate", "F1 Score": 0.48568548676341455},
+            {"triple_patterns": 2, "dataset": "Corporate", "F1 Score": 0.45679005961153096},
+            {"triple_patterns": 2, "dataset": "Corporate", "F1 Score": 0.47888274362340355},
+            {"triple_patterns": 3, "dataset": "Corporate", "F1 Score": 0.3066348402080552},
+            {"triple_patterns": 3, "dataset": "Corporate", "F1 Score": 0.3013348198566775},
+            {"triple_patterns": 3, "dataset": "Corporate", "F1 Score": 0.28722810388426323},
         ]
     )
 
@@ -3026,7 +3089,7 @@ if __name__ == "__main__":
                     ),
                 )
                 .iloc[::2]["time"]
-                .apply(lambda x: pd.to_datetime(x))
+                .apply(pd.to_datetime)
                 .diff()
                 .dt.total_seconds()
                 .median(),
@@ -3039,7 +3102,7 @@ if __name__ == "__main__":
                         os.path.join("data", "benchmarks", "TEXT2SPARQL", "queries", "infai_ck25_responses.db")
                     ),
                 )["time"]
-                .apply(lambda x: pd.to_datetime(x))
+                .apply(pd.to_datetime)
                 .diff()
                 .dt.total_seconds()
                 .median(),
@@ -3083,9 +3146,10 @@ if __name__ == "__main__":
         proportion_results=proportion_results,
         embeddings_results=embeddings_results,
         examples_results=examples_results,
+        triple_patterns_results=triple_patterns_results,
+        model_results=model_results,
         ablation_results=ablation_results,
         baseline_results=baseline_results,
-        model_results=model_results,
         save_plot=False,
     )
 
