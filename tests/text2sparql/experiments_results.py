@@ -1,5 +1,4 @@
 import os
-import sqlite3
 import time
 
 import matplotlib.pyplot as plt
@@ -3082,30 +3081,32 @@ if __name__ == "__main__":
         [
             {
                 "dataset": "DBpedia (EN)",
-                "time": pd.read_sql_query(
-                    "SELECT * from responses",
-                    sqlite3.connect(
-                        os.path.join("data", "benchmarks", "TEXT2SPARQL", "queries", "infai_db25_responses.db")
-                    ),
-                )
-                .iloc[::2]["time"]
-                .apply(pd.to_datetime)
-                .diff()
-                .dt.total_seconds()
-                .median(),
+                "time": 51.44,
+                # pd.read_sql_query(
+                #     "SELECT * from responses",
+                #     sqlite3.connect(
+                #         os.path.join("data", "benchmarks", "TEXT2SPARQL", "queries", "infai_db25_responses.db")
+                #     ),
+                # )
+                # .iloc[::2]["time"]
+                # .apply(pd.to_datetime)
+                # .diff()
+                # .dt.total_seconds()
+                # .median(),
             },
             {
                 "dataset": "Corporate",
-                "time": pd.read_sql_query(
-                    "SELECT * from responses",
-                    sqlite3.connect(
-                        os.path.join("data", "benchmarks", "TEXT2SPARQL", "queries", "infai_ck25_responses.db")
-                    ),
-                )["time"]
-                .apply(pd.to_datetime)
-                .diff()
-                .dt.total_seconds()
-                .median(),
+                "time": 59.62,
+                # pd.read_sql_query(
+                #     "SELECT * from responses",
+                #     sqlite3.connect(
+                #         os.path.join("data", "benchmarks", "TEXT2SPARQL", "queries", "infai_ck25_responses.db")
+                #     ),
+                # )["time"]
+                # .apply(pd.to_datetime)
+                # .diff()
+                # .dt.total_seconds()
+                # .median(),
             },
         ]
     )
