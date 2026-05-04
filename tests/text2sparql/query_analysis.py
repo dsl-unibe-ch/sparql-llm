@@ -116,9 +116,9 @@ def plot_triple_patterns(queries: pd.DataFrame):
 
 def plot_bio_triple_patterns(queries: pd.DataFrame):
     queries = queries.copy()
-    queries["dataset"] = queries.apply(
-        lambda q: q["dataset"] + " (Federated)" if q["federated"] else q["dataset"], axis=1
-    )
+    # queries["dataset"] = queries.apply(
+    #     lambda q: q["dataset"] + " (Federated)" if q["federated"] else q["dataset"], axis=1
+    # )
 
     sns.set_theme(context="paper", style="white", color_codes=True, font_scale=2.5)
 
@@ -128,16 +128,16 @@ def plot_bio_triple_patterns(queries: pd.DataFrame):
         hue="dataset",
         hue_order=[
             "Uniprot",
-            "Uniprot (Federated)",
+            # "Uniprot (Federated)",
             "Cellosaurus",
-            "Cellosaurus (Federated)",
+            # "Cellosaurus (Federated)",
             "Bgee",
-            "Bgee (Federated)",
+            # "Bgee (Federated)",
         ],
         linewidth=3,
         common_norm=False,
         clip=(0, 32),
-        palette=sns.color_palette("Paired")[:6],
+        palette=sns.color_palette("Set2")[:3],
     )
 
     ax.set_xlabel("Triple Patterns")
