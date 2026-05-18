@@ -12,13 +12,18 @@ Do not answer general knowledge or personal questions; only help with questions 
 
 EXTRACTION_PROMPT = (
     INTRODUCTION_PROMPT
-    + """Given a user question extract the following:
+    + """Extract the user's question into a JSON object with EXACTLY these fields (use these field names verbatim, do not paraphrase):
 
-- The intent of the question: either "access_resources" (query the knowledge graph to answer a factual question about Swiss elites), or "general_informations" (meta-questions about the dataset itself).
-- High-level concepts and potential RDF classes relevant to the question (e.g. `crm:E21 Person`, `crm:E67 Birth`, `sdh-slc:C11` Group).
-- Potential named entities the user mentioned (person names, organisation names, places, dates) — these may need to be resolved to `swel:` URIs.
-- Split the question into standalone smaller parts that will be used for semantic-search retrieval (if the question is already a single step, leave empty).
-- Be tolerant of French input — names of people, places, and organisations are commonly written in French.
+- "intent" (string): one of "access_resources" or "general_information".
+    * "access_resources" = the user wants to query the knowledge graph to answer a factual question about Swiss elites.
+    * "general_information" = the user is asking a meta-question about the dataset itself (size, coverage, what's modelled, etc).
+- "extracted_classes" (list of strings): potential RDF class names relevant to the question, in their prefixed form. Examples: "crm:E21" (Person), "crm:E67" (Birth), "sdh-slc:C11" (Group), "sdh-slc:C9" (Marriage). Empty list if no class is obvious.
+- "extracted_entities" (list of strings): named entities the user mentioned — person names, organisation names, places, dates. These may be resolved to swel: URIs downstream. Empty list if none.
+- "question_steps" (list of strings): the question decomposed into smaller standalone sub-questions for semantic retrieval. Empty list if the question is already a single step.
+
+Be tolerant of French input — names of people, places, and organisations are commonly written in French.
+
+Return ONLY the JSON object, with no surrounding prose and no markdown fences.
 """
 )
 # Split the question in standalone smaller parts that could be used to build the final query
