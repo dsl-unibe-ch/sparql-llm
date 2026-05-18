@@ -10,7 +10,12 @@ from qdrant_client import QdrantClient, models
 from qdrant_client.http.models import Distance, VectorParams
 from rdflib import RDF, Dataset, Namespace
 
-from sparql_llm import SparqlExamplesLoader, SparqlInfoLoader, SparqlVoidShapesLoader
+from sparql_llm import (
+    SparqlExamplesLoader,
+    SparqlExamplesMdLoader,
+    SparqlInfoLoader,
+    SparqlVoidShapesLoader,
+)
 from sparql_llm.config import SparqlEndpointLinks, settings
 from sparql_llm.loaders.sparql_info_loader import GENERAL_INFO_DOC_TYPE
 from sparql_llm.utils import EndpointsMetadataManager
@@ -18,8 +23,28 @@ from sparql_llm.utils import EndpointsMetadataManager
 SCHEMA = Namespace("http://schema.org/")
 
 
+def _hide_md_examples_file(endpoints: list[SparqlEndpointLinks]) -> list[SparqlEndpointLinks]:
+    """Return a copy of endpoints with any ``.md`` examples_file set to None.
+
+    sparql-llm's prefix discovery (``get_prefixes_for_endpoint``) and
+    ``SparqlVoidShapesLoader`` feed ``examples_file`` to rdflib, which only
+    understands Turtle. For our Markdown examples file we handle the loading
+    ourselves via ``SparqlExamplesMdLoader``; everywhere else, hide it.
+    """
+    safe: list[SparqlEndpointLinks] = []
+    for ep in endpoints:
+        ep_copy: SparqlEndpointLinks = dict(ep)  # type: ignore[assignment]
+        ex = ep_copy.get("examples_file")
+        if ex and ex.endswith(".md"):
+            ep_copy["examples_file"] = None
+        safe.append(ep_copy)
+    return safe
+
+
 # Global instance, metadata loads lazily on first property access
-endpoints_metadata = EndpointsMetadataManager(settings.endpoints, settings.auto_init)
+endpoints_metadata = EndpointsMetadataManager(
+    _hide_md_examples_file(settings.endpoints), settings.auto_init
+)
 
 # TODO: Getting `TypeError: cannot pickle '_thread.RLock' object` when doing `QdrantVectorStore.from_existing_collection(client=qdrant_client)`
 qdrant_client = (
@@ -183,16 +208,30 @@ def init_vectordb() -> None:
     # Gets documents from the SPARQL endpoints
     for endpoint in settings.endpoints:
         print(f"\n  🔎 Getting metadata for {endpoint.get('label')} at {endpoint['endpoint_url']}")
-        docs += SparqlExamplesLoader(
-            endpoint["endpoint_url"],
-            examples_file=endpoint.get("examples_file"),
-        ).load()
+        examples_file = endpoint.get("examples_file")
+        if examples_file and examples_file.endswith(".md"):
+            # LESSH/Elites Suisses: examples are plain Markdown rather than SHACL .ttl.
+            # Swap back to SparqlExamplesLoader once they migrate.
+            docs += SparqlExamplesMdLoader(
+                examples_file,
+                endpoint_url=endpoint["endpoint_url"],
+            ).load()
+        else:
+            docs += SparqlExamplesLoader(
+                endpoint["endpoint_url"],
+                examples_file=examples_file,
+            ).load()
 
+        # examples_file is hidden from the VoID shapes loader when it's .md —
+        # rdflib can't parse Markdown. See _hide_md_examples_file above.
+        void_examples_file = endpoint.get("examples_file")
+        if void_examples_file and void_examples_file.endswith(".md"):
+            void_examples_file = None
         docs += SparqlVoidShapesLoader(
             endpoint["endpoint_url"],
             prefix_map=endpoints_metadata.prefixes_map,
             void_file=endpoint.get("void_file"),
-            examples_file=endpoint.get("examples_file"),
+            examples_file=void_examples_file,
         ).load()
 
         docs += load_schemaorg_description(endpoint)
@@ -225,15 +264,18 @@ The UniProt consortium is headed by Alex Bateman, Alan Bridge and Cathy Wu, supp
     # Add some documents for general information about the resources
     docs += SparqlInfoLoader(
         settings.endpoints,
-        source_iri="https://www.expasy.org/",
+        source_iri="https://elites-suisses.lod4hss.org/",
         service_label=settings.app_name,
         org_label=f"from the {settings.app_org}",
     ).load()
 
-    try:
-        docs += load_expasy_resources_infos()
-    except Exception as _e:
-        print("Skipping loading Expasy resources metadata")
+    # Skip load_expasy_resources_infos() — that CSV is SIB's bioinformatics catalog
+    # and would pollute the Elites Suisses corpus. Re-enable only if you want to
+    # serve SIB content from this instance too.
+    # try:
+    #     docs += load_expasy_resources_infos()
+    # except Exception as _e:
+    #     print("Skipping loading Expasy resources metadata")
 
     print(f"Generating embeddings for {len(docs)} documents")
     start_time = time.time()

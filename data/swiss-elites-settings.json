@@ -1,0 +1,28 @@
+{
+  "app_name": "Swiss Elites Chat",
+  "app_org": "University of Lausanne - Swiss Elites project",
+  "app_topics": "Swiss elites, political figures, historical persons, social networks, and prosopographical data",
+  "app_public_host": "vm7.dsl.unibe.ch",
+  "default_llm_model": "gpustack/qwen3-vl-30b-a3b-instruct",
+  "endpoints": [
+    {
+      "label": "Swiss Elites",
+      "endpoint_url": "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default",
+      "description": "The Swiss Elites knowledge graph contains prosopographical data about Swiss political, economic, military, cultural and academic elites from the 19th and 20th centuries, modelled using WissKI and Linked Open Data principles. Ontologies: CIDOC CRM and SDHSS (social-life-core, shortcuts).",
+      "void_file": "data/elites-suisses-void.ttl",
+      "examples_file": "data/elites-suisses-examples.md",
+      "homepage_url": "https://elites-suisses.lod4hss.org/"
+    }
+  ],
+  "example_questions": [
+    "How many persons are in the database?",
+    "List 20 persons with their names",
+    "How many birth events are recorded?",
+    "Find persons whose name contains 'Ogi'",
+    "Who are the recorded parents of a given person?",
+    "How many persons of each SDHSS class are there?"
+  ],
+  "docs_collection_name": "swiss-elites",
+  "force_index": false,
+  "auto_init": true
+}

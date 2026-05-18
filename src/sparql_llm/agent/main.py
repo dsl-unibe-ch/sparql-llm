@@ -53,8 +53,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title=settings.app_name,
-    description="""This service helps users to use resources from the Swiss Institute of Bioinformatics,
-such as SPARQL endpoints, to get information about proteins, genes, and other biological entities.""",
+    description=f"""Natural-language interface to the Elites Suisses knowledge graph
+({settings.endpoints[0]['endpoint_url']}). Ask questions in English or French about
+~58,700 Swiss elites: biographical data, education, family relations, marriages,
+organisational memberships and mandates.""",
     version="1.0.0",
     lifespan=lifespan,
 )

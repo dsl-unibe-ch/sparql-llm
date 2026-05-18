@@ -11,8 +11,9 @@ from pydantic import BaseModel, Field
 
 from sparql_llm.agent.prompts import EXTRACTION_PROMPT
 from sparql_llm.agent.state import State, StepOutput
-from sparql_llm.agent.utils import load_chat_model
+from sparql_llm.agent.utils import get_msg_text, load_chat_model
 from sparql_llm.config import Configuration
+from sparql_llm.utils import logger
 
 # TODO: remove, not used anymore, replaced by tools functions
 
@@ -48,7 +49,13 @@ async def extract_user_question(
     """
     configuration = Configuration.from_runnable_config(config)
 
-    model = load_chat_model(configuration).with_structured_output(StructuredQuestion, method="function_calling")
+    # Try structured output via json_mode first (works with vLLM/GPUStack via
+    # response_format=json_object). Function-calling mode requires tool-use
+    # support that some local servers don't expose. Fall back to a minimal
+    # default if the model returns nothing parseable — better to continue
+    # without structured extraction than to kill the whole graph.
+    base_model = load_chat_model(configuration)
+    model = base_model.with_structured_output(StructuredQuestion, method="json_mode")
 
     prompt_template = ChatPromptTemplate.from_messages(
         [
@@ -63,13 +70,31 @@ async def extract_user_question(
         config,
     )
 
-    # print(message_value)
-    # print(message_value.messages[0].content)
-    structured_question = StructuredQuestion.model_validate(
-        await model.ainvoke(
-            message_value, {**config, "configurable": {**config.get("configurable", {}), "stream": False}}
+    try:
+        raw = await model.ainvoke(
+            message_value,
+            {**config, "configurable": {**config.get("configurable", {}), "stream": False}},
         )
-    )
+        if raw is None:
+            raise ValueError("model returned None — structured output not supported")
+        structured_question = StructuredQuestion.model_validate(raw)
+    except Exception as e:
+        logger.warning(
+            f"Structured extraction failed ({e}); falling back to defaults so retrieval still runs."
+        )
+        # Use the latest user message as the single extraction step.
+        last_text = ""
+        for msg in reversed(state.messages):
+            txt = get_msg_text(msg)
+            if txt:
+                last_text = txt
+                break
+        structured_question = StructuredQuestion(
+            intent="access_resources",
+            extracted_classes=[],
+            extracted_entities=[],
+            question_steps=[last_text] if last_text else [],
+        )
     # print(structured_question)
     steps_label = (
         f"{len(structured_question.question_steps)} steps and " if len(structured_question.question_steps) > 0 else ""

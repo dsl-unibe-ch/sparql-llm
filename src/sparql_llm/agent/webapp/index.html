@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Chat Expasy</title>
+    <title>Swiss Elites Chat</title>
     <meta
       name="description"
-      content="Assistant to navigate resources from the Swiss Institute of Bioinformatics (SIB)."
+      content="Natural-language interface to the Elites Suisses knowledge graph — ~58,700 Swiss elites with biographical data, family relations, education, and organisational affiliations."
     />
     <link rel="icon" type="image/png" href="/assets/sib-logo--jUM9mer.png" />
 
@@ -41,7 +41,7 @@
 
       <div class="text-left text-sm mb-5 prose max-w-3xl mx-auto pb-5 border-b">
         <h2 class="text-xl text-center font-semibold border-b pb-2">
-          Ask Expasy
+          Swiss Elites Chat
           <div
             class="inline-block ml-3 px-3 py-1 bg-red-600 text-white text-sm font-semibold rounded-full justify-center items-center"
           >
@@ -49,36 +49,29 @@
           </div>
         </h2>
         <p>
-          <strong>ExpasyGPT</strong> is reshaping how researchers explore life science data, streamlining searches
-          across the <a href="https://www.sib.swiss/">SIB Swiss Institute of Bioinformatics</a>’ databases (learn more
-          <a href="https://www.expasy.org/about-chat">here</a>). This AI-driven tool is powered by metadata and example
-          queries from SPARQL endpoints like:
+          A natural-language interface to the <strong>Elites Suisses</strong> knowledge graph, curated by the
+          <a href="https://elites-suisses.lod4hss.org/" target="_blank">LESSH project</a>
+          (Université de Lausanne / Universität Bern). Ask questions in English or French about
+          <strong>~58,700 Swiss elites</strong> — political, economic, academic, and military figures from the
+          19th–20th centuries — and the chat returns a SPARQL query against the
+          <a href="https://swiss-elites.lod4hss.cloud/wisski/endpoint/default" target="_blank">public endpoint</a>.
         </p>
+        <p>The graph currently exposes:</p>
         <ul style="list-style: inside">
-          <li>
-            <a href="http://www.uniprot.org/uniprot/" target="_blank">UniProt</a>, an expertly curated database of
-            proteins
-          </li>
-          <li><a href="https://omabrowser.org/oma/home/" target="_blank">OMA</a>, the orthologous matrix</li>
-          <li>
-            <a href="https://www.bgee.org/" target="_blank">Bgee</a>, an expertly curated gene expression database
-          </li>
-          <li>
-            <a href="https://www.rhea-db.org/" target="_blank">Rhea</a>, an expertly curated database of biochemical
-            reactions
-          </li>
-          <li>
-            <a href="http://www.swisslipids.org/#/" target="_blank">SwissLipids</a>, an expertly curated database of
-            lipids.
-          </li>
+          <li><strong>Persons</strong> (<code>crm:E21</code>) — 58,729 entries with names</li>
+          <li><strong>Birth events</strong> (<code>crm:E67</code>) — ~10,000 entries</li>
+          <li><strong>Family relations</strong> (<code>crm:P96</code>/<code>P97</code>) — parents and children</li>
+          <li><strong>Organisations &amp; memberships</strong> (<code>sdh-slc:C11</code>) — coming soon (currently only 2 entries)</li>
         </ul>
         <p>
-          As the service evolves, it will integrate additional endpoints from the
-          <a href="https://www.expasy.org/search/SPARQL" target="_blank">SIB Knowledge Graph</a>.
+          Ontologies: <a href="https://cidoc-crm.org/" target="_blank">CIDOC CRM</a> +
+          <a href="https://sdhss.org/" target="_blank">SDHSS</a> (social-life-core, shortcuts).
+          The system uses Retrieval-Augmented Generation (RAG) over example queries and the dataset's VoID
+          description, with SPARQL validation and optional auto-execution.
         </p>
         <p>
-          <strong>We value your input!</strong> For any questions or suggestions, feel free to reach out to the
-          <a href="https://www.expasy.org/contact" target="_blank">Expasy helpdesk</a>.
+          <strong>We value your input!</strong> Feedback and bug reports are welcome — file an issue on the
+          <a href="https://github.com/lod4hss-projects/elites_suisses_data" target="_blank">LESSH data repository</a>.
         </p>
       </div>
 

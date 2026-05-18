@@ -31,6 +31,21 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             #     "X-Title": getenv("YOUR_SITE_NAME"),
             # },
         )
+    if provider == "gpustack":
+        # Explicit timeout + max_retries: without these, a hung GPUStack
+        # connection waits the openai SDK default of 600 seconds, which looks
+        # like "the second question never returns". With them, a stuck call
+        # raises after ~90s and the upstream code paths (including the
+        # structured-extraction fallback) can recover.
+        return ChatOpenAI(
+            base_url=os.getenv("OPENAI_BASE_URL", "https://gpustack.unibe.ch/v1"),
+            model=model_name,
+            temperature=configuration.temperature,
+            api_key=SecretStr(os.getenv("OPENAI_API_KEY") or ""),
+            seed=configuration.seed,
+            timeout=90.0,
+            max_retries=1,
+        )
 
     # if provider == "groq":
     #     # https://python.langchain.com/docs/integrations/chat/groq/

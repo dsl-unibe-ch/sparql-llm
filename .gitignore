@@ -15,8 +15,11 @@ __pycache__/
 .files
 # uv.lock
 
-# Data
-data/
+# Data (ignore dynamic content but track Elites Suisses config artefacts)
+data/*
+!data/swiss-elites-settings.json
+!data/elites-suisses-void.ttl
+!data/elites-suisses-examples.md
 .fastembed_cache/
 notebooks/*.csv
 notebooks/*.txt
