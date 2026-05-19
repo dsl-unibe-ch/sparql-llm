@@ -11,7 +11,7 @@ from sparql_llm.agent.prompts import FIX_QUERY_PROMPT
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration, settings
 from sparql_llm.indexing.index_resources import endpoints_metadata
-from sparql_llm.utils import query_sparql
+from sparql_llm.utils import logger, query_sparql
 from sparql_llm.validate_sparql import validate_sparql_in_msg
 
 
@@ -35,12 +35,13 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
     validation_outputs = validate_sparql_in_msg(last_msg, endpoints_metadata.prefixes_map, endpoints_metadata.void_dict)
     for validation_output in validation_outputs:
         if validation_output["fixed_query"]:
-            # Pass the fixed msg to the client
+            logger.debug("Auto-fixed prefixes in generated SPARQL query")
+            # Pass the fixed msg to the client (silent — no user-visible step)
             validation_steps.append(
                 StepOutput(
                     type="fix-message",
-                    label="✅ Fixed the prefixes of the generated SPARQL query automatically",
-                    details=f"Prefixes corrected from the query generated in the original response.\n### Original response\n{last_msg}",
+                    label="",
+                    details="",
                     fixed_message=last_msg.replace(
                         validation_output["original_query"],
                         validation_output["fixed_query"],
@@ -51,10 +52,11 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
             # Recall the LLM to try to fix errors
             error_str = "- " + "\n- ".join(validation_output["errors"])
             validation_msg = f"The query generated in the original response is not valid according to the endpoints schema.\n### Validation results\n{error_str}\n### Erroneous SPARQL query\n```sparql\n{validation_output['original_query']}\n```\n### Original response\n{last_msg}\n"
+            logger.info(f"SPARQL validation errors, retrying: {error_str}")
             validation_steps.append(
                 StepOutput(
                     type="recall",
-                    label="🐞 Generated query invalid, fixing it",
+                    label="🔄 Refining query…",
                     details=validation_msg,
                 )
             )
