@@ -142,15 +142,34 @@ def convert_chunk_to_dict(obj: Any) -> Any:
 
 async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator[str, Any]:
     """Stream the response from the assistant."""
+    in_think_block = False
     async for event, chunk in graph.astream(inputs, stream_mode=["messages", "updates"], config=config):
+        # Suppress <think>…</think> blocks from reaching the client
+        if event == "messages":
+            msg, metadata = chunk
+            content = getattr(msg, "content", "") if msg else ""
+            if isinstance(content, str):
+                if "<think>" in content:
+                    in_think_block = True
+                    continue
+                if "</think>" in content:
+                    in_think_block = False
+                    continue
+                if in_think_block:
+                    continue
+
         chunk_dict = convert_chunk_to_dict(
             {
                 "event": event,
                 "data": chunk,
             }
         )
-        # print(chunk_dict)
-        # TODO: log_msg(logs_folder + "/all.jsonl", full_messages) when complete
+        # Filter out steps with empty labels from updates
+        if event == "updates":
+            for node_data in chunk_dict.get("data", {}).values():
+                if node_data and "steps" in node_data:
+                    node_data["steps"] = [s for s in node_data["steps"] if s.get("label")]
+
         yield f"data: {json.dumps(chunk_dict)}\n\n"
         await asyncio.sleep(0)
     yield "data: [DONE]"

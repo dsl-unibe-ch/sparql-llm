@@ -48,6 +48,9 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
                     ),
                 )
             )
+            # If the only issue was missing prefixes (now fixed), skip the recall
+            if not validation_output["errors"]:
+                continue
         if validation_output["errors"]:
             # Recall the LLM to try to fix errors
             error_str = "- " + "\n- ".join(validation_output["errors"])
