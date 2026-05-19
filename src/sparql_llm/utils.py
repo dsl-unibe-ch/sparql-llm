@@ -233,6 +233,17 @@ class EndpointsMetadataManager:
             self._prefixes_map = get_prefixes_for_endpoint(
                 endpoint["endpoint_url"], endpoint.get("examples_file"), self._prefixes_map
             )
+            # Also extract prefixes from the VoID file (Wisski doesn't support SHACL prefix queries)
+            void_file = endpoint.get("void_file")
+            if void_file:
+                try:
+                    g = rdflib.Graph()
+                    g.parse(void_file, format="turtle")
+                    for prefix, ns in g.namespaces():
+                        if prefix and str(ns) not in self._prefixes_map.values():
+                            self._prefixes_map[str(prefix)] = str(ns)
+                except Exception as e:
+                    logger.debug(f"Could not extract prefixes from VoID file {void_file}: {e}")
         # Cache to JSON file
         with open(ENDPOINTS_METADATA_FILE, "w") as f:
             json.dump({"prefixes_map": self._prefixes_map, "classes_schema": self._void_dict}, f, indent=2)
