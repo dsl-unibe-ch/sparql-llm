@@ -1,7 +1,6 @@
 """Validate output of a LLM, e.g. SPARQL queries generated."""
 
 import json
-import re
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -11,7 +10,7 @@ from sparql_llm.agent.prompts import FIX_QUERY_PROMPT
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration, settings
 from sparql_llm.indexing.index_resources import endpoints_metadata
-from sparql_llm.utils import logger, query_sparql
+from sparql_llm.utils import logger, query_sparql, strip_think_blocks
 from sparql_llm.validate_sparql import validate_sparql_in_msg
 
 
@@ -28,8 +27,7 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
     configuration = Configuration.from_runnable_config(config)
     if not configuration.enable_output_validation:
         return {}
-    # Remove the thought process <think> tags from the last message
-    last_msg = re.sub(r"<think>.*?</think>", "", str(state.messages[-1].content), flags=re.DOTALL)
+    last_msg = strip_think_blocks(str(state.messages[-1].content))
     validation_steps: list[StepOutput] = []
     recall_messages: list[HumanMessage] = []
     validation_outputs = validate_sparql_in_msg(last_msg, endpoints_metadata.prefixes_map, endpoints_metadata.void_dict)

@@ -1,11 +1,4 @@
-"""Define a custom agent.
-
-Works    max_tries_message = AIMessage(
-        content=f"I've reached the maximum number of attempts ({configuration.max_try_fix_sparql}) to fix the SPARQL query. "
-        "The query may have complex validation issues that require manual review. "
-        "Please check the query syntax and try rephrasing your question."
-    ) a chat model with tool calling support.
-"""
+"""Define the LangGraph agent that powers the SPARQL-LLM chat."""
 
 from typing import Literal
 

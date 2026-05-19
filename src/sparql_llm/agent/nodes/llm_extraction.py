@@ -15,7 +15,7 @@ from sparql_llm.agent.prompts import EXTRACTION_PROMPT
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.agent.utils import get_msg_text, load_chat_model
 from sparql_llm.config import Configuration
-from sparql_llm.utils import logger
+from sparql_llm.utils import THINK_BLOCK_RE, logger
 
 # TODO: remove, not used anymore, replaced by tools functions
 
@@ -136,8 +136,6 @@ Potential entities:
     }
 
 
-# Reasoning blocks emitted by models like minimax-m2.7, deepseek-r1, qwen-qwen3 reasoning, etc.
-_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 # Markdown code fences ```json ... ``` or ``` ... ```
 _FENCE_OPEN = re.compile(r"^\s*```(?:json)?\s*\n?", re.IGNORECASE | re.MULTILINE)
 _FENCE_CLOSE = re.compile(r"\n?\s*```\s*$", re.MULTILINE)
@@ -153,7 +151,7 @@ def _extract_json_object(text: str) -> dict:
 
     Raises ValueError if no JSON object can be located.
     """
-    clean = _THINK_BLOCK.sub("", text)
+    clean = THINK_BLOCK_RE.sub("", text)
     clean = _FENCE_OPEN.sub("", clean)
     clean = _FENCE_CLOSE.sub("", clean).strip()
 

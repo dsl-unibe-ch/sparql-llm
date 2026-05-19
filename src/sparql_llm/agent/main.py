@@ -1,4 +1,4 @@
-"""API to deploy the Expasy Agent service from LangGraph."""
+"""API to deploy the SPARQL-LLM agent service from LangGraph."""
 
 import asyncio
 import contextlib
@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sparql_llm.agent.graph import graph
 from sparql_llm.config import settings
 from sparql_llm.mcp_server import get_mcp_app
-from sparql_llm.utils import logger
+from sparql_llm.utils import logger, strip_think_blocks
 
 if settings.sentry_url:
     import sentry_sdk
@@ -140,54 +140,46 @@ def convert_chunk_to_dict(obj: Any) -> Any:
         return obj
 
 
-_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
-
-
 async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator[str, Any]:
     """Stream the response from the assistant."""
     in_think_block = False
     async for event, chunk in graph.astream(inputs, stream_mode=["messages", "updates"], config=config):
-        # Suppress <think>…</think> reasoning blocks from reaching the client.
-        # Tokens arrive one at a time, but <think> and </think> are special tokens
-        # that LLM APIs emit as whole strings in a single chunk.
-        if event == "messages":
-            msg, metadata = chunk
-            content = getattr(msg, "content", "") if msg else ""
-            if isinstance(content, str):
-                if in_think_block:
-                    if "</think>" in content:
-                        in_think_block = False
-                        # Keep any text after the closing tag
-                        tail = content.split("</think>", 1)[1]
-                        if not tail.strip():
-                            continue
-                        msg.content = tail
-                    else:
-                        continue
-                elif "<think>" in content:
-                    in_think_block = True
-                    # If the entire think block is in one chunk (e.g. non-streaming)
-                    cleaned = _THINK_RE.sub("", content)
-                    if cleaned.strip():
-                        msg.content = cleaned
-                    else:
-                        continue
-
-        chunk_dict = convert_chunk_to_dict(
-            {
-                "event": event,
-                "data": chunk,
-            }
-        )
-        # Filter out steps with empty labels (but keep fix-message steps for their functional effect)
         if event == "updates":
+            # Reset think-block state between LLM calls (each node emits an update when done)
+            in_think_block = False
+            chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
             for node_data in chunk_dict.get("data", {}).values():
                 if node_data and "steps" in node_data:
                     node_data["steps"] = [
                         s for s in node_data["steps"]
                         if s.get("label") or s.get("type") == "fix-message"
                     ]
+            yield f"data: {json.dumps(chunk_dict)}\n\n"
+            await asyncio.sleep(0)
+            continue
 
+        if event == "messages":
+            msg, metadata = chunk
+            content = getattr(msg, "content", "") if msg else ""
+            if not isinstance(content, str):
+                pass
+            elif in_think_block:
+                if "</think>" in content:
+                    in_think_block = False
+                    tail = content.split("</think>", 1)[1]
+                    if not tail.strip():
+                        continue
+                    msg.content = tail
+                else:
+                    continue
+            elif "<think>" in content:
+                in_think_block = True
+                cleaned = strip_think_blocks(content)
+                if not cleaned.strip():
+                    continue
+                msg.content = cleaned
+
+        chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
         yield f"data: {json.dumps(chunk_dict)}\n\n"
         await asyncio.sleep(0)
     yield "data: [DONE]"

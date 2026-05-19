@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,13 @@ import httpx
 import rdflib
 
 from sparql_llm.config import SparqlEndpointLinks
+
+THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
+def strip_think_blocks(text: str) -> str:
+    """Remove <think>…</think> reasoning blocks emitted by some LLMs."""
+    return THINK_BLOCK_RE.sub("", text)
 
 # Disable logger in your code with logging.getLogger("sparql_llm").setLevel(logging.WARNING)
 logger = logging.getLogger("sparql_llm")
@@ -49,6 +57,18 @@ def get_prefixes_for_endpoint(
     except Exception as e:
         logger.warning(f"Error retrieving prefixes for {endpoint_url}: {e}")
     return prefixes_map
+
+
+def _merge_prefixes_from_turtle(turtle_file: str, prefixes_map: dict[str, str]) -> None:
+    """Extract @prefix declarations from a Turtle file and merge into prefixes_map."""
+    try:
+        g = rdflib.Graph()
+        g.parse(turtle_file, format="turtle")
+        for prefix, ns in g.namespaces():
+            if prefix and str(ns) not in prefixes_map.values():
+                prefixes_map[str(prefix)] = str(ns)
+    except Exception as e:
+        logger.debug(f"Could not extract prefixes from {turtle_file}: {e}")
 
 
 def get_prefix_converter(prefix_dict: dict[str, str]) -> curies.Converter:
@@ -227,23 +247,17 @@ class EndpointsMetadataManager:
         logger.info(f"Fetching metadata for {len(self._endpoints)} endpoints...")
         for endpoint in self._endpoints:
             logger.info(f"Fetching {endpoint['endpoint_url']} metadata...")
+            void_file = endpoint.get("void_file")
             self._void_dict[endpoint["endpoint_url"]] = get_schema_for_endpoint(
-                endpoint["endpoint_url"], endpoint.get("void_file")
+                endpoint["endpoint_url"], void_file
             )
             self._prefixes_map = get_prefixes_for_endpoint(
                 endpoint["endpoint_url"], endpoint.get("examples_file"), self._prefixes_map
             )
-            # Also extract prefixes from the VoID file (Wisski doesn't support SHACL prefix queries)
-            void_file = endpoint.get("void_file")
+            # Endpoints that don't support SHACL prefix queries (e.g. Wisski):
+            # extract prefixes from the VoID Turtle file's @prefix declarations.
             if void_file:
-                try:
-                    g = rdflib.Graph()
-                    g.parse(void_file, format="turtle")
-                    for prefix, ns in g.namespaces():
-                        if prefix and str(ns) not in self._prefixes_map.values():
-                            self._prefixes_map[str(prefix)] = str(ns)
-                except Exception as e:
-                    logger.debug(f"Could not extract prefixes from VoID file {void_file}: {e}")
+                _merge_prefixes_from_turtle(void_file, self._prefixes_map)
         # Cache to JSON file
         with open(ENDPOINTS_METADATA_FILE, "w") as f:
             json.dump({"prefixes_map": self._prefixes_map, "classes_schema": self._void_dict}, f, indent=2)
