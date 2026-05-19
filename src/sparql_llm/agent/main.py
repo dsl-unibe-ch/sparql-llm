@@ -140,23 +140,38 @@ def convert_chunk_to_dict(obj: Any) -> Any:
         return obj
 
 
+_THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+
 async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator[str, Any]:
     """Stream the response from the assistant."""
     in_think_block = False
     async for event, chunk in graph.astream(inputs, stream_mode=["messages", "updates"], config=config):
-        # Suppress <think>…</think> blocks from reaching the client
+        # Suppress <think>…</think> reasoning blocks from reaching the client.
+        # Tokens arrive one at a time, but <think> and </think> are special tokens
+        # that LLM APIs emit as whole strings in a single chunk.
         if event == "messages":
             msg, metadata = chunk
             content = getattr(msg, "content", "") if msg else ""
             if isinstance(content, str):
-                if "<think>" in content:
-                    in_think_block = True
-                    continue
-                if "</think>" in content:
-                    in_think_block = False
-                    continue
                 if in_think_block:
-                    continue
+                    if "</think>" in content:
+                        in_think_block = False
+                        # Keep any text after the closing tag
+                        tail = content.split("</think>", 1)[1]
+                        if not tail.strip():
+                            continue
+                        msg.content = tail
+                    else:
+                        continue
+                elif "<think>" in content:
+                    in_think_block = True
+                    # If the entire think block is in one chunk (e.g. non-streaming)
+                    cleaned = _THINK_RE.sub("", content)
+                    if cleaned.strip():
+                        msg.content = cleaned
+                    else:
+                        continue
 
         chunk_dict = convert_chunk_to_dict(
             {
