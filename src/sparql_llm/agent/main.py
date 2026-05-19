@@ -164,11 +164,14 @@ async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator
                 "data": chunk,
             }
         )
-        # Filter out steps with empty labels from updates
+        # Filter out steps with empty labels (but keep fix-message steps for their functional effect)
         if event == "updates":
             for node_data in chunk_dict.get("data", {}).values():
                 if node_data and "steps" in node_data:
-                    node_data["steps"] = [s for s in node_data["steps"] if s.get("label")]
+                    node_data["steps"] = [
+                        s for s in node_data["steps"]
+                        if s.get("label") or s.get("type") == "fix-message"
+                    ]
 
         yield f"data: {json.dumps(chunk_dict)}\n\n"
         await asyncio.sleep(0)
