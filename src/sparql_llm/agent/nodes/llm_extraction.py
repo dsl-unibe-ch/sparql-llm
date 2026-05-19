@@ -3,6 +3,8 @@
 Works with a chat model with tool calling support.
 """
 
+import json
+import re
 from typing import Literal
 
 from langchain_core.prompts import ChatPromptTemplate
@@ -49,13 +51,16 @@ async def extract_user_question(
     """
     configuration = Configuration.from_runnable_config(config)
 
-    # Try structured output via json_mode first (works with vLLM/GPUStack via
-    # response_format=json_object). Function-calling mode requires tool-use
-    # support that some local servers don't expose. Fall back to a minimal
-    # default if the model returns nothing parseable — better to continue
-    # without structured extraction than to kill the whole graph.
+    # We parse the JSON ourselves rather than using with_structured_output(method="json_mode")
+    # because GPUStack-hosted models behave inconsistently:
+    # - gpt-oss-120b interleaves reasoning tokens into the JSON (token soup).
+    # - qwen3-vl-30b-a3b-instruct produces clean JSON.
+    # - minimax-m2.7 (and other reasoning models) wrap the JSON in a <think>…</think>
+    #   block — the actual JSON is at the end.
+    # langchain's JsonOutputParser blows up on the thinking block. By extracting
+    # the JSON manually we tolerate all three patterns. The fallback below
+    # catches anything truly unparseable.
     base_model = load_chat_model(configuration)
-    model = base_model.with_structured_output(StructuredQuestion, method="json_mode")
 
     prompt_template = ChatPromptTemplate.from_messages(
         [
@@ -71,16 +76,19 @@ async def extract_user_question(
     )
 
     try:
-        raw = await model.ainvoke(
+        response = await base_model.ainvoke(
             message_value,
             {**config, "configurable": {**config.get("configurable", {}), "stream": False}},
         )
-        if raw is None:
-            raise ValueError("model returned None — structured output not supported")
-        structured_question = StructuredQuestion.model_validate(raw)
+        raw_text = get_msg_text(response) if response is not None else ""
+        if not raw_text:
+            raise ValueError("model returned empty content")
+        parsed = _extract_json_object(raw_text)
+        structured_question = StructuredQuestion.model_validate(parsed)
     except Exception as e:
         logger.warning(
-            f"Structured extraction failed ({e}); falling back to defaults so retrieval still runs."
+            f"Structured extraction failed ({type(e).__name__}: {e}); "
+            "falling back to defaults so retrieval still runs."
         )
         # Use the latest user message as the single extraction step.
         last_text = ""
@@ -126,3 +134,38 @@ Potential entities:
             )
         ],
     }
+
+
+# Reasoning blocks emitted by models like minimax-m2.7, deepseek-r1, qwen-qwen3 reasoning, etc.
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+# Markdown code fences ```json ... ``` or ``` ... ```
+_FENCE_OPEN = re.compile(r"^\s*```(?:json)?\s*\n?", re.IGNORECASE | re.MULTILINE)
+_FENCE_CLOSE = re.compile(r"\n?\s*```\s*$", re.MULTILINE)
+
+
+def _extract_json_object(text: str) -> dict:
+    """Extract and parse a JSON object from a possibly-noisy LLM response.
+
+    Handles three common patterns we've seen from GPUStack-hosted models:
+    1. The whole response is valid JSON.
+    2. The response is a `<think>…</think>` reasoning block followed by JSON.
+    3. The JSON is wrapped in a ```json … ``` markdown fence.
+
+    Raises ValueError if no JSON object can be located.
+    """
+    clean = _THINK_BLOCK.sub("", text)
+    clean = _FENCE_OPEN.sub("", clean)
+    clean = _FENCE_CLOSE.sub("", clean).strip()
+
+    # Fast path: the cleaned response is already a JSON object.
+    try:
+        return json.loads(clean)
+    except json.JSONDecodeError:
+        pass
+
+    # Slow path: find the outermost {...} substring and try that.
+    start = clean.find("{")
+    end = clean.rfind("}")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError(f"no JSON object found in response: {clean[:200]!r}")
+    return json.loads(clean[start : end + 1])
