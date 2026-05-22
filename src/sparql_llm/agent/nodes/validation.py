@@ -107,9 +107,9 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
                         execute_resp = f"Query on {endpoint_url} returned no results. {FIX_QUERY_PROMPT}\n```sparql\n{sparql_query}\n```"
                     elif res_bindings and len(res_bindings) > 50:
                         # Truncate the results if too large
-                        execute_resp = f"Executed query on {endpoint_url}:\n```sparql\n{sparql_query}\n```\n\nResults (showing first 50 out of {len(res_bindings)} results):\n```\n{json.dumps(res_bindings[:200], indent=2)}\n```"
+                        execute_resp = f"Executed query on {endpoint_url}:\n```sparql\n{sparql_query}\n```\n\nResults (showing first 50 out of {len(res_bindings)} results):\n```\n{json.dumps(res_bindings[:200], indent=2)}\n```\n\nNow write the final answer to the user using ONLY these results. Do NOT generate another SPARQL query."
                     else:
-                        execute_resp = f"Executed query on {endpoint_url}:\n```sparql\n{sparql_query}\n```\n\nResults:\n```\n{json.dumps(res, indent=2)}\n```"
+                        execute_resp = f"Executed query on {endpoint_url}:\n```sparql\n{sparql_query}\n```\n\nResults:\n```\n{json.dumps(res, indent=2)}\n```\n\nNow write the final answer to the user using ONLY these results. Do NOT generate another SPARQL query."
                 except Exception as e:
                     execute_resp = f"Query on {endpoint_url} returned error:\n\n{e}\n\n{FIX_QUERY_PROMPT}\n```sparql\n{sparql_query}\n```"
                 # print("EXECUTE RESP", execute_resp)
