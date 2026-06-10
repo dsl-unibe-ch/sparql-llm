@@ -3,7 +3,13 @@
   "app_org": "University of Lausanne - Swiss Elites project",
   "app_topics": "Swiss elites, political figures, historical persons, social networks, and prosopographical data",
   "app_public_host": "vm7.dsl.unibe.ch",
-  "default_llm_model": "gpustack/qwen3-vl-30b-a3b-instruct",
+  "default_llm_model": "gpustack/minimax-m2.7",
+  "available_llm_models": [
+    "gpustack/minimax-m2.7",
+    "gpustack/gpt-oss-120b",
+    "gpustack/qwen3-coder-30b-a3b-instruct",
+    "gpustack/qwen3-vl-30b-a3b-instruct"
+  ],
   "endpoints": [
     {
       "label": "Swiss Elites",
