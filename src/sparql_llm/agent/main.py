@@ -272,6 +272,27 @@ async def post_feedback(feedback_request: FeedbackRequest) -> JSONResponse:
     return JSONResponse(content={"status": "success"})
 
 
+@app.get("/models")
+async def get_models(request: Request) -> JSONResponse:
+    """Return the list of available LLM models for the chat UI dropdown.
+
+    When ``settings.available_llm_models`` is configured, that explicit list is
+    returned as-is — no upstream API call is made, so embedding models, Whisper
+    models, and other non-chat models on GPUStack are never exposed.
+
+    When the list is empty, the endpoint falls back to
+    ``[settings.default_llm_model]``.
+    """
+    if settings.chat_api_key:
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else ""
+        if token != settings.chat_api_key:
+            return JSONResponse(status_code=401, content={"error": "Unauthorized"})
+
+    models = settings.available_llm_models or [settings.default_llm_model]
+    return JSONResponse(content={"models": models, "default": settings.default_llm_model})
+
+
 class LogsRequest(BaseModel):
     api_key: str
 

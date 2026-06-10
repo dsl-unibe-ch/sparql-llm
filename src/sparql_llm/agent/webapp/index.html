@@ -75,8 +75,19 @@
         </p>
       </div>
 
+      <div class="mx-5 flex items-center justify-end py-1" id="model-selector" style="display: none;">
+        <label for="model-select" class="text-sm text-slate-500 mr-2">Model:</label>
+        <select
+          id="model-select"
+          class="text-sm border border-slate-300 bg-slate-100 rounded-lg px-3 py-1 focus:outline-none focus:ring focus:ring-blue-200 cursor-pointer"
+        >
+          <option value="">Loading…</option>
+        </select>
+      </div>
+
       <div class="flex-grow mx-5">
         <chat-with-context
+          id="chat-element"
           chat-endpoint="{{ chat_endpoint }}"
           feedback-endpoint="{{ feedback_endpoint }}"
           api-key="{{ api_key }}"
@@ -86,4 +97,47 @@
       </div>
     </div>
   </body>
+
+  <script>
+    (function () {
+      var chatEl = document.getElementById("chat-element");
+      var modelSelect = document.getElementById("model-select");
+      var modelSelector = document.getElementById("model-selector");
+      var apiKey = "{{ api_key }}";
+
+      fetch("/models", {
+        headers: apiKey ? { Authorization: "Bearer " + apiKey } : {},
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (!data.models || data.models.length === 0) return;
+
+          modelSelect.innerHTML = "";
+          data.models.forEach(function (model) {
+            var opt = document.createElement("option");
+            opt.value = model;
+            opt.textContent = model.replace(/^[^\/]+\//, "");
+            if (model === data.default) opt.selected = true;
+            modelSelect.appendChild(opt);
+          });
+
+          // Initialise the component with the default model
+          var initial = data.default || data.models[0];
+          chatEl.setAttribute("model", initial);
+          modelSelect.value = initial;
+
+          // Show the selector only when there are multiple models
+          if (data.models.length > 1) {
+            modelSelector.style.display = "flex";
+          }
+        })
+        .catch(function (err) {
+          console.error("Failed to fetch models:", err);
+        });
+
+      modelSelect.addEventListener("change", function () {
+        chatEl.setAttribute("model", modelSelect.value);
+      });
+    })();
+  </script>
 </html>

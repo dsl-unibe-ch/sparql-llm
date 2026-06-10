@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # set OPENAI_BASE_URL and OPENAI_API_KEY in .env.
     default_llm_model: str = "gpustack/gpt-oss-120b"
 
+    # Ordered list of model IDs (provider/model-name) available in the chat UI dropdown.
+    # Used as a fallback when the upstream /v1/models call fails.
+    available_llm_models: list[str] = []
+
     default_number_of_retrieved_docs: int = 10
     default_max_try_fix_sparql: int = 3
     default_temperature: float = 0.0
