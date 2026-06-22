@@ -17,6 +17,45 @@ def strip_think_blocks(text: str) -> str:
     """Remove <think>…</think> reasoning blocks emitted by some LLMs."""
     return THINK_BLOCK_RE.sub("", text)
 
+
+_THINK_OPEN = "<think>"
+_THINK_CLOSE = "</think>"
+
+
+def strip_think_stream(buffer: str) -> str:
+    """Return the portion of a *streamed* buffer that is safe to display.
+
+    Reasoning models (e.g. minimax-m2.7 on GPUStack) interleave their
+    chain-of-thought as ``<think>…</think>`` inside the streamed ``content``.
+    Token streaming means a tag can be split across chunks, and the opening
+    ``<think>`` often arrives glued to the first reasoning word
+    (``"<think>The"``), so a per-chunk ``strip_think_blocks`` leaks it.
+
+    This operates on the *whole accumulated buffer* instead and returns only the
+    text that is safe to show:
+
+    - complete ``<think>…</think>`` blocks are removed,
+    - everything after an unclosed ``<think>`` is held back (still streaming),
+    - a trailing partial opening tag (``"<"``, ``"<th"``, ``"<thin"``…) is held
+      back so we never emit characters that may turn out to start a block.
+
+    Call it on the growing buffer each chunk and emit only the newly revealed
+    suffix (track an "already emitted length" cursor). The returned visible
+    prefix is monotonic, so the cursor never has to walk backwards.
+    """
+    # Drop all complete reasoning blocks.
+    s = THINK_BLOCK_RE.sub("", buffer)
+    # Hold back an unclosed reasoning block.
+    lower = s.lower()
+    open_idx = lower.rfind(_THINK_OPEN)
+    if open_idx != -1 and _THINK_CLOSE not in lower[open_idx:]:
+        s = s[:open_idx]
+    # Hold back a trailing partial opening tag like "<", "<th", "<thin"…
+    for k in range(min(len(s), len(_THINK_OPEN) - 1), 0, -1):
+        if s[-k:].lower() == _THINK_OPEN[:k]:
+            return s[:-k]
+    return s
+
 # Disable logger in your code with logging.getLogger("sparql_llm").setLevel(logging.WARNING)
 logger = logging.getLogger("sparql_llm")
 logger.setLevel(logging.INFO)

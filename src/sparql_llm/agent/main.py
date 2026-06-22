@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sparql_llm.agent.graph import graph
 from sparql_llm.config import settings
 from sparql_llm.mcp_server import get_mcp_app
-from sparql_llm.utils import logger, strip_think_blocks
+from sparql_llm.utils import logger, strip_think_stream
 
 if settings.sentry_url:
     import sentry_sdk
@@ -141,12 +141,29 @@ def convert_chunk_to_dict(obj: Any) -> Any:
 
 
 async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator[str, Any]:
-    """Stream the response from the assistant."""
-    in_think_block = False
+    """Stream the response from the assistant.
+
+    Reasoning ("thinking") models served via GPUStack — e.g. minimax-m2.7 —
+    interleave their chain-of-thought as ``<think>…</think>`` blocks inside the
+    streamed ``content`` of the ``call_model`` node. We strip those blocks so the
+    chat UI never renders them. The previous per-chunk substring filter leaked
+    the opening ``<think>`` token (and the first word glued to it, e.g.
+    ``"<think>The"``) because a tag split across token boundaries was never
+    matched. Instead we accumulate the call_model output and re-derive the
+    visible (non-reasoning) text on every chunk via ``strip_think_stream``,
+    emitting only the newly revealed delta — robust to tags split across any
+    number of chunks.
+    """
+    # Per-message accumulator for the call_model stream, reset at each node
+    # boundary (every node emits an "updates" event when it finishes).
+    think_buffer = ""
+    emitted_len = 0
+
     async for event, chunk in graph.astream(inputs, stream_mode=["messages", "updates"], config=config):
         if event == "updates":
-            # Reset think-block state between LLM calls (each node emits an update when done)
-            in_think_block = False
+            # New node starting → reset the think-stripping accumulator.
+            think_buffer = ""
+            emitted_len = 0
             chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
             for node_data in chunk_dict.get("data", {}).values():
                 if node_data and "steps" in node_data:
@@ -161,23 +178,16 @@ async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator
         if event == "messages":
             msg, metadata = chunk
             content = getattr(msg, "content", "") if msg else ""
-            if not isinstance(content, str):
-                pass
-            elif in_think_block:
-                if "</think>" in content:
-                    in_think_block = False
-                    tail = content.split("</think>", 1)[1]
-                    if not tail.strip():
-                        continue
-                    msg.content = tail
-                else:
+            # Only the streamed assistant answer (call_model) can carry inline
+            # <think> blocks; tool results and other nodes pass through untouched.
+            if isinstance(content, str) and content and (metadata or {}).get("langgraph_node") == "call_model":
+                think_buffer += content
+                visible = strip_think_stream(think_buffer)
+                if len(visible) <= emitted_len:
+                    # Everything new is reasoning or an incomplete tag — hold back.
                     continue
-            elif "<think>" in content:
-                in_think_block = True
-                cleaned = strip_think_blocks(content)
-                if not cleaned.strip():
-                    continue
-                msg.content = cleaned
+                msg.content = visible[emitted_len:]
+                emitted_len = len(visible)
 
         chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
         yield f"data: {json.dumps(chunk_dict)}\n\n"
