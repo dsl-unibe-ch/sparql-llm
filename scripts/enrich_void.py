@@ -22,7 +22,7 @@ import urllib.request
 import json
 from pathlib import Path
 
-ENDPOINT = "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default"
+ENDPOINT = "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter"
 GRAPH = "https://swiss-elites.lod4hss.cloud/resource/"
 OUT_PATH = Path(__file__).parent.parent / "data" / "elites-suisses-void.ttl"
 

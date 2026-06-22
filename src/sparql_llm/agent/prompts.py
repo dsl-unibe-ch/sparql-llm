@@ -33,7 +33,7 @@ RESOLUTION_PROMPT = (
     INTRODUCTION_PROMPT
     + """Answer the user's question. If a SPARQL query is needed, produce one — exactly one — and explain it briefly.
 
-Endpoint: https://swiss-elites.lod4hss.cloud/wisski/endpoint/default (GET only)
+Endpoint: https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter (GET only)
 Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target it explicitly.
 
 Prefixes:

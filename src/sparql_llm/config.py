@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     endpoints: list[SparqlEndpointLinks] = [
         {
             "label": "Elites Suisses",
-            "endpoint_url": "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default",
+            "endpoint_url": "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter",
             "description": (
                 "Swiss elites knowledge graph (~58,700 persons; biographical data, "
                 "education, marriages, family relations, organisations, mandates) — "
