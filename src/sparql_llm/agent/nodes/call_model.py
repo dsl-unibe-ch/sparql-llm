@@ -10,9 +10,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from sparql_llm.agent.state import State
-from sparql_llm.agent.utils import load_chat_model
+from sparql_llm.agent.state import State, StepOutput
+from sparql_llm.agent.utils import get_msg_text, load_chat_model
 from sparql_llm.config import Configuration, settings
+from sparql_llm.utils import extract_think_blocks, strip_think_blocks
 
 # from sparql_llm.agent.nodes.retrieval_docs import format_docs
 # from sparql_llm.agent.nodes.retrieval_entities import format_extracted_entities
@@ -69,6 +70,20 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
 
     # print(f"Model response: {response_msg.content}")
 
+    # Reasoning models (e.g. minimax-m2.7) emit their chain-of-thought inline as
+    # <think>…</think>. Surface it as a collapsible "💭 Thought process" step and
+    # strip it from the stored answer. The live token stream is cleaned
+    # separately in main.py:stream_response; this keeps the *persisted* message
+    # (used by validation and the non-streaming path) clean too. When there is no
+    # reasoning block (e.g. gpt-oss-120b keeps it on a separate channel), no step
+    # is added.
+    reasoning_steps: list[StepOutput] = []
+    answer_text = get_msg_text(response_msg)
+    reasoning = extract_think_blocks(answer_text)
+    if reasoning:
+        response_msg.content = strip_think_blocks(answer_text).lstrip()
+        reasoning_steps.append(StepOutput(label="💭 Thought process", details=reasoning))
+
     # Check if the current response contains tool calls that should be processed
     has_tool_calls = bool(getattr(response_msg, "tool_calls", None))
     if has_tool_calls and not state.is_last_step:
@@ -93,4 +108,4 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
             ]
         }
     # Return the model response as a list to be added to existing messages
-    return {"messages": [response_msg], "passed_validation": True}
+    return {"messages": [response_msg], "passed_validation": True, "steps": reasoning_steps}

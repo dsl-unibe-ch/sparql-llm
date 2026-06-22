@@ -145,8 +145,9 @@ async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator
 
     Reasoning ("thinking") models served via GPUStack — e.g. minimax-m2.7 —
     interleave their chain-of-thought as ``<think>…</think>`` blocks inside the
-    streamed ``content`` of the ``call_model`` node. We strip those blocks so the
-    chat UI never renders them. The previous per-chunk substring filter leaked
+    streamed ``content``. We strip those blocks from every node's token stream so
+    the chat UI never renders them (the call_model node re-surfaces its own
+    reasoning as a populated step). The previous per-chunk substring filter leaked
     the opening ``<think>`` token (and the first word glued to it, e.g.
     ``"<think>The"``) because a tag split across token boundaries was never
     matched. Instead we accumulate the call_model output and re-derive the
@@ -178,9 +179,14 @@ async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator
         if event == "messages":
             msg, metadata = chunk
             content = getattr(msg, "content", "") if msg else ""
-            # Only the streamed assistant answer (call_model) can carry inline
-            # <think> blocks; tool results and other nodes pass through untouched.
-            if isinstance(content, str) and content and (metadata or {}).get("langgraph_node") == "call_model":
+            # Strip inline <think> reasoning from every streamed LLM token (both
+            # the extract_user_question and call_model nodes run reasoning models).
+            # Tool results are not LLM token streams, so leave them untouched.
+            # Holding back incomplete tags also stops a bare "</think>" from ever
+            # reaching the UI, where it would create an empty "Thought process"
+            # step. The actual reasoning is surfaced as a populated step by the
+            # call_model node instead.
+            if isinstance(content, str) and content and getattr(msg, "type", "") != "tool":
                 think_buffer += content
                 visible = strip_think_stream(think_buffer)
                 if len(visible) <= emitted_len:

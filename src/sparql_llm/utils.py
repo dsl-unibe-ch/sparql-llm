@@ -18,6 +18,20 @@ def strip_think_blocks(text: str) -> str:
     return THINK_BLOCK_RE.sub("", text)
 
 
+_THINK_CONTENT_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL | re.IGNORECASE)
+
+
+def extract_think_blocks(text: str) -> str:
+    """Return the concatenated contents of any <think>…</think> blocks.
+
+    The inverse of :func:`strip_think_blocks`: it returns the reasoning instead
+    of the answer. Used to surface a model's chain-of-thought as a separate
+    "Thought process" step. Returns "" when there is no reasoning block.
+    """
+    parts = [m.strip() for m in _THINK_CONTENT_RE.findall(text) if m.strip()]
+    return "\n\n".join(parts)
+
+
 _THINK_OPEN = "<think>"
 _THINK_CLOSE = "</think>"
 

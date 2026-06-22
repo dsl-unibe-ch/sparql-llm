@@ -5,7 +5,7 @@ drives it: feed a growing buffer chunk-by-chunk and assemble only the newly
 revealed delta. No network or model required.
 """
 
-from sparql_llm.utils import strip_think_stream
+from sparql_llm.utils import extract_think_blocks, strip_think_stream
 
 
 def _replay(chunks: list[str]) -> str:
@@ -65,4 +65,15 @@ def test_full_buffer_equivalence():
     # Replaying chunk-by-chunk must equal stripping the complete buffer at once.
     full = "<think>The user asks X</think>The result is **5**."
     assert _replay(list(full)) == strip_think_stream(full)
+    assert strip_think_stream(full) == "The result is **5**."
+
+
+def test_extract_think_blocks():
+    # The reasoning is what populates the "Thought process" step.
+    assert extract_think_blocks("<think>reason here</think>answer") == "reason here"
+    assert extract_think_blocks("no think block at all") == ""
+    assert extract_think_blocks("<think> a </think>x<think>b</think>y") == "a\n\nb"
+    # A typical minimax answer: reasoning extracted, answer is what's left.
+    full = "<think>The user asks X</think>The result is **5**."
+    assert extract_think_blocks(full) == "The user asks X"
     assert strip_think_stream(full) == "The result is **5**."
