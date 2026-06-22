@@ -31,7 +31,11 @@ class SparqlEndpointLinks(TypedDict, total=False):
     homepage_url: str | None
     label: str | None
     description: str | None
-    # ontology_url: Optional[str]
+    # Directories of local OWL application profiles (.rdf) and SHACL shapes (.ttl) used to
+    # enrich the schema docs with human definitions + property cardinalities. See
+    # loaders/ontology_profiles_loader.py.
+    ontology_profiles_dir: str | None
+    shacl_dir: str | None
 
 
 class Settings(BaseSettings):
@@ -50,6 +54,8 @@ class Settings(BaseSettings):
             "void_file": "data/elites-suisses-void.ttl",
             "examples_file": "data/elites-suisses-examples.md",
             "homepage_url": "https://elites-suisses.lod4hss.org/",
+            "ontology_profiles_dir": "data/ontology/profiles",
+            "shacl_dir": "data/ontology/shacl",
         },
     ]
 

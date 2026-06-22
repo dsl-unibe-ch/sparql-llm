@@ -9,3 +9,8 @@ from .loaders.sparql_examples_loader import SparqlExamplesLoader
 from .loaders.sparql_examples_md_loader import SparqlExamplesMdLoader
 from .loaders.sparql_void_shapes_loader import SparqlVoidShapesLoader, get_shex_dict_from_void, get_shex_from_void
 from .loaders.sparql_info_loader import SparqlInfoLoader
+from .loaders.ontology_profiles_loader import (
+    OntologyProfilesLoader,
+    parse_ontology_profiles,
+    parse_shacl_shapes,
+)

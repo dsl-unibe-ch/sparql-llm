@@ -17,8 +17,14 @@ from sparql_llm import (
     SparqlVoidShapesLoader,
 )
 from sparql_llm.config import SparqlEndpointLinks, settings
+from sparql_llm.loaders.ontology_profiles_loader import (
+    CLASSES_DOC_TYPE,
+    OntologyProfilesLoader,
+    parse_ontology_profiles,
+    parse_shacl_shapes,
+)
 from sparql_llm.loaders.sparql_info_loader import GENERAL_INFO_DOC_TYPE
-from sparql_llm.utils import EndpointsMetadataManager
+from sparql_llm.utils import EndpointsMetadataManager, get_prefix_converter
 
 SCHEMA = Namespace("http://schema.org/")
 
@@ -227,16 +233,46 @@ def init_vectordb() -> None:
         void_examples_file = endpoint.get("examples_file")
         if void_examples_file and void_examples_file.endswith(".md"):
             void_examples_file = None
-        docs += SparqlVoidShapesLoader(
+        # Parse the local OWL profiles + SHACL shapes (the designed schema behind the
+        # R2RML mapping). The WissKI endpoint serves almost no labels/comments, so these
+        # supply human definitions + property cardinalities. Only for endpoints that opt in.
+        converter = get_prefix_converter(endpoints_metadata.prefixes_map)
+        profiles_dir = endpoint.get("ontology_profiles_dir")
+        shacl_dir = endpoint.get("shacl_dir")
+        term_map: dict = {}
+        shape_map: dict = {}
+        if profiles_dir or shacl_dir:
+            term_map = parse_ontology_profiles(profiles_dir, converter)
+            shape_map = parse_shacl_shapes(shacl_dir, converter)
+
+        void_docs = SparqlVoidShapesLoader(
             endpoint["endpoint_url"],
             prefix_map=endpoints_metadata.prefixes_map,
             void_file=endpoint.get("void_file"),
             examples_file=void_examples_file,
+            term_map=term_map,
+            shape_map=shape_map,
         ).load()
+        docs += void_docs
+
+        # Emit standalone docs for the designed classes not yet present in the data, so the
+        # assistant already knows the schema the full database will instantiate. Skip the
+        # classes the VoID already covers to avoid duplicate/competing docs.
+        if term_map or shape_map:
+            covered = {
+                converter.compress(d.metadata["iri"], passthrough=True)
+                for d in void_docs
+                if d.metadata.get("doc_type") == CLASSES_DOC_TYPE and d.metadata.get("iri")
+            }
+            docs += OntologyProfilesLoader(
+                endpoint["endpoint_url"],
+                term_map=term_map,
+                shape_map=shape_map,
+                converter=converter,
+                skip_iris=covered,
+            ).load()
 
         docs += load_schemaorg_description(endpoint)
-        # NOTE: we dont use the ontology for now, schema from shex is better
-        # docs += load_ontology(endpoint)
 
         # NOTE: Manually add infos for UniProt since we cant retrieve it for now. Taken from https://www.uniprot.org/help/about
         if "sparql.uniprot.org" in endpoint["endpoint_url"]:

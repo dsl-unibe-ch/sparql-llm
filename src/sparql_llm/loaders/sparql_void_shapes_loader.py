@@ -30,8 +30,15 @@ def get_shex_dict_from_void(
     namespaces_to_ignore: list[str] | None = None,
     void_file: str | None = None,
     examples_file: str | None = None,
+    term_map: dict[str, dict] | None = None,
+    shape_map: dict[str, dict] | None = None,
 ) -> dict[str, dict[str, str]]:
-    """Get a dict of shex shapes from the VoID description."""
+    """Get a dict of shex shapes from the VoID description.
+
+    When ``term_map``/``shape_map`` are provided (parsed from the local OWL profiles and
+    SHACL shapes), the per-class shapes are enriched with human labels/comments and the
+    designed property list — the WissKI endpoint itself serves almost none of these.
+    """
     prefix_map = prefix_map or get_prefixes_for_endpoint(endpoint_url, examples_file)
     namespaces_to_ignore = namespaces_to_ignore or DEFAULT_NAMESPACES_TO_IGNORE
     prefix_converter = get_prefix_converter(prefix_map)
@@ -106,6 +113,26 @@ SELECT DISTINCT * WHERE {{
     except Exception as e:
         logger.warning(f"Could not retrieve labels for classes in endpoint {endpoint_url}: {e}")
 
+    # Enrich with local ontology definitions parsed from the OWL profiles / SHACL shapes.
+    # Keyed by the compressed CURIE form (e.g. crm:E21), which matches the data/VoID IRIs
+    # even when the OntoME rdf:about differs (.../E21_Person vs .../E21).
+    if term_map or shape_map:
+        from sparql_llm.loaders.ontology_profiles_loader import format_shape_properties
+
+        for cls_uri, shex_shape in shex_dict.items():
+            curie = prefix_converter.compress(cls_uri, passthrough=True)
+            term = (term_map or {}).get(curie)
+            if term:
+                if "label" not in shex_shape and term.get("label"):
+                    shex_shape["label"] = term["label"]
+                if "comment" not in shex_shape and term.get("comment"):
+                    shex_shape["comment"] = term["comment"]
+            shape = (shape_map or {}).get(curie)
+            if shape:
+                props = format_shape_properties(shape)
+                if props:
+                    shex_shape["shex"] += "\n" + props
+
     return shex_dict
 
 
@@ -143,24 +170,36 @@ class SparqlVoidShapesLoader(BaseLoader):
         examples_file: str | None = None,
         namespaces_to_ignore: list[str] | None = None,
         prefix_map: dict[str, str] | None = None,
+        term_map: dict[str, dict] | None = None,
+        shape_map: dict[str, dict] | None = None,
     ):
         """
         Initialize the SparqlVoidShapesLoader.
 
         Args:
             endpoint_url (str): URL of the SPARQL endpoint to retrieve SPARQL queries examples from.
+            term_map: optional ``{curie -> {label, comment, ...}}`` from the OWL profiles.
+            shape_map: optional ``{class_curie -> {name, properties}}`` from the SHACL shapes.
         """
         self.endpoint_url = endpoint_url
         self.void_file = void_file
         self.examples_file = examples_file
         self.prefix_map = prefix_map
         self.namespaces_to_ignore = namespaces_to_ignore
+        self.term_map = term_map
+        self.shape_map = shape_map
 
     def load(self) -> list[Document]:
         """Load and return documents from the SPARQL endpoint."""
         docs: list[Document] = []
         shex_dict = get_shex_dict_from_void(
-            self.endpoint_url, self.prefix_map, self.namespaces_to_ignore, self.void_file, self.examples_file
+            self.endpoint_url,
+            self.prefix_map,
+            self.namespaces_to_ignore,
+            self.void_file,
+            self.examples_file,
+            term_map=self.term_map,
+            shape_map=self.shape_map,
         )
 
         for cls_uri, shex_shape in shex_dict.items():
