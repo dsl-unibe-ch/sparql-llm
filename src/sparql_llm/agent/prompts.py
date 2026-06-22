@@ -38,7 +38,8 @@ Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target i
 
 Prefixes:
 - crm:       <http://www.cidoc-crm.org/cidoc-crm/>           — E21 (Person), E67 (Birth), P96, P97, P98
-- sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — C11 (Group), C9, P16, P20, P23 (note the "-core/" suffix)
+- sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — C11 (Gender), C9 (Marriage/Union), C4 (Social Rel. Type), C3 (Social Rel.), P16, P20, P23 (note the "-core/" suffix)
+- sdh-sls:   <https://sdhss.org/ontology/social-life-specific/> — social-life-SPECIFIC (NOT "-core/"); education/study per the R2RML mapping: C7 (study/degree title), C9 (study discipline), C3
 - sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P1 (person link), P2 (group link), P9 (label)
 - swel:      <https://swiss-elites.lod4hss.cloud/resource/>  — entity URIs (e.g. swel:p12345)
 - xsd:       <http://www.w3.org/2001/XMLSchema#>

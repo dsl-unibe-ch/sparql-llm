@@ -38,6 +38,7 @@ def sparql_select(query: str) -> list[dict]:
 PREFIXES = {
     "http://www.cidoc-crm.org/cidoc-crm/": "crm",
     "https://sdhss.org/ontology/social-life-core/": "sdh-slc",
+    "https://sdhss.org/ontology/social-life-specific/": "sdh-sls",
     "https://sdhss.org/ontology/shortcuts/": "sdh-short",
     "https://sdhss.org/ontology/core/": "sdh",
     "https://sdhss.org/ontology/crm-supplement/": "crm-sup",
