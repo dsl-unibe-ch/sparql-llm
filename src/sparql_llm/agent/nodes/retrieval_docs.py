@@ -101,11 +101,23 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
                 not in {existing_doc.payload.get("answer") if existing_doc.payload else None for existing_doc in docs}
             )
 
+        # Get other relevant documentation (class schemas, general information).
+        # Drive this with the user's actual question + sub-steps, NOT only the
+        # LLM-extracted class IRIs: embedding a bare IRI like "crm:E21" retrieves
+        # poorly and the extraction step often collapses to a single class, so the
+        # relevant schema docs (e.g. crm:E67 Birth, with its date/parent properties)
+        # were never retrieved. Extracted classes are kept as an additional signal.
+        schema_queries: list[str] = [
+            user_question,
+            *state.structured_question.question_steps,
+            *state.structured_question.extracted_classes,
+        ]
+        _seen_queries: set[str] = set()
+        schema_queries = [q for q in schema_queries if q and not (q in _seen_queries or _seen_queries.add(q))]
         limit = configuration.search_kwargs.get("k", settings.default_number_of_retrieved_docs)
-        if len(state.structured_question.extracted_classes) > 3:
+        if len(schema_queries) > 3:
             limit = max(1, limit // 2)
-        # Get other relevant documentation (classes schemas, general information)
-        for search_embedding in embedding_model.embed(state.structured_question.extracted_classes):
+        for search_embedding in embedding_model.embed(schema_queries):
             docs.extend(
                 doc
                 for doc in qdrant_client.query_points(
