@@ -104,33 +104,32 @@ async def extract_user_question(
             question_steps=[last_text] if last_text else [],
         )
     # print(structured_question)
-    steps_label = (
-        f"{len(structured_question.question_steps)} steps and " if len(structured_question.question_steps) > 0 else ""
-    )
-    steps_details = (
-        f"""
-Steps to answer the user question:
+    # NOTE: extracted_classes is the LLM's pre-retrieval *guess* and is unreliable
+    # (often collapses to crm:E21, sometimes hallucinates IRIs not in the data). It is
+    # only a secondary retrieval signal, so we no longer display it here — the classes
+    # actually retrieved are reported by the `retrieve` node's "documents used" step.
+    n_steps = len(structured_question.question_steps)
+    label = f"⚗️ {n_steps} steps extracted" if n_steps > 0 else "⚗️ Question analyzed"
 
-{chr(10).join(f"- {step}" for step in structured_question.question_steps)}"""
-        if len(structured_question.question_steps) > 0
-        else ""
-    )
+    detail_parts = [f"Intent: {structured_question.intent.replace('_', ' ')}"]
+    if structured_question.question_steps:
+        detail_parts.append(
+            "Steps to answer the user question:\n\n"
+            + "\n".join(f"- {step}" for step in structured_question.question_steps)
+        )
+    # Only show named entities when the model actually found some.
+    if structured_question.extracted_entities:
+        detail_parts.append(
+            "Named entities mentioned:\n\n"
+            + "\n".join(f"- {entity}" for entity in structured_question.extracted_entities)
+        )
 
     return {
         "structured_question": structured_question,
         "steps": [
             StepOutput(
-                label=f"⚗️ {steps_label}{len(structured_question.extracted_classes)} classes extracted",
-                details=f"""Intent: {structured_question.intent.replace("_", " ")}
-{steps_details}
-
-Potential classes:
-
-{chr(10).join(f"- {cls}" for cls in structured_question.extracted_classes)}
-
-Potential entities:
-
-{chr(10).join(f"- {entity}" for entity in structured_question.extracted_entities)}""",
+                label=label,
+                details="\n\n".join(detail_parts),
             )
         ],
     }

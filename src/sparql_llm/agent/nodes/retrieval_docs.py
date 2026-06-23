@@ -153,6 +153,24 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
         StepOutput(label=doc_type, details=format_docs(docs_list)) for doc_type, docs_list in docs_by_type.items()
     ]
 
+    # Summarize the classes ACTUALLY retrieved (the truthful counterpart to the LLM's
+    # pre-retrieval guess shown by the extraction step). Dedupe by IRI, preferring the
+    # shortest payload "question" (the class label rather than a long comment doc).
+    class_labels: dict[str, str] = {}
+    for doc in docs:
+        payload = doc.payload or {}
+        if payload.get("doc_type") != "SPARQL endpoints classes schema":
+            continue
+        iri = payload.get("iri")
+        if not iri:
+            continue
+        label = str(payload.get("question") or iri)
+        if iri not in class_labels or len(label) < len(class_labels[iri]):
+            class_labels[iri] = label
+    classes_detail = (
+        "Classes retrieved: " + ", ".join(sorted(class_labels.values())) if class_labels else ""
+    )
+
     # Prefix the retrieved docs with a clear preamble so the LLM treats them as
     # *reference patterns* rather than additional user questions. Without this,
     # the model addresses every example query in the retrieved context as if
@@ -176,6 +194,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
         "steps": [
             StepOutput(
                 label=f"📚️ {len(docs)} documents used",
+                details=classes_detail,
                 substeps=substeps,
             ),
         ],
