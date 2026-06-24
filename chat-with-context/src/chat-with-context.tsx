@@ -1,4 +1,4 @@
-import {createSignal, For, createEffect} from "solid-js";
+import {createSignal, For, createEffect, Show} from "solid-js";
 import {customElement, noShadowDOM} from "solid-element";
 import {marked} from "marked";
 import DOMPurify from "dompurify";
@@ -15,11 +15,9 @@ import thumbsDownIcon from "./assets/thumbs-down.svg";
 import thumbsUpIcon from "./assets/thumbs-up.svg";
 import "./style.css";
 import {streamResponse, ChatState} from "./providers";
-// import json from "highlight.js/lib/languages/json";
 
 // Get icons svg from https://feathericons.com/
 // SolidJS custom element: https://github.com/solidjs/solid/blob/main/src/solid-element/README.md
-// https://github.com/solidjs/templates/tree/main/ts-tailwindcss
 
 /**
  * Custom element to create a chat interface with a context-aware assistant.
@@ -27,42 +25,61 @@ import {streamResponse, ChatState} from "./providers";
  */
 customElement(
   "chat-with-context",
-  {chatEndpoint: "", examples: "", apiKey: "", feedbackEndpoint: "", model: ""},
+  {chatEndpoint: "", examples: "", apiKey: "", feedbackEndpoint: "", model: "", models: ""},
   props => {
     noShadowDOM();
     hljs.registerLanguage("ttl", hljsDefineTurtle);
     hljs.registerLanguage("sparql", hljsDefineSparql);
-    // hljs.registerLanguage("json", json);
 
     const [examples, setExamples] = createSignal<string[]>([]);
     const [warningMsg, setWarningMsg] = createSignal("");
     const [loading, setLoading] = createSignal(false);
     const [dialogOpen, setDialogOpen] = createSignal("");
     const [selectedDocsTab, setSelectedDocsTab] = createSignal("");
-
     const [feedbackEndpoint, setFeedbackEndpoint] = createSignal("");
     const [feedbackSent, setFeedbackSent] = createSignal(false);
+    const [availableModels, setAvailableModels] = createSignal<string[]>([]);
+    const [selectedModel, setSelectedModel] = createSignal("");
 
     const state = new ChatState({});
     let chatContainerEl!: HTMLDivElement;
     let inputTextEl!: HTMLTextAreaElement;
 
-    marked.use({
-      gfm: true, // Includes autolinker
-    });
+    marked.use({gfm: true});
 
     createEffect(() => {
       if (props.chatEndpoint === "") setWarningMsg("Please provide an API URL for the chat component to work.");
       state.apiUrl = props.chatEndpoint;
       state.apiKey = props.apiKey;
-      state.model = props.model;
-      // Prevent automatic scrolling when typing — keep the window where it is.
       state.scrollToInput = () => {};
       state.onMessageUpdate = () => highlightAll();
       setExamples(props.examples.split(",").map(value => value.trim()));
       setFeedbackEndpoint(props.feedbackEndpoint);
       fixInputHeight();
+
+      // Parse models prop (comma-separated: "gpustack/foo,gpustack/bar")
+      if (props.models) {
+        const list = props.models.split(",").map(m => m.trim()).filter(Boolean);
+        setAvailableModels(list);
+        // Use props.model as default if provided and in list, otherwise first
+        const def = props.model && list.includes(props.model) ? props.model : list[0];
+        if (def) {
+          setSelectedModel(def);
+          state.model = def;
+        }
+      } else if (props.model) {
+        state.model = props.model;
+        setSelectedModel(props.model);
+      }
     });
+
+    const handleModelChange = (model: string) => {
+      setSelectedModel(model);
+      state.model = model;
+    };
+
+    // Display label: strip "provider/" prefix for readability
+    const modelLabel = (m: string) => m.replace(/^[^/]+\//, "");
 
     const openDialog = (dialogId: string) => {
       setDialogOpen(dialogId);
@@ -77,10 +94,8 @@ customElement(
       const dialogEl = document.getElementById(dialogOpen()) as HTMLDialogElement;
       if (dialogEl) dialogEl.close();
       setDialogOpen("");
-      // history.back();
     };
 
-    // Close open dialogs with the browser navigation "go back one page" button
     createEffect(() => {
       window.addEventListener("popstate", event => {
         if (dialogOpen()) {
@@ -96,7 +111,6 @@ customElement(
       });
     };
 
-    // Send the user input to the chat API
     async function submitInput(question: string) {
       if (!question.trim()) return;
       if (loading()) return;
@@ -141,14 +155,11 @@ customElement(
       setFeedbackSent(true);
     }
 
-    // Fix input height to fit content
     function fixInputHeight() {
-      // Preserve window scroll position to avoid jumping when the textarea grows.
       const scrollX = window.scrollX || window.pageXOffset;
       const scrollY = window.scrollY || window.pageYOffset;
       inputTextEl.style.height = "auto";
       inputTextEl.style.height = inputTextEl.scrollHeight + "px";
-      // Restore scroll position (do it twice to be robust against layout changes)
       window.scrollTo(scrollX, scrollY);
       setTimeout(() => window.scrollTo(scrollX, scrollY), 0);
     }
@@ -156,160 +167,182 @@ customElement(
     return (
       <div
         class={`chat-with-context w-full h-full flex flex-col ${state.messages().length === 0 ? "justify-center" : ""}`}
+        style={{"min-height": "0"}}
       >
         <style>{style}</style>
-        {/* Main chat container */}
-        <div ref={chatContainerEl} class={`overflow-y-auto ${state.messages().length !== 0 ? "flex-grow" : ""}`}>
+
+        {/* Messages area — flex-grow + min-height:0 so it scrolls within the flex parent */}
+        <div
+          ref={chatContainerEl}
+          class="overflow-y-auto flex-1 px-1"
+          style={{"min-height": "0"}}
+        >
           <For each={state.messages()}>
             {(msg, iMsg) => (
-              <div class={`w-full flex flex-col flex-grow ${msg.role === "user" ? "items-end" : ""}`}>
-                <div class={`py-2.5 mb-2 ${msg.role === "user" ? "bg-gray-300 rounded-3xl px-5" : ""}`}>
-                  <div class="flex flex-col items-start">
-                    <For each={msg.steps()}>
-                      {(step, iStep) =>
-                        step.substeps && step.substeps.length > 0 ? (
-                          <>
-                            {/* Dialog to show more details about a step with substeps (e.g. retrieved documents) */}
-                            <button
-                              class="text-gray-600 ml-8 mb-4 px-3 py-1 border border-gray-300 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
-                              title={`Click to see the documents used to generate the response\n\nNode: ${step.node_id}`}
-                              onClick={() => {
-                                setSelectedDocsTab(step.substeps?.[0]?.label || "");
-                                openDialog(`step-dialog-${iMsg()}-${iStep()}`);
-                              }}
-                            >
-                              {step.label}
-                            </button>
-                            <dialog
-                              id={`step-dialog-${iMsg()}-${iStep()}`}
-                              class="bg-white dark:bg-gray-800 m-3 rounded-3xl shadow-md w-full"
-                              onClose={() => closeDialog()}
-                            >
+              <div class={`w-full flex ${msg.role === "user" ? "justify-end" : "justify-start"} mb-4`}>
+                <div
+                  class={`max-w-3xl ${
+                    msg.role === "user"
+                      ? "bg-slate-700 text-white rounded-3xl rounded-br-md px-5 py-3"
+                      : "w-full px-1"
+                  }`}
+                >
+                  {/* Steps (only for assistant) */}
+                  <Show when={msg.role === "assistant"}>
+                    <div class="flex flex-col items-start mb-2">
+                      <For each={msg.steps()}>
+                        {(step, iStep) =>
+                          step.substeps && step.substeps.length > 0 ? (
+                            <>
                               <button
-                                id={`close-dialog-${iMsg()}-${iStep()}`}
-                                class="fixed top-2 right-8 m-3 px-2 text-xl text-slate-500 bg-gray-200 dark:bg-gray-700 rounded-3xl"
-                                title="Close documents details"
-                                onClick={() => closeDialog()}
+                                class="inline-flex items-center gap-1.5 text-xs text-slate-500 mb-2 px-3 py-1.5 border border-slate-200 rounded-full bg-slate-50 hover:bg-slate-100 hover:border-slate-300 transition-all"
+                                title={`Click to see documents used\n\nNode: ${step.node_id}`}
+                                onClick={() => {
+                                  setSelectedDocsTab(step.substeps?.[0]?.label || "");
+                                  openDialog(`step-dialog-${iMsg()}-${iStep()}`);
+                                }}
                               >
-                                <img src={xIcon} alt="Close the dialog" class="iconBtn" />
+                                <span>{step.label}</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
                               </button>
-                              <article class="prose max-w-full p-3">
-                                <div class="flex space-x-2 mb-4">
-                                  <For each={step.substeps.map(substep => substep.label)}>
-                                    {label => (
-                                      <button
-                                        class={`px-4 py-2 rounded-lg transition-all ${
-                                          selectedDocsTab() === label
-                                            ? "bg-gray-600 text-white shadow-md"
-                                            : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                                        }`}
-                                        onClick={() => {
-                                          setSelectedDocsTab(label);
-                                          highlightAll();
-                                        }}
-                                        title={`Show ${label}`}
-                                      >
-                                        {label}
-                                      </button>
+                              <dialog
+                                id={`step-dialog-${iMsg()}-${iStep()}`}
+                                class="bg-white m-3 rounded-2xl shadow-2xl w-full max-w-4xl border border-slate-200"
+                                onClose={() => closeDialog()}
+                              >
+                                <div class="flex items-center justify-between p-4 border-b border-slate-100">
+                                  <h3 class="font-semibold text-slate-700">{step.label}</h3>
+                                  <button
+                                    class="p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+                                    title="Close"
+                                    onClick={() => closeDialog()}
+                                  >
+                                    <img src={xIcon} alt="Close" class="iconBtn w-4 h-4" />
+                                  </button>
+                                </div>
+                                <div class="p-4">
+                                  <div class="flex flex-wrap gap-2 mb-4">
+                                    <For each={step.substeps.map(substep => substep.label)}>
+                                      {label => (
+                                        <button
+                                          class={`px-3 py-1.5 text-sm rounded-full transition-all ${
+                                            selectedDocsTab() === label
+                                              ? "bg-slate-700 text-white"
+                                              : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                                          }`}
+                                          onClick={() => {
+                                            setSelectedDocsTab(label);
+                                            highlightAll();
+                                          }}
+                                        >
+                                          {label}
+                                        </button>
+                                      )}
+                                    </For>
+                                  </div>
+                                  <For each={step.substeps.filter(substep => substep.label === selectedDocsTab())}>
+                                    {substep => (
+                                      <article
+                                        class="prose max-w-full"
+                                        // eslint-disable-next-line solid/no-innerhtml
+                                        innerHTML={DOMPurify.sanitize(marked.parse(substep.details) as string, {
+                                          ADD_TAGS: ["think"],
+                                        })}
+                                      />
                                     )}
                                   </For>
                                 </div>
-                                <For each={step.substeps.filter(substep => substep.label === selectedDocsTab())}>
-                                  {substep => (
-                                    <article
-                                      class="prose max-w-full"
-                                      // eslint-disable-next-line solid/no-innerhtml
-                                      innerHTML={DOMPurify.sanitize(marked.parse(substep.details) as string, {
-                                        ADD_TAGS: ["think"],
-                                      })}
-                                    />
-                                  )}
-                                </For>
-                              </article>
-                            </dialog>
-                          </>
-                        ) : step.details ? (
-                          <>
-                            {/* Dialog to show more details about a step in markdown */}
-                            <button
-                              class="text-gray-600 ml-8 mb-4 px-3 py-1 border border-gray-300 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
-                              title={`Click to see the documents used to generate the response\n\nNode: ${step.node_id}`}
-                              onClick={() => {
-                                openDialog(`step-dialog-${iMsg()}-${iStep()}`);
-                              }}
-                            >
-                              {step.label}
-                            </button>
-                            <dialog
-                              id={`step-dialog-${iMsg()}-${iStep()}`}
-                              class="bg-white dark:bg-gray-800 m-3 rounded-3xl shadow-md w-full"
-                              onClose={() => closeDialog()}
-                            >
+                              </dialog>
+                            </>
+                          ) : step.details ? (
+                            <>
                               <button
-                                id={`close-dialog-${iMsg()}-${iStep()}`}
-                                class="fixed top-2 right-8 m-3 px-2 text-xl text-slate-500 bg-gray-200 dark:bg-gray-700 rounded-3xl"
-                                title="Close step details"
-                                onClick={() => closeDialog()}
+                                class="inline-flex items-center gap-1.5 text-xs text-slate-500 mb-2 px-3 py-1.5 border border-slate-200 rounded-full bg-slate-50 hover:bg-slate-100 hover:border-slate-300 transition-all"
+                                title={`Click to see details\n\nNode: ${step.node_id}`}
+                                onClick={() => openDialog(`step-dialog-${iMsg()}-${iStep()}`)}
                               >
-                                <img src={xIcon} alt="Close the dialog" class="iconBtn" />
+                                <span>{step.label}</span>
+                                <svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
                               </button>
-                              <article
-                                class="prose max-w-full p-6"
-                                // eslint-disable-next-line solid/no-innerhtml
-                                innerHTML={DOMPurify.sanitize(marked.parse(step.details) as string, {
-                                  ADD_TAGS: ["think"],
-                                })}
-                              />
-                            </dialog>
-                          </>
-                        ) : (
-                          // Display basic step without details
-                          <p class="text-gray-400 ml-8 mb-4" title={`Node: ${step.node_id}`}>
-                            {step.label}
-                          </p>
-                        )
-                      }
-                    </For>
-                  </div>
-                  <article
-                    class="prose max-w-full"
-                    // eslint-disable-next-line solid/no-innerhtml
-                    innerHTML={DOMPurify.sanitize(marked.parse(msg.content()) as string, {ADD_TAGS: ["think"]})}
-                    // innerHTML={marked.parse(msg.content()) as string}
-                  />
+                              <dialog
+                                id={`step-dialog-${iMsg()}-${iStep()}`}
+                                class="bg-white m-3 rounded-2xl shadow-2xl w-full max-w-4xl border border-slate-200"
+                                onClose={() => closeDialog()}
+                              >
+                                <div class="flex items-center justify-between p-4 border-b border-slate-100">
+                                  <h3 class="font-semibold text-slate-700">{step.label}</h3>
+                                  <button
+                                    class="p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+                                    title="Close"
+                                    onClick={() => closeDialog()}
+                                  >
+                                    <img src={xIcon} alt="Close" class="iconBtn w-4 h-4" />
+                                  </button>
+                                </div>
+                                <article
+                                  class="prose max-w-full p-6"
+                                  // eslint-disable-next-line solid/no-innerhtml
+                                  innerHTML={DOMPurify.sanitize(marked.parse(step.details) as string, {
+                                    ADD_TAGS: ["think"],
+                                  })}
+                                />
+                              </dialog>
+                            </>
+                          ) : (
+                            <p class="inline-flex items-center gap-1.5 text-xs text-slate-400 mb-2 px-3 py-1.5" title={`Node: ${step.node_id}`}>
+                              {step.label}
+                            </p>
+                          )
+                        }
+                      </For>
+                    </div>
+                  </Show>
 
-                  {/* Add links, e.g. to Run or edit the query */}
+                  {/* Message content */}
+                  {msg.role === "user" ? (
+                    // User messages: plain text, no prose override
+                    <p class="text-sm leading-relaxed whitespace-pre-wrap">{msg.content()}</p>
+                  ) : (
+                    <article
+                      class="prose max-w-full"
+                      // eslint-disable-next-line solid/no-innerhtml
+                      innerHTML={DOMPurify.sanitize(marked.parse(msg.content()) as string, {ADD_TAGS: ["think"]})}
+                    />
+                  )}
+
+                  {/* Run query links */}
                   <For each={msg.links()}>
                     {link => (
                       <a href={link.url} title={link.title} target="_blank" class="hover:text-inherit">
-                        <button class="my-3 mr-1 px-3 py-1 text-sm bg-gray-300 dark:bg-gray-700 rounded-3xl align-middle">
-                          {link.label}
+                        <button class="mt-3 mr-1 px-3 py-1.5 text-xs font-medium bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-full transition-colors">
+                          {link.label} →
                         </button>
                       </a>
                     )}
                   </For>
-                  {/* Show feedback buttons only for last message */}
+
+                  {/* Feedback buttons */}
                   {feedbackEndpoint() &&
                     msg.role === "assistant" &&
                     iMsg() === state.messages().length - 1 &&
                     state.lastMsg().content() &&
                     !feedbackSent() && (
-                      <>
+                      <div class="flex gap-1 mt-2">
                         <button
-                          class="mr-1 my-3 px-3 py-1 text-sm hover:bg-gray-300 dark:hover:bg-gray-800 rounded-3xl align-middle"
-                          title="Report a good response"
+                          class="p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+                          title="Good response"
                           onClick={() => sendFeedback(true)}
                         >
-                          <img src={thumbsUpIcon} alt="Thumbs up" height="20px" width="20px" class="iconBtn" />
+                          <img src={thumbsUpIcon} alt="Thumbs up" height="16px" width="16px" class="iconBtn" />
                         </button>
                         <button
-                          class="my-3 px-3 py-1 text-sm hover:bg-gray-300 dark:hover:bg-gray-800 rounded-3xl align-middle"
-                          title="Report a bad response"
+                          class="p-1.5 rounded-full hover:bg-slate-100 transition-colors"
+                          title="Bad response"
                           onClick={() => sendFeedback(false)}
                         >
-                          <img src={thumbsDownIcon} alt="Thumbs down" height="20px" width="20px" class="iconBtn" />
+                          <img src={thumbsDownIcon} alt="Thumbs down" height="16px" width="16px" class="iconBtn" />
                         </button>
-                      </>
+                      </div>
                     )}
                 </div>
               </div>
@@ -319,92 +352,127 @@ customElement(
 
         {/* Warning message */}
         {warningMsg() && (
-          <div class="text-center">
-            <div class="bg-orange-300 p-2 text-orange-900 text-sm rounded-3xl font-semibold mb-2 inline-block">
-              {warningMsg()}
+          <div class="text-center px-4 mb-2 flex-shrink-0">
+            <div class="bg-amber-50 border border-amber-200 p-3 text-amber-800 text-sm rounded-xl inline-block">
+              ⚠️ {warningMsg()}
             </div>
           </div>
         )}
 
-        {/* Input text box */}
-        <form
-          class="p-2 flex"
-          onSubmit={event => {
-            event.preventDefault();
-            // Only abort if it's a click event (not from pressing Enter)
-            if (event.type === "submit" && event.submitter && loading()) {
-              state.abortRequest();
-            }
-            submitInput(inputTextEl.value);
-          }}
-        >
-          <div class="container flex mx-auto max-w-5xl items-start space-x-2">
-            {/* input wrapper: relative so we can absolutely position the send button inside */}
-            <div class="relative flex-grow">
+        {/* Input area — always pinned at the bottom */}
+        <div class="px-4 pb-4 flex-shrink-0">
+          <div class="mx-auto max-w-3xl">
+            <form
+              onSubmit={event => {
+                event.preventDefault();
+                if (loading()) {
+                  state.abortRequest();
+                  return;
+                }
+                submitInput(inputTextEl.value);
+              }}
+            >
+            <div class="bg-white border border-slate-300 rounded-2xl shadow-sm focus-within:ring-2 focus-within:ring-slate-400 focus-within:border-transparent transition-all">
+              {/* Textarea */}
               <textarea
                 ref={inputTextEl}
                 autofocus
-                class="w-full px-4 pr-14 py-2 h-auto border border-slate-400 bg-slate-200 dark:bg-slate-700 dark:border-slate-500 rounded-3xl focus:outline-none focus:ring focus:ring-blue-200 dark:focus:ring-blue-400 overflow-y-hidden resize-none"
+                class="w-full px-4 pt-3 pb-2 bg-transparent rounded-2xl focus:outline-none resize-none overflow-y-hidden text-slate-800 placeholder-slate-400"
                 style={{"overflow-anchor": "none"}}
-                placeholder="Ask your question"
+                placeholder="Ask a question about Swiss Elites…"
                 rows="1"
                 onKeyDown={event => {
                   if (event.key === "Enter" && !event.shiftKey) {
                     event.preventDefault();
+                    if (loading()) {
+                      state.abortRequest();
+                      return;
+                    }
                     submitInput(inputTextEl.value);
                   }
                 }}
                 onInput={() => fixInputHeight()}
               />
 
-              {/* send button positioned inside the input, vertically centered with first line */}
-              <button
-                type="submit"
-                title={loading() ? "Stop generation" : "Send question"}
-                class={`absolute right-2 top-1 w-8 h-8 flex items-center justify-center rounded-full text-slate-500 bg-slate-100 dark:text-slate-400 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 shadow-sm ${
-                  loading() ? "loading-spark" : ""
-                }`}
-                aria-label={loading() ? "Stop generation" : "Send question"}
-              >
-                {loading() ? (
-                  <img src={squareIcon} alt="Stop generation" class="iconBtn w-4 h-4" />
-                ) : (
-                  <img src={arrowUpIcon} alt="Send question" class="iconBtn w-4 h-4" />
-                )}
-              </button>
-            </div>
+              {/* Bottom toolbar */}
+              <div class="flex items-center justify-between px-3 pb-2">
+                {/* Left: new chat + model selector */}
+                <div class="flex items-center gap-2">
+                  <button
+                    title="New conversation"
+                    class="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                    onClick={() => state.resetSession()}
+                    type="button"
+                    aria-label="Start a new conversation"
+                  >
+                    <img src={editIcon} alt="New conversation" class="iconBtn w-4 h-4" />
+                  </button>
 
-            {/* Start new conversation button aligned to match submit button position */}
-            <div class="flex-shrink-0 self-start mt-1">
-              <button
-                title="Start a new conversation"
-                class="w-8 h-8 flex items-center justify-center rounded-full text-slate-500 bg-slate-100 dark:text-slate-400 dark:bg-slate-700 border border-slate-300 dark:border-slate-600 shadow-sm"
-                onClick={() => state.resetSession()}
-                type="button"
-                aria-label="Start a new conversation"
-              >
-                <img src={editIcon} alt="Start a new conversation" class="iconBtn w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        </form>
+                  <Show when={availableModels().length > 1}>
+                    <div class="relative">
+                      <select
+                        class="appearance-none text-xs font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 border-0 rounded-full pl-3 pr-7 py-1.5 cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-300 transition-colors"
+                        value={selectedModel()}
+                        onChange={e => handleModelChange((e.target as HTMLSelectElement).value)}
+                        title="Select AI model"
+                      >
+                        <For each={availableModels()}>
+                          {m => <option value={m}>{modelLabel(m)}</option>}
+                        </For>
+                      </select>
+                      <svg class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+                    </div>
+                  </Show>
+                </div>
 
-        {/* List of examples */}
-        {state.messages().length < 1 && (
-          <div class="py-2 px-4 justify-center items-center text-sm flex flex-col space-y-2">
-            <For each={examples()}>
-              {example => (
+                {/* Right: send / stop button */}
                 <button
-                  onClick={() => submitInput(example)}
-                  class="px-5 py-2.5 bg-slate-200 text-slate-600 rounded-3xl"
+                  type="submit"
+                  title={loading() ? "Stop generation" : "Send question"}
+                  class={`w-8 h-8 flex items-center justify-center rounded-full transition-colors ${
+                    loading() ? "bg-slate-700 loading-spark" : "bg-slate-700 hover:bg-slate-800"
+                  }`}
+                  aria-label={loading() ? "Stop generation" : "Send question"}
                 >
-                  {example}
+                  {loading() ? (
+                    <img src={squareIcon} alt="Stop" class="w-3 h-3" style="filter: invert(1)" />
+                  ) : (
+                    <img src={arrowUpIcon} alt="Send" class="w-4 h-4" style="filter: invert(1)" />
+                  )}
                 </button>
-              )}
-            </For>
+              </div>
+            </div>
+            </form>
+
+            {/* Hint text */}
+            <p class="text-center text-xs text-slate-400 mt-2">
+              Press <kbd class="px-1 py-0.5 bg-slate-100 rounded text-slate-500 font-mono text-xs">Enter</kbd> to send · <kbd class="px-1 py-0.5 bg-slate-100 rounded text-slate-500 font-mono text-xs">Shift+Enter</kbd> for new line
+            </p>
+          </div>
+        </div>
+
+        {/* Example questions */}
+        {state.messages().length < 1 && (
+          <div class="px-4 pb-6 flex-shrink-0">
+            <div class="mx-auto max-w-3xl">
+              <p class="text-xs text-slate-400 text-center mb-3 uppercase tracking-wide font-medium">Try asking</p>
+              <div class="flex flex-wrap gap-2 justify-center">
+                <For each={examples()}>
+                  {example => (
+                    <button
+                      onClick={() => submitInput(example)}
+                      class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm rounded-full transition-colors border border-slate-200 hover:border-slate-300"
+                    >
+                      {example}
+                    </button>
+                  )}
+                </For>
+              </div>
+            </div>
           </div>
         )}
       </div>
     );
   },
 );
+

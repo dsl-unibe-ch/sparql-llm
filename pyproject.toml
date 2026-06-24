@@ -67,6 +67,9 @@ agent = [
     "pydantic-settings >=2.7.0",
     "jinja2 >=3.1.5",
     "sentry-sdk[fastapi] >=2.27.0", # Error reporting at the SIB
+    "fastapi-users[sqlalchemy] >=13.0.0",
+    "aiosqlite >=0.20.0",
+    "python-multipart >=0.0.9",
     # Extract potential entities from text without LLM
     # "scispacy >=0.5.5",
     # "en_core_sci_md @ https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.4/en_core_sci_md-0.5.4.tar.gz",

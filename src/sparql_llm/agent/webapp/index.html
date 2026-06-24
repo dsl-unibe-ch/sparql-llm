@@ -9,83 +9,114 @@
       content="Natural-language interface to the Elites Suisses knowledge graph — ~58,700 Swiss elites with biographical data, family relations, education, and organisational affiliations."
     />
     <link rel="icon" type="image/png" href="/assets/sib-logo--jUM9mer.png" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f8fafc; color: #1e293b;
+        display: flex; flex-direction: column; overflow: hidden;
+      }
 
+      /* ── Header ── */
+      .site-header {
+        flex-shrink: 0;
+        background: rgba(255,255,255,0.9);
+        -webkit-backdrop-filter: blur(12px);
+                backdrop-filter: blur(12px);
+        border-bottom: 1px solid #e2e8f0;
+        padding: 0 1.25rem;
+        display: flex; align-items: center; justify-content: space-between;
+        height: 52px;
+        z-index: 40;
+      }
+      .header-brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 600; font-size: 0.95rem; color: #1e293b; text-decoration: none; }
+      .header-brand .badge { font-size: 0.65rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; background: #dc2626; color: #fff; padding: 2px 8px; border-radius: 999px; }
+      .header-actions { display: flex; align-items: center; gap: 0.75rem; }
+      .icon-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; border: none; background: transparent; cursor: pointer; color: #64748b; transition: background 0.15s, color 0.15s; text-decoration: none; }
+      .icon-btn:hover { background: #f1f5f9; color: #1e293b; }
 
+      /* ── Info banner ── */
+      .info-banner {
+        flex-shrink: 0;
+        background: #fff; border-bottom: 1px solid #e2e8f0;
+        padding: 0.75rem 1.25rem;
+        display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem;
+      }
+      .info-banner-text { font-size: 0.8rem; color: #64748b; line-height: 1.5; max-width: 820px; }
+      .info-banner-text a { color: #475569; }
+      .info-banner-text strong { color: #334155; }
+      .info-toggle { flex-shrink: 0; font-size: 0.75rem; color: #94a3b8; background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 6px; white-space: nowrap; }
+      .info-toggle:hover { background: #f1f5f9; color: #64748b; }
+      .info-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.4rem; }
+      .info-pill { font-size: 0.7rem; background: #f1f5f9; border: 1px solid #e2e8f0; border-radius: 999px; padding: 2px 10px; color: #475569; }
 
-    <!-- <link href="https://unpkg.com/@sib-swiss/chat-with-context/dist/style.css" rel="stylesheet" />
-    <script type="module" src="https://unpkg.com/@sib-swiss/chat-with-context/dist/chat-with-context.js"></script> -->
-    <script type="module" crossorigin src="/assets/index-quqPNvA6.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DUrw8Cxs.css">
+      /* ── Main layout: takes all remaining height ── */
+      .main-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+      .chat-wrapper { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0.75rem 1rem 0; max-width: 860px; width: 100%; margin: 0 auto; }
+      /* Custom element must fill and flex as a column */
+      chat-with-context { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+    </style>
+    <script type="module" crossorigin src="/assets/index-BTGm49kZ.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Bt8F4MTn.css">
   </head>
 
-  <!-- Swiss Elites Chat served by the DSL UniBE API -->
-
-  <!-- <body class="bg-gray-100 dark:bg-gray-800 text-black dark:text-white"> -->
   <body>
-    <div class="flex flex-col h-screen w-full">
-      <nav class="flex justify-end">
-        <a
-          href="https://github.com/dsl-unibe-ch/sparql-llm"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="text-black hover:text-black dark:text-white align-middle"
-        >
-          <button
-            title="Source code on GitHub"
-            class="px-4 py-2 m-1 rounded-lg hover:bg-gray-300 dark:hover:bg-slate-500"
-          >
-            <img src="data:image/svg+xml,%3csvg%20xmlns='http://www.w3.org/2000/svg'%20width='24'%20height='24'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='currentColor'%20stroke-width='2'%20stroke-linecap='round'%20stroke-linejoin='round'%20class='feather%20feather-github'%3e%3cpath%20d='M9%2019c-5%201.5-5-2.5-7-3m14%206v-3.87a3.37%203.37%200%200%200-.94-2.61c3.14-.35%206.44-1.54%206.44-7A5.44%205.44%200%200%200%2020%204.77%205.07%205.07%200%200%200%2019.91%201S18.73.65%2016%202.48a13.38%2013.38%200%200%200-7%200C6.27.65%205.09%201%205.09%201A5.07%205.07%200%200%200%205%204.77a5.44%205.44%200%200%200-1.5%203.78c0%205.42%203.3%206.61%206.44%207A3.37%203.37%200%200%200%209%2018.13V22'%3e%3c/path%3e%3c/svg%3e" alt="GitHub logo" />
-          </button>
+    <!-- Header -->
+    <header class="site-header">
+      <a href="/" class="header-brand">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        Swiss Elites Chat
+        <span class="badge">Beta</span>
+      </a>
+      <div class="header-actions">
+        {% if is_superuser %}
+        <a href="/admin" class="icon-btn" title="Admin panel">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+          <span style="font-size:0.78rem;font-weight:600;margin-left:2px">Admin</span>
         </a>
-      </nav>
-
-      <div class="text-left text-sm mb-5 prose max-w-3xl mx-auto pb-5 border-b">
-        <h2 class="text-xl text-center font-semibold border-b pb-2">
-          Swiss Elites Chat
-          <div
-            class="inline-block ml-3 px-3 py-1 bg-red-600 text-white text-sm font-semibold rounded-full justify-center items-center"
-          >
-            Beta
-          </div>
-        </h2>
-        <p>
-          A natural-language interface to the <strong>Elites Suisses</strong> knowledge graph, curated by the
-          <a href="https://elites-suisses.lod4hss.org/" target="_blank">LESSH project</a>
-          (Université de Lausanne / Universität Bern). Ask questions in English or French about
-          <strong>~58,700 Swiss elites</strong> — political, economic, academic, and military figures from the
-          19th–20th centuries — and the chat returns a SPARQL query against the
-          <a href="https://swiss-elites.lod4hss.cloud/wisski/endpoint/default" target="_blank">public endpoint</a>.
-        </p>
-        <p>The graph currently exposes:</p>
-        <ul style="list-style: inside">
-          <li><strong>Persons</strong> (<code>crm:E21</code>) — 58,729 entries with names</li>
-          <li><strong>Birth events</strong> (<code>crm:E67</code>) — ~10,000 entries</li>
-          <li><strong>Family relations</strong> (<code>crm:P96</code>/<code>P97</code>) — parents and children</li>
-          <li><strong>Organisations &amp; memberships</strong> (<code>sdh-slc:C11</code>) — coming soon (currently only 2 entries)</li>
-        </ul>
-        <p>
-          Ontologies: <a href="https://cidoc-crm.org/" target="_blank">CIDOC CRM</a> +
-          <a href="https://sdhss.org/" target="_blank">SDHSS</a> (social-life-core, shortcuts).
-          The system uses Retrieval-Augmented Generation (RAG) over example queries and the dataset's VoID
-          description, with SPARQL validation and optional auto-execution.
-        </p>
-        <p>
-          <strong>We value your input!</strong> Feedback and bug reports are welcome — file an issue on the
-          <a href="https://github.com/lod4hss-projects/elites_suisses_data" target="_blank">LESSH data repository</a>.
-        </p>
+        {% endif %}
+        {% if auth_enabled %}
+        <a href="/change-password" class="icon-btn" title="Change password">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span style="font-size:0.78rem;font-weight:600;margin-left:2px">Password</span>
+        </a>
+        <form method="post" action="/logout" style="margin:0">
+          <button type="submit" class="icon-btn" title="Sign out">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+            <span style="font-size:0.78rem;font-weight:600;margin-left:2px">Sign out</span>
+          </button>
+        </form>
+        {% endif %}
+        <a href="https://github.com/dsl-unibe-ch/sparql-llm" target="_blank" rel="noopener noreferrer" class="icon-btn" title="Source code on GitHub">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
+        </a>
       </div>
+    </header>
 
-      <div class="mx-5 flex items-center justify-end py-1" id="model-selector" style="display: none;">
-        <label for="model-select" class="text-sm text-slate-500 mr-2">Model:</label>
-        <select
-          id="model-select"
-          class="text-sm border border-slate-300 bg-slate-100 rounded-lg px-3 py-1 focus:outline-none focus:ring focus:ring-blue-200 cursor-pointer"
-        >
-          <option value="">Loading…</option>
-        </select>
+    <!-- Collapsible info banner -->
+    <div class="info-banner" id="info-banner">
+      <div class="info-banner-text">
+        A natural-language interface to the <strong>Elites Suisses</strong> knowledge graph by the
+        <a href="https://elites-suisses.lod4hss.org/" target="_blank">LESSH project</a>
+        (Université de Lausanne / Universität Bern). Ask in English or French about
+        <strong>~58,700 Swiss political, economic, academic and military figures</strong>
+        from the 19th–20th centuries. The system generates SPARQL queries against the
+        <a href="https://swiss-elites.lod4hss.cloud/wisski/endpoint/default" target="_blank">public endpoint</a>
+        using RAG over curated examples and dataset schema.
+        <div class="info-pills">
+          <span class="info-pill">58,729 persons (crm:E21)</span>
+          <span class="info-pill">~10,000 birth events (crm:E67)</span>
+          <span class="info-pill">Family relations (P96/P97)</span>
+          <span class="info-pill">CIDOC CRM · SDHSS ontologies</span>
+        </div>
       </div>
+      <button class="info-toggle" onclick="toggleInfo()" title="Collapse info" id="info-toggle-btn">Hide ↑</button>
+    </div>
 
-      <div class="flex-grow mx-5">
+    <!-- Chat -->
+    <div class="main-layout" id="main-layout">
+      <div class="chat-wrapper">
         <chat-with-context
           id="chat-element"
           chat-endpoint="{{ chat_endpoint }}"
@@ -99,10 +130,31 @@
   </body>
 
   <script>
+    // ── Info banner toggle ──
+    var infoBannerVisible = true;
+    function toggleInfo() {
+      var banner = document.getElementById("info-banner");
+      var btn = document.getElementById("info-toggle-btn");
+      infoBannerVisible = !infoBannerVisible;
+      banner.style.display = infoBannerVisible ? "" : "none";
+      if (!infoBannerVisible) {
+        btn.style.position = "fixed";
+        btn.style.top = "10px";
+        btn.style.right = "56px";
+        btn.style.zIndex = "50";
+        btn.textContent = "About ↓";
+      } else {
+        btn.style.position = "";
+        btn.style.top = "";
+        btn.style.right = "";
+        btn.style.zIndex = "";
+        btn.textContent = "Hide ↑";
+      }
+    }
+
+    // ── Fetch models and wire up the chat element ──
     (function () {
       var chatEl = document.getElementById("chat-element");
-      var modelSelect = document.getElementById("model-select");
-      var modelSelector = document.getElementById("model-selector");
       var apiKey = "{{ api_key }}";
 
       fetch("/models", {
@@ -111,33 +163,13 @@
         .then(function (r) { return r.json(); })
         .then(function (data) {
           if (!data.models || data.models.length === 0) return;
-
-          modelSelect.innerHTML = "";
-          data.models.forEach(function (model) {
-            var opt = document.createElement("option");
-            opt.value = model;
-            opt.textContent = model.replace(/^[^\/]+\//, "");
-            if (model === data.default) opt.selected = true;
-            modelSelect.appendChild(opt);
-          });
-
-          // Initialise the component with the default model
-          var initial = data.default || data.models[0];
-          chatEl.setAttribute("model", initial);
-          modelSelect.value = initial;
-
-          // Show the selector only when there are multiple models
-          if (data.models.length > 1) {
-            modelSelector.style.display = "flex";
-          }
+          chatEl.setAttribute("models", data.models.join(","));
+          chatEl.setAttribute("model", data.default || data.models[0]);
         })
         .catch(function (err) {
           console.error("Failed to fetch models:", err);
         });
-
-      modelSelect.addEventListener("change", function () {
-        chatEl.setAttribute("model", modelSelect.value);
-      });
     })();
   </script>
 </html>
+

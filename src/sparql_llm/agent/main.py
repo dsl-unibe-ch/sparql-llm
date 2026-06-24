@@ -11,10 +11,10 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, Form, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langchain_core.runnables import RunnableConfig
@@ -43,10 +43,66 @@ langfuse_handler = [CallbackHandler(update_trace=True)] if os.getenv("LANGFUSE_S
 
 mcp = get_mcp_app()
 
+# Auth imports (only when auth is enabled to avoid import errors if not installed)
+if settings.auth_enabled:
+    import fastapi_users.exceptions as _fu_exc
+    from fastapi_users.authentication import CookieTransport
+
+    from sparql_llm.agent.auth import (
+        User,
+        auth_backend,
+        create_db_and_tables,
+        current_active_user,
+        fastapi_users,
+        get_user_manager,
+        optional_current_user,
+    )
+
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """FastAPI lifespan that initializes the MCP session manager."""
+    """FastAPI lifespan that initializes the MCP session manager and auth DB."""
+    if settings.auth_enabled:
+        # Ensure the data directory exists
+        pathlib.Path(settings.auth_db_path).parent.mkdir(parents=True, exist_ok=True)
+        await create_db_and_tables()
+        # Create initial admin user if credentials are configured
+        if settings.admin_email and settings.admin_password:
+            from fastapi_users.password import PasswordHelper
+
+            from sparql_llm.agent.auth import User, async_session_maker, get_user_manager
+            from sparql_llm.agent.auth import UserManager
+            from sparql_llm.agent.auth import get_user_db
+            from sparql_llm.agent.auth import SQLAlchemyUserDatabase
+            from fastapi_users import schemas
+
+            async with async_session_maker() as session:
+                from sparql_llm.agent.auth import User as UserModel
+                from fastapi_users.db import SQLAlchemyUserDatabase
+
+                user_db = SQLAlchemyUserDatabase(session, UserModel)
+                password_helper = PasswordHelper()
+                manager = UserManager(user_db)
+                try:
+                    from fastapi_users import schemas as fu_schemas
+                    existing = await manager.get_by_email(settings.admin_email)
+                    logger.info(f"🔐 Admin user already exists: {existing.email}")
+                except Exception:
+                    hashed = password_helper.hash(settings.admin_password)
+                    from sqlalchemy import insert
+                    import uuid as _uuid
+                    await session.execute(
+                        UserModel.__table__.insert().values(
+                            id=_uuid.uuid4(),
+                            email=settings.admin_email,
+                            hashed_password=hashed,
+                            is_active=True,
+                            is_superuser=True,
+                            is_verified=True,
+                        )
+                    )
+                    await session.commit()
+                    logger.info(f"🔐 Created initial admin user: {settings.admin_email}")
     async with mcp.session_manager.run():
         yield
 
@@ -72,6 +128,226 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── Auth routes ────────────────────────────────────────────────────────────────
+if settings.auth_enabled:
+    # Mount fastapi-users cookie login/logout router
+    app.include_router(
+        fastapi_users.get_auth_router(auth_backend),
+        prefix="/auth",
+        tags=["auth"],
+    )
+
+    templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
+
+    @app.post("/logout", include_in_schema=False)
+    async def logout_redirect(request: Request) -> RedirectResponse:
+        """Clear the auth cookie and redirect to /login."""
+        response = RedirectResponse(url="/login", status_code=302)
+        from sparql_llm.agent.auth import cookie_transport
+        response.delete_cookie(key=cookie_transport.cookie_name)
+        return response
+
+    @app.get("/change-password", response_class=HTMLResponse, include_in_schema=False)
+    async def change_password_page(
+        request: Request,
+        user: "User" = Depends(current_active_user),
+        error: str = "",
+        success: str = "",
+    ) -> HTMLResponse:
+        return templates.TemplateResponse(
+            "change-password.html",
+            {"request": request, "current_user": user, "error": error, "success": success},
+        )
+
+    @app.post("/change-password", response_class=HTMLResponse, include_in_schema=False)
+    async def change_password_submit(
+        request: Request,
+        current_password: str = Form(...),
+        new_password: str = Form(...),
+        confirm_password: str = Form(...),
+        user: "User" = Depends(current_active_user),
+    ) -> HTMLResponse:
+        """Verify the current password then update to the new one."""
+        from fastapi_users.password import PasswordHelper
+        from sparql_llm.agent.auth import async_session_maker, User as UserModel
+        from fastapi_users.db import SQLAlchemyUserDatabase
+        from sparql_llm.agent.auth import UserManager
+
+        def _render(error: str = "", success: str = "") -> HTMLResponse:
+            return templates.TemplateResponse(
+                "change-password.html",
+                {"request": request, "current_user": user, "error": error, "success": success},
+            )
+
+        if new_password != confirm_password:
+            return _render(error="New passwords do not match.")
+        if len(new_password) < 8:
+            return _render(error="New password must be at least 8 characters.")
+
+        password_helper = PasswordHelper()
+        # Verify current password
+        verified, _ = password_helper.verify_and_update(current_password, user.hashed_password)
+        if not verified:
+            return _render(error="Current password is incorrect.")
+
+        # Save new password
+        new_hashed = password_helper.hash(new_password)
+        async with async_session_maker() as session:
+            db_user = await session.get(UserModel, user.id)
+            db_user.hashed_password = new_hashed
+            await session.commit()
+
+        return _render(success="Password updated successfully.")
+
+    @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+    async def login_page(request: Request, error: str = "", next: str = "/") -> HTMLResponse:
+        return templates.TemplateResponse("login.html", {"request": request, "error": error, "next": next})
+
+    @app.post("/login", response_class=HTMLResponse, include_in_schema=False)
+    async def login_form(
+        request: Request,
+        username: str = Form(...),
+        password: str = Form(...),
+        next: str = Form("/"),
+    ) -> HTMLResponse:
+        """Handle the HTML login form, set the auth cookie, and redirect."""
+        from fastapi_users.authentication import CookieTransport
+        from fastapi_users.exceptions import UserInactive, UserNotExists
+
+        from sparql_llm.agent.auth import async_session_maker, get_user_manager
+        from sparql_llm.agent.auth import User as UserModel
+        from fastapi_users.db import SQLAlchemyUserDatabase
+
+        async with async_session_maker() as session:
+            user_db = SQLAlchemyUserDatabase(session, UserModel)
+            from sparql_llm.agent.auth import UserManager
+            manager = UserManager(user_db)
+            try:
+                user = await manager.authenticate(
+                    credentials=type("Creds", (), {"username": username, "password": password})()
+                )
+                if user is None or not user.is_active:
+                    raise Exception("Invalid credentials")
+            except Exception:
+                return templates.TemplateResponse(
+                    "login.html",
+                    {"request": request, "error": "Invalid email or password.", "next": next},
+                    status_code=401,
+                )
+
+        # Issue JWT token and set cookie
+        from sparql_llm.agent.auth import auth_backend, get_jwt_strategy
+        strategy = get_jwt_strategy()
+        token = await strategy.write_token(user)
+        response = RedirectResponse(url=next if next.startswith("/") else "/", status_code=302)
+        # Set cookie matching the transport config
+        from sparql_llm.agent.auth import cookie_transport
+        response.set_cookie(
+            key=cookie_transport.cookie_name,
+            value=token,
+            max_age=cookie_transport.cookie_max_age,
+            httponly=cookie_transport.cookie_httponly,
+            secure=cookie_transport.cookie_secure,
+            samesite=cookie_transport.cookie_samesite,
+        )
+        return response
+
+    @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
+    async def admin_page(
+        request: Request,
+        flash_success: str = "",
+        flash_error: str = "",
+        user: "User" = Depends(current_active_user),
+    ) -> HTMLResponse:
+        """Admin panel — lists all users. Superusers only."""
+        if not user.is_superuser:
+            return RedirectResponse("/", status_code=302)
+        from sparql_llm.agent.auth import async_session_maker, User as UserModel
+        from sqlalchemy import select
+        async with async_session_maker() as session:
+            result = await session.execute(select(UserModel).order_by(UserModel.email))
+            users = result.scalars().all()
+        return templates.TemplateResponse(
+            "admin.html",
+            {
+                "request": request,
+                "current_user": user,
+                "users": users,
+                "flash_success": flash_success,
+                "flash_error": flash_error,
+            },
+        )
+
+    @app.post("/admin/add-user", include_in_schema=False)
+    async def admin_add_user(
+        request: Request,
+        email: str = Form(...),
+        password: str = Form(...),
+        is_superuser: str = Form(""),
+        user: "User" = Depends(current_active_user),
+    ) -> RedirectResponse:
+        """Create a new user account."""
+        if not user.is_superuser:
+            return RedirectResponse("/", status_code=302)
+        from fastapi_users.password import PasswordHelper
+        from sparql_llm.agent.auth import async_session_maker, User as UserModel
+        import uuid as _uuid
+        password_helper = PasswordHelper()
+        hashed = password_helper.hash(password)
+        try:
+            async with async_session_maker() as session:
+                await session.execute(
+                    UserModel.__table__.insert().values(
+                        id=_uuid.uuid4(),
+                        email=email,
+                        hashed_password=hashed,
+                        is_active=True,
+                        is_superuser=bool(is_superuser),
+                        is_verified=True,
+                    )
+                )
+                await session.commit()
+            return RedirectResponse(f"/admin?flash_success=User+{email}+created+successfully", status_code=302)
+        except Exception as exc:
+            return RedirectResponse(f"/admin?flash_error={exc}", status_code=302)
+
+    @app.post("/admin/delete-user", include_in_schema=False)
+    async def admin_delete_user(
+        request: Request,
+        user_id: str = Form(...),
+        user: "User" = Depends(current_active_user),
+    ) -> RedirectResponse:
+        """Delete a user account."""
+        if not user.is_superuser:
+            return RedirectResponse("/", status_code=302)
+        from sparql_llm.agent.auth import async_session_maker, User as UserModel
+        import uuid as _uuid
+        try:
+            async with async_session_maker() as session:
+                uid = _uuid.UUID(user_id)
+                db_user = await session.get(UserModel, uid)
+                if db_user:
+                    await session.delete(db_user)
+                    await session.commit()
+            return RedirectResponse("/admin?flash_success=User+deleted", status_code=302)
+        except Exception as exc:
+            return RedirectResponse(f"/admin?flash_error={exc}", status_code=302)
+
+else:
+    templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
+
+# Redirect unauthenticated browser requests to /login instead of 401 JSON
+if settings.auth_enabled:
+    from fastapi.exceptions import HTTPException
+
+    @app.exception_handler(401)
+    async def unauthorized_handler(request: Request, exc: HTTPException) -> RedirectResponse:
+        # API calls (Accept: application/json or non-GET) get a proper 401
+        accept = request.headers.get("accept", "")
+        if request.method != "GET" or "application/json" in accept:
+            return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
+        return RedirectResponse(url=f"/login?next={request.url.path}", status_code=302)
+
 # Create logs file if it doesn't exist
 question_logger = logging.getLogger("question_logger")
 question_logger.setLevel(logging.INFO)
@@ -93,6 +369,21 @@ logger.info(f"""💬 Chat UI at {api_url}
   ⚡️ Streamable HTTP MCP server started on {api_url}/mcp
   🔎 Using similarity search service on {settings.vectordb_url}
 """)
+
+
+# ── Unified auth dependency ────────────────────────────────────────────────────
+# When auth is enabled, `require_user` enforces a valid session cookie.
+# When auth is disabled it's a no-op so development works without credentials.
+if settings.auth_enabled:
+    async def _noop():
+        return None
+
+    require_user = current_active_user
+else:
+    async def _noop():  # type: ignore[no-redef]
+        return None
+
+    require_user = _noop  # type: ignore[assignment]
 
 
 class Message(BaseModel):
@@ -204,7 +495,10 @@ async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator
 # FastAPI does not support Union in response model (even if it says otherwise in docs)
 # so we need to disable response_model for this endpoint
 @app.post("/chat", response_model=None)
-async def chat(request: Request) -> StreamingResponse | JSONResponse:
+async def chat(
+    request: Request,
+    _user: Any = Depends(require_user),
+) -> StreamingResponse | JSONResponse:
     """Chat with the assistant main endpoint."""
     auth_header = request.headers.get("Authorization", "")
     if settings.chat_api_key and (not auth_header or not auth_header.startswith("Bearer ")):
@@ -279,7 +573,10 @@ def log_msg(filename: str, messages: list[LogMessage]) -> None:
 
 
 @app.post("/feedback")
-async def post_feedback(feedback_request: FeedbackRequest) -> JSONResponse:
+async def post_feedback(
+    feedback_request: FeedbackRequest,
+    _user: Any = Depends(require_user),
+) -> JSONResponse:
     """Save a user feedback in the logs files."""
     filename = (
         f"{settings.logs_folder}/likes.jsonl" if feedback_request.like else f"{settings.logs_folder}/dislikes.jsonl"
@@ -289,7 +586,10 @@ async def post_feedback(feedback_request: FeedbackRequest) -> JSONResponse:
 
 
 @app.get("/models")
-async def get_models(request: Request) -> JSONResponse:
+async def get_models(
+    request: Request,
+    _user: Any = Depends(require_user),
+) -> JSONResponse:
     """Return the list of available LLM models for the chat UI dropdown.
 
     When ``settings.available_llm_models`` is configured, that explicit list is
@@ -332,7 +632,6 @@ async def get_user_logs(logs_request: LogsRequest) -> JSONResponse:
 
 
 # Serve website built using vitejs
-templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
 app.mount(
     "/assets",
     StaticFiles(directory="src/sparql_llm/agent/webapp/assets"),
@@ -341,8 +640,12 @@ app.mount(
 
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def chat_ui(request: Request) -> HTMLResponse:
+async def chat_ui(
+    request: Request,
+    _user: Any = Depends(require_user),
+) -> HTMLResponse:
     """Render the chat UI using jinja2 + HTML."""
+    is_superuser = getattr(_user, "is_superuser", False)
     return templates.TemplateResponse(
         "index.html",
         {
@@ -351,6 +654,8 @@ async def chat_ui(request: Request) -> HTMLResponse:
             "chat_endpoint": "/chat",
             "feedback_endpoint": "/feedback",
             "examples": ",".join(settings.example_questions),
+            "auth_enabled": settings.auth_enabled,
+            "is_superuser": is_superuser,
         },
     )
 

@@ -127,6 +127,18 @@ class Settings(BaseSettings):
     logs_folder: str = "./data/logs"
     logs_filepath: str = "./data/logs/user_questions.log"
 
+    # Auth settings
+    auth_enabled: bool = True
+    """Set to False to disable login (useful for local dev without auth)."""
+    auth_secret: str = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING"
+    """JWT signing secret — override via AUTH_SECRET env var."""
+    auth_db_path: str = "./data/users.db"
+    """Path to the SQLite database file for user accounts."""
+    admin_email: str = ""
+    """Email for the initial admin account created on first run (set via ADMIN_EMAIL env var)."""
+    admin_password: str = ""
+    """Password for the initial admin account (set via ADMIN_PASSWORD env var)."""
+
     use_tools: bool = False
     """Experimental: Whether to use tools or not. If set to False, the agent will use the functions sequentially to answer questions."""
 
