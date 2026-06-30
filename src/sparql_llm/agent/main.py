@@ -59,6 +59,16 @@ if settings.auth_enabled:
     )
 
 
+def is_valid_login_redirect(value: str):
+    return (
+        value.startswith("/") and
+        value.isprintable() and
+        not value.startswith("//") and
+        not value.startswith("/\\") and
+        not value.isspace()
+    )
+
+
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan that initializes the MCP session manager and auth DB."""
@@ -239,7 +249,7 @@ if settings.auth_enabled:
         from sparql_llm.agent.auth import auth_backend, get_jwt_strategy
         strategy = get_jwt_strategy()
         token = await strategy.write_token(user)
-        response = RedirectResponse(url=next if next.startswith("/") else "/", status_code=302)
+        response = RedirectResponse(url=next if is_valid_login_redirect(next) else "/", status_code=302)
         # Set cookie matching the transport config
         from sparql_llm.agent.auth import cookie_transport
         response.set_cookie(
