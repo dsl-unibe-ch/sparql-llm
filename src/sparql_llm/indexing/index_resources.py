@@ -20,8 +20,8 @@ from sparql_llm.config import SparqlEndpointLinks, settings
 from sparql_llm.loaders.ontology_profiles_loader import (
     CLASSES_DOC_TYPE,
     OntologyProfilesLoader,
-    parse_ontology_profiles,
-    parse_shacl_shapes,
+    fetch_ontology_terms,
+    fetch_shacl_shapes,
 )
 from sparql_llm.loaders.sparql_info_loader import GENERAL_INFO_DOC_TYPE
 from sparql_llm.utils import EndpointsMetadataManager, get_prefix_converter
@@ -233,17 +233,12 @@ def init_vectordb() -> None:
         void_examples_file = endpoint.get("examples_file")
         if void_examples_file and void_examples_file.endswith(".md"):
             void_examples_file = None
-        # Parse the local OWL profiles + SHACL shapes (the designed schema behind the
-        # R2RML mapping). The WissKI endpoint serves almost no labels/comments, so these
-        # supply human definitions + property cardinalities. Only for endpoints that opt in.
+        # Fetch the OWL application profiles + SHACL shapes (the designed schema behind the
+        # R2RML mapping) that the endpoint serves alongside the data. They supply the human
+        # definitions and property cardinalities the VoID statistics don't carry.
         converter = get_prefix_converter(endpoints_metadata.prefixes_map)
-        profiles_dir = endpoint.get("ontology_profiles_dir")
-        shacl_dir = endpoint.get("shacl_dir")
-        term_map: dict = {}
-        shape_map: dict = {}
-        if profiles_dir or shacl_dir:
-            term_map = parse_ontology_profiles(profiles_dir, converter)
-            shape_map = parse_shacl_shapes(shacl_dir, converter)
+        term_map = fetch_ontology_terms(endpoint["endpoint_url"], converter)
+        shape_map = fetch_shacl_shapes(endpoint["endpoint_url"], converter)
 
         void_docs = SparqlVoidShapesLoader(
             endpoint["endpoint_url"],

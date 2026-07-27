@@ -11,6 +11,6 @@ from .loaders.sparql_void_shapes_loader import SparqlVoidShapesLoader, get_shex_
 from .loaders.sparql_info_loader import SparqlInfoLoader
 from .loaders.ontology_profiles_loader import (
     OntologyProfilesLoader,
-    parse_ontology_profiles,
-    parse_shacl_shapes,
+    fetch_ontology_terms,
+    fetch_shacl_shapes,
 )

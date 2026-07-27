@@ -35,9 +35,10 @@ def get_shex_dict_from_void(
 ) -> dict[str, dict[str, str]]:
     """Get a dict of shex shapes from the VoID description.
 
-    When ``term_map``/``shape_map`` are provided (parsed from the local OWL profiles and
-    SHACL shapes), the per-class shapes are enriched with human labels/comments and the
-    designed property list — the WissKI endpoint itself serves almost none of these.
+    When ``term_map``/``shape_map`` are provided (fetched from the endpoint's OWL and
+    SHACL graphs), the per-class shapes are enriched with human labels/comments, a
+    glossary of the properties observed in the data, and the designed property list with
+    cardinalities.
     """
     prefix_map = prefix_map or get_prefixes_for_endpoint(endpoint_url, examples_file)
     namespaces_to_ignore = namespaces_to_ignore or DEFAULT_NAMESPACES_TO_IGNORE
@@ -56,13 +57,14 @@ def get_shex_dict_from_void(
         except Exception as _e:
             subj = f"<{subject_cls}>"
         shape_iri = f"shape:{subj.replace(':', '_')}"
-        shex_dict[subject_cls] = {"shex": f"{shape_iri} {{\n  a [ {subj} ] ;\n"}
+        shex_dict[subject_cls] = {"shex": f"{shape_iri} {{\n  a [ {subj} ] ;\n", "predicates": []}
 
         for predicate, object_list in predicates.items():
             try:
                 pred = prefix_converter.compress(predicate, passthrough=True)
             except Exception as _e:
                 pred = f"<{predicate}>"
+            shex_dict[subject_cls]["predicates"].append(pred)
 
             # compressed_obj_list = compress_list(prefix_converter, object_list)
             compressed_obj_list = []
@@ -113,9 +115,8 @@ SELECT DISTINCT * WHERE {{
     except Exception as e:
         logger.warning(f"Could not retrieve labels for classes in endpoint {endpoint_url}: {e}")
 
-    # Enrich with local ontology definitions parsed from the OWL profiles / SHACL shapes.
-    # Keyed by the compressed CURIE form (e.g. crm:E21), which matches the data/VoID IRIs
-    # even when the OntoME rdf:about differs (.../E21_Person vs .../E21).
+    # Enrich with the ontology definitions fetched from the endpoint's OWL/SHACL graphs.
+    # Keyed by the compressed CURIE form (e.g. crm:E21), which matches the data/VoID IRIs.
     if term_map or shape_map:
         from sparql_llm.loaders.ontology_profiles_loader import format_shape_properties
 
@@ -127,6 +128,18 @@ SELECT DISTINCT * WHERE {{
                     shex_shape["label"] = term["label"]
                 if "comment" not in shex_shape and term.get("comment"):
                     shex_shape["comment"] = term["comment"]
+
+            # Gloss the predicates actually observed in the data. Without this every
+            # property renders as a bare CURIE (`sdh-slc:P20`), which tells neither the
+            # embedding model nor the LLM what the property means.
+            glossary = []
+            for pred in dict.fromkeys(shex_shape.get("predicates", [])):
+                pred_term = (term_map or {}).get(pred)
+                if pred_term and pred_term.get("label"):
+                    glossary.append(f'#   {pred} "{pred_term["label"]}"')
+            if glossary:
+                shex_shape["shex"] += "\n# Properties used:\n" + "\n".join(glossary)
+
             shape = (shape_map or {}).get(curie)
             if shape:
                 props = format_shape_properties(shape)

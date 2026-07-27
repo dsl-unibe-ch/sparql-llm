@@ -1,33 +1,34 @@
-"""Load human-readable class/property definitions from the OntoME OWL application
-profiles and SHACL shapes that back the endpoint's R2RML mapping.
+"""Load human-readable class/property definitions and SHACL shapes from the endpoint.
 
-The live WissKI endpoint serves almost no ``rdfs:label``/``rdfs:comment``, so the
-VoID->ShEx schema docs are otherwise just opaque IRIs (``crm:E21``, ``sdh-slc:P23``).
-This module parses the *designed* schema once at index time and exposes it as two maps:
+The WissKI endpoint now serves the OntoME application profiles that back the R2RML
+mapping as ordinary triples: the OWL ontology lives in the
+``https://ontome.net/api/owl-wisski.rdf?namespace=N`` named graphs (~277 classes and
+~455 properties, each with ``rdfs:label`` and ``rdfs:comment``) and the SHACL shapes in
+``<...>/resource/shacl`` (12 ``sh:NodeShape``). This module queries them once at index
+time and exposes the result as two maps:
 
-* ``term_map``  : ``{curie -> {label, comment, notation, kind}}`` from the OWL profiles.
-* ``shape_map`` : ``{class_curie -> {name, properties:[...]}}`` from the SHACL shapes
-  (human property names + cardinality, which the VoID lacks).
+* ``term_map``  : ``{curie -> {label, comment, notation, kind}}`` for classes *and*
+  properties.
+* ``shape_map`` : ``{class_curie -> {name, properties:[...]}}`` — human property names
+  plus the ``sh:minCount``/``sh:maxCount`` cardinality the VoID statistics don't have.
 
 ``SparqlVoidShapesLoader`` consumes both to enrich the schema docs of classes that are
 *present in the data*; ``OntologyProfilesLoader`` emits standalone docs for the designed
 classes that are not yet populated (so the assistant is ready as the database grows).
 
-Keys are the compressed/notation form (``crm:E21``) because the OntoME ``rdf:about`` for
-CIDOC classes is ``.../E21_Person`` while the data/VoID use ``.../E21``; ``skos:notation``
-is the reliable bridge between the two.
-"""
+Historically these maps were parsed from OWL/SHACL files vendored under ``data/ontology``,
+because the endpoint served no labels at all. That is no longer true, and the endpoint's
+copy is both broader (277 classes vs the ~34 the 6 vendored profiles covered, and 12
+shapes vs 5) and authoritative — it is the same export, kept in sync by the curators.
 
-import glob
-import os
+Keys are the compressed CURIE form (``crm:E21``), which is what the VoID/data use.
+"""
 
 import curies
 from langchain_core.document_loaders.base import BaseLoader
 from langchain_core.documents import Document
-from rdflib import RDF, RDFS, Graph
-from rdflib.namespace import OWL, SH, SKOS
 
-from sparql_llm.utils import logger
+from sparql_llm.utils import logger, query_sparql
 
 CLASSES_DOC_TYPE = "SPARQL endpoints classes schema"
 
@@ -37,28 +38,46 @@ _XSD = "http://www.w3.org/2001/XMLSchema#"
 # embedded text focused; the data is French and the model is multilingual.
 MAX_COMMENT_CHARS = 600
 
-# Manually-verified definitions for IRIs that do NOT resolve against the application
-# profiles because of namespace inconsistencies between the live data and the exported
-# ontology. Keyed by the compressed/notation IRI used in the VoID. Curated entries win
-# over anything parsed from the profiles.
-#
-# - sdh-slc:C9 — the R2RML mapping classes marriages/unions under
-#   ``social-life-core/C9`` (see <#marriage1>: partners via sdh-slc:P20, type via
-#   sdh-slc:P16), but the ontology only defines the union concept under the older
-#   ``social-life/C9`` module ("Union"). No exact-IRI match exists, so we supply it.
-CURATED_TERMS: dict[str, dict[str, str]] = {
-    "sdh-slc:C9": {
-        "label": "Marriage / Union",
-        "comment": (
-            "A union between two persons - a marriage or partnership of any social or "
-            "legal form, with an optional time span (start/end). In this database the "
-            "partners are linked with sdh-slc:P20 and the kind of union with sdh-slc:P16. "
-            "Same-sex unions are also encoded with this class."
-        ),
-        "notation": "sdh-slc:C9",
-        "kind": "class",
-    },
-}
+# Classes/properties from these namespaces describe the ontology itself (OWL, RDFS,
+# SHACL, SKOS) rather than the modelled domain — never useful as schema docs.
+_META_NAMESPACES = (
+    "http://www.w3.org/2002/07/owl#",
+    "http://www.w3.org/2000/01/rdf-schema#",
+    "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "http://www.w3.org/ns/shacl#",
+    "http://www.w3.org/2004/02/skos/core#",
+    _XSD,
+)
+
+GET_ONTOLOGY_TERMS_QUERY = """PREFIX owl: <http://www.w3.org/2002/07/owl#>
+PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+SELECT DISTINCT ?term ?kind ?label ?comment WHERE {
+    {
+        ?term a owl:Class .
+        BIND("class" AS ?kind)
+    } UNION {
+        ?term a ?propType .
+        VALUES ?propType { owl:ObjectProperty owl:DatatypeProperty }
+        BIND("property" AS ?kind)
+    }
+    ?term rdfs:label ?label .
+    OPTIONAL { ?term rdfs:comment ?comment . }
+}"""
+
+GET_SHACL_SHAPES_QUERY = """PREFIX sh: <http://www.w3.org/ns/shacl#>
+SELECT DISTINCT ?targetClass ?shapeName ?path ?propName ?datatype ?cls ?min ?max ?order WHERE {
+    ?shape a sh:NodeShape ;
+        sh:targetClass ?targetClass ;
+        sh:property ?prop .
+    ?prop sh:path ?path .
+    OPTIONAL { ?shape sh:name ?shapeName . }
+    OPTIONAL { ?prop sh:name ?propName . }
+    OPTIONAL { ?prop sh:datatype ?datatype . }
+    OPTIONAL { ?prop sh:class ?cls . }
+    OPTIONAL { ?prop sh:minCount ?min . }
+    OPTIONAL { ?prop sh:maxCount ?max . }
+    OPTIONAL { ?prop sh:order ?order . }
+}"""
 
 
 def _clean(text: str) -> str:
@@ -78,123 +97,106 @@ def _trim_comment(text: str) -> str:
     return cut.rstrip() + "…"
 
 
-def _pick_literal(graph: Graph, subj, pred) -> str | None:
-    """Return the English literal for (subj, pred) when available, else any literal."""
-    values = list(graph.objects(subj, pred))
-    if not values:
-        return None
-    for v in values:
-        if getattr(v, "language", None) == "en":
-            return str(v)
-    return str(values[0])
-
-
 def _curie(converter: curies.Converter, iri: str) -> str:
     return converter.compress(str(iri), passthrough=True)
 
 
-def parse_ontology_profiles(profiles_dir: str, converter: curies.Converter) -> dict[str, dict]:
-    """Parse the OWL application profiles into ``{curie -> {label, comment, notation, kind}}``."""
+def _val(row: dict, key: str) -> str | None:
+    """Pull a binding's value out of a SPARQL JSON result row."""
+    entry = row.get(key)
+    return entry["value"] if entry else None
+
+
+def _int_or_none(value: str | None) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except ValueError:
+        return None
+
+
+def fetch_ontology_terms(endpoint_url: str, converter: curies.Converter) -> dict[str, dict]:
+    """Query the endpoint's OWL graphs into ``{curie -> {label, comment, notation, kind}}``."""
     term_map: dict[str, dict] = {}
-    if not profiles_dir or not os.path.isdir(profiles_dir):
-        return dict(CURATED_TERMS)
+    try:
+        res = query_sparql(GET_ONTOLOGY_TERMS_QUERY, endpoint_url, post=True, check_service_desc=True)
+    except Exception as e:
+        logger.warning(f"Could not retrieve ontology terms from {endpoint_url}: {e}")
+        return term_map
 
-    class_types = {OWL.Class}
-    prop_types = {OWL.ObjectProperty, OWL.DatatypeProperty, RDF.Property}
-
-    for path in sorted(glob.glob(os.path.join(profiles_dir, "*.rdf"))):
-        g = Graph()
-        try:
-            g.parse(path, format="xml")
-        except Exception as e:
-            logger.warning(f"Could not parse ontology profile {path}: {e}")
+    for row in res["results"]["bindings"]:
+        iri = _val(row, "term")
+        if not iri or iri.startswith(_META_NAMESPACES):
             continue
+        key = _curie(converter, iri)
+        label = _val(row, "label")
+        comment = _val(row, "comment")
 
-        for subj in set(g.subjects(RDF.type, None)):
-            types = set(g.objects(subj, RDF.type))
-            if types & class_types:
-                kind = "class"
-            elif types & prop_types:
-                kind = "property"
-            else:
-                continue
+        entry = term_map.setdefault(key, {"notation": key, "kind": _val(row, "kind") or "class"})
+        # An IRI can be labelled in several languages/graphs; keep the first of each.
+        if label and "label" not in entry:
+            entry["label"] = _clean(label)
+        if comment and "comment" not in entry:
+            entry["comment"] = _trim_comment(comment)
 
-            notation = _pick_literal(g, subj, SKOS.notation)
-            key = notation or _curie(converter, subj)
-            label = _pick_literal(g, subj, RDFS.label)
-            comment = _pick_literal(g, subj, RDFS.comment)
-
-            entry = term_map.setdefault(key, {"notation": notation or key, "kind": kind})
-            if label and "label" not in entry:
-                entry["label"] = _clean(label)
-            if comment and "comment" not in entry:
-                entry["comment"] = _trim_comment(comment)
-
-    # Curated overrides win over parsed values.
-    for key, entry in CURATED_TERMS.items():
-        term_map[key] = dict(entry)
-
-    logger.info(f"Parsed {len(term_map)} ontology terms from {profiles_dir}")
+    logger.info(f"Fetched {len(term_map)} ontology terms from {endpoint_url}")
     return term_map
 
 
-def parse_shacl_shapes(shacl_dir: str, converter: curies.Converter) -> dict[str, dict]:
-    """Parse the SHACL node shapes into ``{class_curie -> {name, properties:[...]}}``.
+def fetch_shacl_shapes(endpoint_url: str, converter: curies.Converter) -> dict[str, dict]:
+    """Query the endpoint's SHACL graph into ``{class_curie -> {name, properties:[...]}}``.
 
-    Each property carries the human ``sh:name``, the target ``sh:datatype``/``sh:class``,
-    and the ``sh:minCount``/``sh:maxCount`` cardinality the VoID statistics don't have.
+    Property nodes are shared between shapes in this endpoint (the generic
+    ``sdh-short:P9``/``P10``/``P11``/``P12`` label nodes hang off several of them), so the
+    same ``sh:path`` comes back repeatedly per target class. Dedupe on the full property
+    signature rather than the path alone — a class legitimately has both a shortcut and a
+    fully-modelled version of the same path (e.g. ``P9`` as a literal *and* via ``crm:E62``).
     """
     shape_map: dict[str, dict] = {}
-    if not shacl_dir or not os.path.isdir(shacl_dir):
+    try:
+        res = query_sparql(GET_SHACL_SHAPES_QUERY, endpoint_url, post=True, check_service_desc=True)
+    except Exception as e:
+        logger.warning(f"Could not retrieve SHACL shapes from {endpoint_url}: {e}")
         return shape_map
 
-    for path in sorted(glob.glob(os.path.join(shacl_dir, "*.ttl"))):
-        g = Graph()
-        try:
-            g.parse(path, format="turtle")
-        except Exception as e:
-            logger.warning(f"Could not parse SHACL file {path}: {e}")
+    seen: dict[str, set[tuple]] = {}
+    for row in res["results"]["bindings"]:
+        target_iri = _val(row, "targetClass")
+        path_iri = _val(row, "path")
+        if not target_iri or not path_iri:
             continue
+        key = _curie(converter, target_iri)
 
-        for shape in g.subjects(RDF.type, SH.NodeShape):
-            target = g.value(shape, SH.targetClass)
-            if target is None:
-                continue
-            key = _curie(converter, target)
-            name = g.value(shape, SH.name)
+        cls = _val(row, "cls")
+        datatype = _val(row, "datatype")
+        if cls:
+            target = _curie(converter, cls)
+        elif datatype:
+            target = f"xsd:{datatype[len(_XSD):]}" if datatype.startswith(_XSD) else _curie(converter, datatype)
+        else:
+            target = None
 
-            props = []
-            for pnode in g.objects(shape, SH.property):
-                path_iri = g.value(pnode, SH.path)
-                if path_iri is None:
-                    continue
-                datatype = g.value(pnode, SH.datatype)
-                cls = g.value(pnode, SH["class"])
-                min_count = g.value(pnode, SH.minCount)
-                max_count = g.value(pnode, SH.maxCount)
-                order = g.value(pnode, SH.order)
-                name = g.value(pnode, SH.name)
-                if cls is not None:
-                    target = _curie(converter, cls)
-                elif datatype is not None:
-                    dt = str(datatype)
-                    target = f"xsd:{dt[len(_XSD):]}" if dt.startswith(_XSD) else _curie(converter, dt)
-                else:
-                    target = None
-                props.append(
-                    {
-                        "path": _curie(converter, path_iri),
-                        "name": str(name) if name else None,
-                        "target": target,
-                        "min": int(min_count) if min_count is not None else None,
-                        "max": int(max_count) if max_count is not None else None,
-                        "order": int(order) if order is not None else None,
-                    }
-                )
-            props.sort(key=lambda p: p["order"] if p["order"] is not None else 999)
-            shape_map[key] = {"name": str(name) if name else None, "properties": props}
+        prop = {
+            "path": _curie(converter, path_iri),
+            "name": _val(row, "propName"),
+            "target": target,
+            "min": _int_or_none(_val(row, "min")),
+            "max": _int_or_none(_val(row, "max")),
+            "order": _int_or_none(_val(row, "order")),
+        }
+        signature = (prop["path"], prop["name"], prop["target"], prop["min"], prop["max"])
+        if signature in seen.setdefault(key, set()):
+            continue
+        seen[key].add(signature)
 
-    logger.info(f"Parsed {len(shape_map)} SHACL node shapes from {shacl_dir}")
+        shape = shape_map.setdefault(key, {"name": None, "properties": []})
+        if shape["name"] is None:
+            shape["name"] = _val(row, "shapeName")
+        shape["properties"].append(prop)
+
+    for shape in shape_map.values():
+        shape["properties"].sort(key=lambda p: p["order"] if p["order"] is not None else 999)
+
+    logger.info(f"Fetched {len(shape_map)} SHACL node shapes from {endpoint_url}")
     return shape_map
 
 
@@ -233,9 +235,17 @@ def build_designed_shape_text(curie: str, term: dict | None, shape: dict | None)
 class OntologyProfilesLoader(BaseLoader):
     """Emit schema docs for the *designed* classes that are not yet present in the data.
 
-    Classes already covered by the VoID->ShEx loader are skipped (``skip_iris``) so we
-    never produce two competing docs for the same IRI. As the data grows, classes move
-    from here to the enriched VoID docs automatically on the next re-index.
+    Scoped to the classes the curators gave a SHACL shape. The endpoint serves the full
+    CIDOC CRM + SDHSS ontologies (276 classes, 179 of them SDHSS) rather than a
+    project-scoped subset, so namespace filtering does not work here — the 12 SHACL shapes
+    are the only signal for "what this project actually models". The trade-off: a class the
+    curators designed but have not shaped yet gets no doc (currently ``sdh-slc:C5``/``C6``/
+    ``C12``, the membership/social-role classes). Those return automatically once they are
+    either shaped or loaded into the data.
+
+    Classes already covered by the VoID->ShEx loader are skipped (``skip_iris``) so we never
+    produce two competing docs for the same IRI. As the data grows, classes move from here
+    to the enriched VoID docs automatically on the next re-index.
     """
 
     def __init__(
@@ -254,11 +264,7 @@ class OntologyProfilesLoader(BaseLoader):
 
     def load(self) -> list[Document]:
         docs: list[Document] = []
-        # Union of classes known from SHACL shapes and OWL profiles.
-        class_curies = set(self.shape_map.keys())
-        class_curies |= {k for k, v in self.term_map.items() if v.get("kind") == "class"}
-
-        for curie in sorted(class_curies):
+        for curie in sorted(self.shape_map.keys()):
             if curie in self.skip_iris:
                 continue
             term = self.term_map.get(curie)
