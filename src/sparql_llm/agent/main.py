@@ -574,6 +574,31 @@ async def chat(
     if not question:
         raise ValueError("No question provided")
 
+    # Guard: MCP tools mode requires a model that supports tool/function calling.
+    # Some GPUStack deployments (e.g. the qwen3-vl vision models) are served without
+    # the tool-calling flags and will reject any tool request. Rather than let that
+    # fail mid-stream, tell the user up front to switch models or turn tools off.
+    tool_capable = settings.tool_capable_models or settings.available_llm_models or [settings.default_llm_model]
+    if chat_request.use_tools and chat_request.model not in tool_capable:
+        capable_names = ", ".join(m.split("/", 1)[-1] for m in tool_capable) or "(none configured)"
+        selected_name = chat_request.model.split("/", 1)[-1]
+        msg = (
+            f"⚠️ The model **{selected_name}** does not support tool calling, so it can't be used in "
+            f"**MCP tools** mode.\n\nEither turn MCP tools off, or pick a tool-capable model: {capable_names}."
+        )
+
+        async def _reject() -> AsyncGenerator[str, Any]:
+            payload = {
+                "event": "messages",
+                "data": [{"content": msg, "type": "AIMessageChunk"}, {"langgraph_node": "call_model"}],
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            yield "data: [DONE]"
+
+        if chat_request.stream:
+            return StreamingResponse(_reject(), media_type="text/event-stream")
+        return JSONResponse(content={"messages": [{"role": "assistant", "content": msg}]})
+
     # print(request.model)
     # Pass session_id via metadata for Langfuse to properly group multi-turn conversations
     # https://langfuse.com/docs/integrations/langchain/tracing#trace-attributes
@@ -684,7 +709,16 @@ async def get_models(
             return JSONResponse(status_code=401, content={"error": "Unauthorized"})
 
     models = settings.available_llm_models or [settings.default_llm_model]
-    return JSONResponse(content={"models": models, "default": settings.default_llm_model})
+    # Expose which models can be used in MCP tools mode so the UI can guide the user.
+    # An empty tool_capable_models list means "treat all as capable".
+    tool_capable = settings.tool_capable_models or models
+    return JSONResponse(
+        content={
+            "models": models,
+            "default": settings.default_llm_model,
+            "tool_capable_models": tool_capable,
+        }
+    )
 
 
 class LogsRequest(BaseModel):

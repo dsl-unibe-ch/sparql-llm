@@ -87,6 +87,16 @@ class Settings(BaseSettings):
     # Used as a fallback when the upstream /v1/models call fails.
     available_llm_models: list[str] = []
 
+    # Subset of models that support tool/function calling and can therefore be used
+    # in the experimental MCP tools mode. Determined by probing the GPUStack backend:
+    # models deployed without --enable-auto-tool-choice reject tool requests (e.g. the
+    # qwen3-vl vision models). If empty, all available_llm_models are treated as capable.
+    tool_capable_models: list[str] = [
+        "gpustack/minimax-m2.7",
+        "gpustack/gpt-oss-120b",
+        "gpustack/qwen3-coder-30b-a3b-instruct",
+    ]
+
     default_number_of_retrieved_docs: int = 10
     default_max_try_fix_sparql: int = 3
     default_max_tool_iterations: int = 10

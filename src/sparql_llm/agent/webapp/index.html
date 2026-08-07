@@ -191,6 +191,7 @@
       window.__USE_TOOLS__ = false;
       window.__MAX_FIXES__ = 3;
       window.__MAX_STEPS__ = 10;
+      window.__TOOL_CAPABLE__ = null; // null = unknown yet; array once /models responds
 
       var maxStepsCtrl = document.getElementById("max-steps-ctrl");
       function syncStepsVisibility() {
@@ -263,6 +264,17 @@
             payload.use_tools = !!window.__USE_TOOLS__;
             payload.max_try_fix_sparql = window.__MAX_FIXES__;
             payload.max_tool_iterations = window.__MAX_STEPS__;
+            if (
+              payload.use_tools &&
+              Array.isArray(window.__TOOL_CAPABLE__) &&
+              payload.model &&
+              window.__TOOL_CAPABLE__.indexOf(payload.model) === -1
+            ) {
+              console.warn(
+                "MCP tools is ON but model '" + payload.model + "' does not support tool calling; " +
+                "the server will return a notice. Tool-capable models: " + window.__TOOL_CAPABLE__.join(", ")
+              );
+            }
             init = Object.assign({}, init, { body: JSON.stringify(payload) });
           }
         } catch (e) {
@@ -285,6 +297,23 @@
           if (!data.models || data.models.length === 0) return;
           chatEl.setAttribute("models", data.models.join(","));
           chatEl.setAttribute("model", data.default || data.models[0]);
+          // Record which models can be used in MCP tools mode and surface the list
+          // in the toggle's tooltip so users know their options up front.
+          if (Array.isArray(data.tool_capable_models)) {
+            window.__TOOL_CAPABLE__ = data.tool_capable_models;
+            var toggleEl = document.getElementById("mcp-tools-toggle");
+            var labelEl = toggleEl && toggleEl.closest(".tool-toggle");
+            if (labelEl) {
+              var shortNames = data.tool_capable_models
+                .map(function (m) { return m.split("/").pop(); })
+                .join(", ");
+              labelEl.setAttribute(
+                "title",
+                "Experimental: route your questions through the MCP tool-calling agent. " +
+                  "Only tool-capable models work here: " + shortNames + "."
+              );
+            }
+          }
         })
         .catch(function (err) {
           console.error("Failed to fetch models:", err);
