@@ -8,7 +8,7 @@ from langchain_core.runnables import RunnableConfig
 
 from sparql_llm.agent.prompts import FIX_QUERY_PROMPT
 from sparql_llm.agent.state import State, StepOutput
-from sparql_llm.config import Configuration, settings
+from sparql_llm.config import Configuration
 from sparql_llm.indexing.index_resources import endpoints_metadata
 from sparql_llm.utils import logger, query_sparql, strip_think_blocks
 from sparql_llm.validate_sparql import validate_sparql_in_msg
@@ -88,7 +88,7 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
         response["structured_output"] = extracted
 
         # Automatically execute the SPARQL query
-        if configuration.enable_sparql_execution and not settings.use_tools:
+        if configuration.enable_sparql_execution and not configuration.use_tools:
             sparql_query = extracted.get("sparql_query")
             endpoint_url = extracted.get("sparql_endpoint_url")
             if sparql_query and endpoint_url:

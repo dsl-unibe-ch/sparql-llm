@@ -89,6 +89,7 @@ class Settings(BaseSettings):
 
     default_number_of_retrieved_docs: int = 10
     default_max_try_fix_sparql: int = 3
+    default_max_tool_iterations: int = 10
     default_temperature: float = 0.0
     default_max_tokens: int = 16384
     default_seed: int = 42
@@ -203,11 +204,28 @@ class Configuration:
         },
     )
 
+    use_tools: bool = field(
+        default=settings.use_tools,
+        metadata={
+            "description": "Whether to answer using the experimental MCP tool-calling agent (True) or the default "
+            "retrieval + validation pipeline (False). Toggled per-request so the UI can switch modes at runtime."
+        },
+    )
+
     system_prompt: str = field(
         default=prompts.RESOLUTION_PROMPT,
         metadata={
             "description": "The system prompt to use for the agent's interactions."
             "This prompt sets the context and behavior for the agent."
+        },
+    )
+
+    system_prompt_tools: str = field(
+        default=prompts.TOOLS_RESOLUTION_PROMPT,
+        metadata={
+            "description": "System prompt used in MCP tools mode (use_tools=True). Unlike system_prompt it "
+            "instructs the model to actually execute queries and iterate with the tools rather than "
+            "producing a single unexecuted query."
         },
     )
 
@@ -247,6 +265,14 @@ class Configuration:
     max_try_fix_sparql: int = field(
         default=settings.default_max_try_fix_sparql,
         metadata={"description": "The maximum number of tries when calling the model to fix a SPARQL query."},
+    )
+
+    max_tool_iterations: int = field(
+        default=settings.default_max_tool_iterations,
+        metadata={
+            "description": "MCP tools mode only: the maximum number of tool-call rounds (exploration steps) "
+            "the model may take before it must produce a final answer."
+        },
     )
 
     @classmethod

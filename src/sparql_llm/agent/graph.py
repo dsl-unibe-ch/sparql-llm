@@ -1,6 +1,6 @@
 """Define the LangGraph agent that powers the SPARQL-LLM chat."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
@@ -25,15 +25,15 @@ from sparql_llm.config import Configuration, settings
 #     state: State, config: RunnableConfig
 # ) -> Literal["__end__", "call_model", "max_tries_reached", "tools"]:
 def route_model_output(state: State, config: RunnableConfig) -> Literal["__end__", "call_model", "max_tries_reached"]:
-    """Determine the next node based on the model's output.
+    """Determine the next node after validation in the default (pipeline) graph.
 
-    This function checks if the model's last message contains tool calls or if a recall is requested by validation.
+    This function checks if a recall is requested by the validation step.
 
     Args:
         state: The current state of the conversation.
 
     Returns:
-        The name of the next node to call ("__end__", "call_model", "tools", or "max_tries_reached").
+        The name of the next node to call ("__end__", "call_model", or "max_tries_reached").
     """
     configuration = Configuration.from_runnable_config(config)
     # print(state.messages)
@@ -42,19 +42,42 @@ def route_model_output(state: State, config: RunnableConfig) -> Literal["__end__
         # print("Try count exceeded", state.try_count)
         return "max_tries_reached"
 
-    # # NOTE: uncomment when using tools
-    # last_msg = state.messages[-1]
-    # if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
-    #     return "tools"
-
     # If validation failed, we need to call the model again
     if not state.passed_validation:
         return "call_model"
 
-    # if not isinstance(last_msg, AIMessage):
-    #     raise ValueError(
-    #         f"Expected AIMessage in output edges, but got {type(last_msg).__name__}"
-    #     )
+    return "__end__"
+
+
+def route_tools_output(state: State, config: RunnableConfig) -> Literal["__end__", "tools", "max_tries_reached"]:
+    """Determine the next node after the model call in the MCP tools (ReAct) graph.
+
+    If the model asked to call one or more tools, route to the tools node so they
+    are executed and fed back to the model. Otherwise the model has produced its
+    final answer and we stop.
+
+    To bound exploration, we count how many tool-call rounds (exploration steps)
+    have already happened — one per AIMessage that requested tools — and stop once
+    that reaches ``max_tool_iterations``. Unlike the pipeline graph, ``try_count``
+    is never incremented here, so this message-based counter is what limits the
+    loop.
+
+    Args:
+        state: The current state of the conversation.
+
+    Returns:
+        The name of the next node to call ("tools", "__end__", or "max_tries_reached").
+    """
+    configuration = Configuration.from_runnable_config(config)
+
+    last_msg = state.messages[-1]
+    if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+        # Count tool-call rounds so far (including this one).
+        tool_rounds = sum(1 for m in state.messages if isinstance(m, AIMessage) and m.tool_calls)
+        if tool_rounds > configuration.max_tool_iterations:
+            return "max_tries_reached"
+        return "tools"
+
     return "__end__"
 
 
@@ -69,61 +92,92 @@ def max_tries_reached(state: State, config: RunnableConfig) -> dict[str, list[AI
         Dictionary with the max tries message.
     """
     configuration = Configuration.from_runnable_config(config)
-    max_tries_message = AIMessage(
-        content=f"I've reached the maximum number of attempts ({configuration.max_try_fix_sparql}) to fix the SPARQL query. "
-        "The query may have complex validation issues that require manual review. "
-        "Please check the query syntax and try to execute it."
-    )
+    if configuration.use_tools:
+        content = (
+            f"I've reached the maximum number of exploration steps ({configuration.max_tool_iterations}) "
+            "while trying to answer your question with the available tools. "
+            "You can increase the 'Max steps' setting and try again, or rephrase your question."
+        )
+    else:
+        content = (
+            f"I've reached the maximum number of attempts ({configuration.max_try_fix_sparql}) to fix the SPARQL query. "
+            "The query may have complex validation issues that require manual review. "
+            "Please check the query syntax and try to execute it."
+        )
+    max_tries_message = AIMessage(content=content)
     return {"messages": [max_tries_message]}
 
 
-# Define the nodes we will cycle between
+# We build BOTH graphs at import time and expose them so the mode can be chosen
+# per-request (via the `use_tools` flag on the runtime Configuration / chat
+# request) rather than being fixed at boot. `graph` is the default pipeline and
+# stays the module's primary export for backwards compatibility; `graph_tools`
+# is the experimental MCP tool-calling agent.
 # https://github.com/langchain-ai/react-agent/blob/main/src/react_agent/graph.py
-builder: StateGraph[State, Configuration, InputState, State] = StateGraph(
-    State, context_schema=Configuration, input_schema=InputState
-)
-# builder = StateGraph(State, input=InputState, config_schema=Configuration)
-builder.add_node(extract_user_question)
-builder.add_node(retrieve)
-builder.add_node(call_model)
-builder.add_node(validate_output)
-builder.add_node(max_tries_reached)
 
-# Add edges depending on whether tools are used or not
-if settings.use_tools:
-    # builder.add_node("tools", ToolNode(tools))
-    builder.add_node("tools", mcp_tools_node)
-    builder.add_edge("__start__", "call_model")
-    builder.add_conditional_edges(
-        "call_model",
-        # Next nodes are scheduled based on the output from route_model_output
-        route_model_output,
+
+def _build_pipeline_graph() -> Any:
+    """Default agent: extract → retrieve → call_model → validate (with retry loop)."""
+    builder: StateGraph[State, Configuration, InputState, State] = StateGraph(
+        State, context_schema=Configuration, input_schema=InputState
     )
-    # This creates a cycle: after using tools, we always return to the model
-    builder.add_edge("tools", "call_model")
-    # Add edge from max_tries_reached to end
-    builder.add_edge("max_tries_reached", "__end__")
-    pass
-else:
-    # When not using tools (default behavior)
+    builder.add_node(extract_user_question)
+    builder.add_node(retrieve)
+    builder.add_node(call_model)
+    builder.add_node(validate_output)
+    builder.add_node(max_tries_reached)
+
     builder.add_edge("__start__", "extract_user_question")
     builder.add_edge("extract_user_question", "retrieve")
     builder.add_edge("retrieve", "call_model")
     builder.add_edge("call_model", "validate_output")
-    # Add a conditional edge to determine the next step after `validate_output`
-    builder.add_conditional_edges(
-        "validate_output",
-        # Next nodes are scheduled based on the output from route_model_output
-        route_model_output,
-    )
-    # Add edge from max_tries_reached to end
+    # Conditional edge to determine the next step after `validate_output`
+    builder.add_conditional_edges("validate_output", route_model_output)
     builder.add_edge("max_tries_reached", "__end__")
 
-# Entity extraction node
-# builder.add_node(resolve_entities)
-# builder.add_edge("extract_user_question", "resolve_entities")
-# builder.add_edge("resolve_entities", "call_model")
+    compiled = builder.compile()
+    compiled.name = settings.app_name
+    return compiled
 
-# Compile the builder into an executable graph
-graph = builder.compile()
-graph.name = settings.app_name
+
+def _build_tools_graph() -> Any:
+    """Experimental MCP agent: call_model ↔ tools ReAct loop.
+
+    The model may request MCP tool calls; `route_tools_output` sends those to the
+    `tools` node, whose results are fed back to the model until it produces a
+    final answer without tool calls.
+    """
+    builder: StateGraph[State, Configuration, InputState, State] = StateGraph(
+        State, context_schema=Configuration, input_schema=InputState
+    )
+    builder.add_node(call_model)
+    builder.add_node(max_tries_reached)
+    builder.add_node("tools", mcp_tools_node)
+
+    builder.add_edge("__start__", "call_model")
+    builder.add_conditional_edges("call_model", route_tools_output)
+    # After running tools, always return to the model
+    builder.add_edge("tools", "call_model")
+    builder.add_edge("max_tries_reached", "__end__")
+
+    compiled = builder.compile()
+    compiled.name = f"{settings.app_name} (MCP tools)"
+    return compiled
+
+
+# Default pipeline graph — primary export used everywhere unless tools mode is
+# explicitly requested.
+graph = _build_pipeline_graph()
+
+# Experimental MCP tool-calling agent, selected per-request when use_tools=True.
+graph_tools = _build_tools_graph()
+
+
+def get_graph(use_tools: bool) -> Any:
+    """Return the graph to run for a request.
+
+    Args:
+        use_tools: When True, return the experimental MCP tool-calling agent;
+            otherwise return the default retrieval + validation pipeline.
+    """
+    return graph_tools if use_tools else graph

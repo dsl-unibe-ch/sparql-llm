@@ -34,8 +34,8 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     configuration = Configuration.from_runnable_config(config)
     tools = None
 
-    # Set up MCP client (experimental, not used in production)
-    if settings.use_tools:
+    # Set up MCP client (experimental — enabled per-request via configuration.use_tools)
+    if configuration.use_tools:
         mcp_client = MultiServerMCPClient(
             {
                 "expasy-mcp": {
@@ -44,7 +44,14 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
                 }
             }
         )
-        tools = await mcp_client.get_tools()
+        try:
+            tools = await mcp_client.get_tools()
+        except Exception as exc:
+            # If the MCP server is unreachable or returns tools we can't load,
+            # surface a clear message instead of crashing the whole request.
+            raise RuntimeError(
+                f"Could not load MCP tools from {settings.server_url}/mcp ({type(exc).__name__}: {exc})"
+            ) from exc
 
     model = load_chat_model(configuration).bind_tools(tools) if tools else load_chat_model(configuration)
 
@@ -59,7 +66,7 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
 
     prompt_template = ChatPromptTemplate.from_messages(
         [
-            ("system", configuration.system_prompt),
+            ("system", configuration.system_prompt_tools if configuration.use_tools else configuration.system_prompt),
             ("placeholder", "{messages}"),
         ]
     )
