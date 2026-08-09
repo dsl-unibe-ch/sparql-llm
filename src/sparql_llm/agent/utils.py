@@ -32,6 +32,21 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             # },
         )
     if provider == "gpustack":
+        # gpt-oss-120b served via GPUStack/vLLM is broken for STREAMING
+        # tool-calling requests: with ``stream=true`` and tools bound it
+        # intermittently (≈5 out of 6 times) returns an empty completion —
+        # finish_reason="stop", no content, no tool calls — because it produced
+        # only hidden reasoning and never emitted a final message or tool call.
+        # Non-streaming requests are reliable (6/6 return a proper tool call).
+        # LangGraph's ``stream_mode="messages"`` (used by the chat UI) forces
+        # streaming, so gpt-oss returns nothing and the UI shows a blank reply.
+        # ``disable_streaming="tool_calling"`` makes LangChain use a
+        # non-streaming request whenever tools are bound, while keeping token
+        # streaming for ordinary chat (which gpt-oss handles fine). Other models
+        # (minimax, qwen3-coder) stream tool calls correctly, so we only disable
+        # streaming for gpt-oss to preserve the nicer live token UX elsewhere.
+        disable_streaming: bool | str = "tool_calling" if "gpt-oss" in model_name else False
+
         # Explicit timeout + max_retries: without these, a hung GPUStack
         # connection waits the openai SDK default of 600 seconds, which looks
         # like "the second question never returns". With them, a stuck call
@@ -45,6 +60,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             seed=configuration.seed,
             timeout=90.0,
             max_retries=1,
+            disable_streaming=disable_streaming,
         )
 
     # if provider == "groq":

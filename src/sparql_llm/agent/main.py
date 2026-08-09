@@ -499,6 +499,19 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
             if event == "messages":
                 msg, metadata = chunk
                 content = getattr(msg, "content", "") if msg else ""
+                # A model that is *making a tool call* should not render prose in
+                # the chat body — the tool step bubble already shows the action.
+                # This matters for gpt-oss-120b, which (unlike other models)
+                # duplicates the tool-call arguments JSON into ``content`` (e.g.
+                # ``{"question": "...", "sparql_query": "..."}``). Without this
+                # guard that raw JSON would be streamed to the UI as garbage text
+                # before the real answer. The final, tool-call-free message still
+                # streams normally, so the actual answer is unaffected.
+                has_tool_calls = bool(
+                    getattr(msg, "tool_calls", None) or getattr(msg, "tool_call_chunks", None)
+                )
+                if has_tool_calls and getattr(msg, "type", "") != "tool":
+                    continue
                 # Strip inline <think> reasoning from every streamed LLM token (both
                 # the extract_user_question and call_model nodes run reasoning models).
                 # Tool results are not LLM token streams, so leave them untouched.
@@ -516,6 +529,17 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
                     emitted_len = len(visible)
 
             chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
+            # Frontend only renders assistant text when type == "AIMessageChunk".
+            # When streaming is disabled for a model (gpt-oss uses
+            # disable_streaming="tool_calling" because it drops streamed tool
+            # calls), the final answer arrives as a single, non-streamed
+            # AIMessage whose serialized type is "ai" — which the UI would
+            # silently drop, showing a blank reply. Relabel it to
+            # "AIMessageChunk" so it renders identically to a streamed answer.
+            if event == "messages":
+                data = chunk_dict.get("data")
+                if isinstance(data, list) and data and isinstance(data[0], dict) and data[0].get("type") == "ai":
+                    data[0]["type"] = "AIMessageChunk"
             yield f"data: {json.dumps(chunk_dict)}\n\n"
             await asyncio.sleep(0)
     except Exception as exc:
