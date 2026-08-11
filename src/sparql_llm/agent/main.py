@@ -21,7 +21,7 @@ from langchain_core.runnables import RunnableConfig
 from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel
 
-from sparql_llm.agent.graph import graph
+from sparql_llm.agent.graph import get_graph, graph
 from sparql_llm.config import settings
 from sparql_llm.mcp_server import get_mcp_app
 from sparql_llm.utils import logger, strip_think_stream
@@ -374,6 +374,21 @@ except Exception:
 uvicorn_logger = logging.getLogger("uvicorn")
 uvicorn_logger.setLevel(logging.WARNING)
 
+# Error logger — writes full tracebacks from the chat pipeline to a readable file
+# (journald requires elevated perms to read). Used by stream_response so failures
+# — especially in the experimental MCP tools mode — are diagnosable and surfaced
+# to the user with a real reason instead of a generic banner.
+error_logger = logging.getLogger("agent_error_logger")
+error_logger.setLevel(logging.ERROR)
+try:
+    _err_path = os.path.join(os.path.dirname(settings.logs_filepath) or ".", "agent_errors.log")
+    pathlib.Path(_err_path).parent.mkdir(parents=True, exist_ok=True)
+    _err_handler = logging.FileHandler(_err_path)
+    _err_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    error_logger.addHandler(_err_handler)
+except Exception:
+    logger.warning("⚠️ Could not set up agent error log; errors will only go to stderr/journald.")
+
 api_url = "http://localhost:8000"
 logger.info(f"""💬 Chat UI at {api_url}
   ⚡️ Streamable HTTP MCP server started on {api_url}/mcp
@@ -409,6 +424,9 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
     validate_output: bool = True
     enable_sparql_execution: bool = True
+    use_tools: bool = settings.use_tools
+    max_try_fix_sparql: int = settings.default_max_try_fix_sparql
+    max_tool_iterations: int = settings.default_max_tool_iterations
     headers: dict[str, str] = {}
     session_id: str | None = None
 
@@ -441,7 +459,7 @@ def convert_chunk_to_dict(obj: Any) -> Any:
         return obj
 
 
-async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator[str, Any]:
+async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = graph) -> AsyncGenerator[str, Any]:
     """Stream the response from the assistant.
 
     Reasoning ("thinking") models served via GPUStack — e.g. minimax-m2.7 —
@@ -461,43 +479,98 @@ async def stream_response(inputs: Any, config: RunnableConfig) -> AsyncGenerator
     think_buffer = ""
     emitted_len = 0
 
-    async for event, chunk in graph.astream(inputs, stream_mode=["messages", "updates"], config=config):
-        if event == "updates":
-            # New node starting → reset the think-stripping accumulator.
-            think_buffer = ""
-            emitted_len = 0
+    try:
+        async for event, chunk in run_graph.astream(inputs, stream_mode=["messages", "updates"], config=config):
+            if event == "updates":
+                # New node starting → reset the think-stripping accumulator.
+                think_buffer = ""
+                emitted_len = 0
+                chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
+                for node_data in chunk_dict.get("data", {}).values():
+                    if node_data and "steps" in node_data:
+                        node_data["steps"] = [
+                            s for s in node_data["steps"]
+                            if s.get("label") or s.get("type") == "fix-message"
+                        ]
+                yield f"data: {json.dumps(chunk_dict)}\n\n"
+                await asyncio.sleep(0)
+                continue
+
+            if event == "messages":
+                msg, metadata = chunk
+                content = getattr(msg, "content", "") if msg else ""
+                # A model that is *making a tool call* should not render prose in
+                # the chat body — the tool step bubble already shows the action.
+                # This matters for gpt-oss-120b, which (unlike other models)
+                # duplicates the tool-call arguments JSON into ``content`` (e.g.
+                # ``{"question": "...", "sparql_query": "..."}``). Without this
+                # guard that raw JSON would be streamed to the UI as garbage text
+                # before the real answer. The final, tool-call-free message still
+                # streams normally, so the actual answer is unaffected.
+                has_tool_calls = bool(
+                    getattr(msg, "tool_calls", None) or getattr(msg, "tool_call_chunks", None)
+                )
+                if has_tool_calls and getattr(msg, "type", "") != "tool":
+                    continue
+                # Strip inline <think> reasoning from every streamed LLM token (both
+                # the extract_user_question and call_model nodes run reasoning models).
+                # Tool results are not LLM token streams, so leave them untouched.
+                # Holding back incomplete tags also stops a bare "</think>" from ever
+                # reaching the UI, where it would create an empty "Thought process"
+                # step. The actual reasoning is surfaced as a populated step by the
+                # call_model node instead.
+                if isinstance(content, str) and content and getattr(msg, "type", "") != "tool":
+                    think_buffer += content
+                    visible = strip_think_stream(think_buffer)
+                    if len(visible) <= emitted_len:
+                        # Everything new is reasoning or an incomplete tag — hold back.
+                        continue
+                    msg.content = visible[emitted_len:]
+                    emitted_len = len(visible)
+
             chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
-            for node_data in chunk_dict.get("data", {}).values():
-                if node_data and "steps" in node_data:
-                    node_data["steps"] = [
-                        s for s in node_data["steps"]
-                        if s.get("label") or s.get("type") == "fix-message"
-                    ]
+            # Frontend only renders assistant text when type == "AIMessageChunk".
+            # When streaming is disabled for a model (gpt-oss uses
+            # disable_streaming="tool_calling" because it drops streamed tool
+            # calls), the final answer arrives as a single, non-streamed
+            # AIMessage whose serialized type is "ai" — which the UI would
+            # silently drop, showing a blank reply. Relabel it to
+            # "AIMessageChunk" so it renders identically to a streamed answer.
+            if event == "messages":
+                data = chunk_dict.get("data")
+                if isinstance(data, list) and data and isinstance(data[0], dict) and data[0].get("type") == "ai":
+                    data[0]["type"] = "AIMessageChunk"
             yield f"data: {json.dumps(chunk_dict)}\n\n"
             await asyncio.sleep(0)
-            continue
-
-        if event == "messages":
-            msg, metadata = chunk
-            content = getattr(msg, "content", "") if msg else ""
-            # Strip inline <think> reasoning from every streamed LLM token (both
-            # the extract_user_question and call_model nodes run reasoning models).
-            # Tool results are not LLM token streams, so leave them untouched.
-            # Holding back incomplete tags also stops a bare "</think>" from ever
-            # reaching the UI, where it would create an empty "Thought process"
-            # step. The actual reasoning is surfaced as a populated step by the
-            # call_model node instead.
-            if isinstance(content, str) and content and getattr(msg, "type", "") != "tool":
-                think_buffer += content
-                visible = strip_think_stream(think_buffer)
-                if len(visible) <= emitted_len:
-                    # Everything new is reasoning or an incomplete tag — hold back.
-                    continue
-                msg.content = visible[emitted_len:]
-                emitted_len = len(visible)
-
-        chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
-        yield f"data: {json.dumps(chunk_dict)}\n\n"
+    except Exception as exc:
+        # Any failure inside the graph (model rejecting tool calls, MCP transport
+        # errors, recursion limit, etc.) would otherwise break the SSE stream and
+        # show the UI a generic "contact an admin" banner with no detail. Log the
+        # full traceback to the readable error log and surface a short, real reason
+        # to the user as an assistant message so the chat stays usable.
+        use_tools = bool(config.get("configurable", {}).get("use_tools"))
+        error_logger.exception(
+            "Chat stream failed (use_tools=%s, model=%s): %s",
+            use_tools,
+            config.get("configurable", {}).get("model"),
+            exc,
+        )
+        reason = f"{type(exc).__name__}: {exc}".strip()
+        hint = ""
+        if use_tools:
+            hint = (
+                "\n\nThis happened in the experimental **MCP tools** mode. The selected "
+                "model may not support tool calling, or a tool call failed. Try turning "
+                "MCP tools off, or pick a model that supports tools."
+            )
+        error_msg = {
+            "event": "messages",
+            "data": [
+                {"content": f"⚠️ The request could not be completed.\n\n`{reason}`{hint}", "type": "AIMessageChunk"},
+                {"langgraph_node": "call_model"},
+            ],
+        }
+        yield f"data: {json.dumps(error_msg)}\n\n"
         await asyncio.sleep(0)
     yield "data: [DONE]"
 
@@ -525,6 +598,31 @@ async def chat(
     if not question:
         raise ValueError("No question provided")
 
+    # Guard: MCP tools mode requires a model that supports tool/function calling.
+    # Some GPUStack deployments (e.g. the qwen3-vl vision models) are served without
+    # the tool-calling flags and will reject any tool request. Rather than let that
+    # fail mid-stream, tell the user up front to switch models or turn tools off.
+    tool_capable = settings.tool_capable_models or settings.available_llm_models or [settings.default_llm_model]
+    if chat_request.use_tools and chat_request.model not in tool_capable:
+        capable_names = ", ".join(m.split("/", 1)[-1] for m in tool_capable) or "(none configured)"
+        selected_name = chat_request.model.split("/", 1)[-1]
+        msg = (
+            f"⚠️ The model **{selected_name}** does not support tool calling, so it can't be used in "
+            f"**MCP tools** mode.\n\nEither turn MCP tools off, or pick a tool-capable model: {capable_names}."
+        )
+
+        async def _reject() -> AsyncGenerator[str, Any]:
+            payload = {
+                "event": "messages",
+                "data": [{"content": msg, "type": "AIMessageChunk"}, {"langgraph_node": "call_model"}],
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
+            yield "data: [DONE]"
+
+        if chat_request.stream:
+            return StreamingResponse(_reject(), media_type="text/event-stream")
+        return JSONResponse(content={"messages": [{"role": "assistant", "content": msg}]})
+
     # print(request.model)
     # Pass session_id via metadata for Langfuse to properly group multi-turn conversations
     # https://langfuse.com/docs/integrations/langchain/tracing#trace-attributes
@@ -532,29 +630,48 @@ async def chat(
     if chat_request.session_id:
         langfuse_metadata["langfuse_session_id"] = chat_request.session_id
 
+    # Clamp the user-requested number of self-correction attempts to a sane range
+    # so a bad/huge value can't run forever or blow past the graph recursion limit.
+    max_try = max(1, min(chat_request.max_try_fix_sparql, 20))
+    # MCP tools mode only: how many tool-call rounds (exploration steps) the model
+    # may take before it must answer. Clamped to a sane range too.
+    max_tool_iterations = max(1, min(chat_request.max_tool_iterations, 30))
+    # Each pipeline fix attempt and each tools exploration step costs ~2 graph steps.
+    # Scale the LangGraph recursion limit so a higher attempt/step count doesn't trip
+    # a GraphRecursionError; never go below the original 25. We size for whichever
+    # mode could run so the same config is safe regardless of use_tools.
+    recursion_limit = max(25, 2 * max_try + 10, 2 * max_tool_iterations + 10)
+
     config = RunnableConfig(
         configurable={
             "model": chat_request.model,
             "validate_output": chat_request.validate_output,
             "enable_sparql_execution": chat_request.enable_sparql_execution,
+            "use_tools": chat_request.use_tools,
+            "max_try_fix_sparql": max_try,
+            "max_tool_iterations": max_tool_iterations,
         },
         metadata=langfuse_metadata,
-        recursion_limit=25,
+        recursion_limit=recursion_limit,
         callbacks=langfuse_handler,  # type: ignore
     )
     inputs: Any = {
         "messages": [(msg.role, msg.content) for msg in chat_request.messages[-10:]],
     }
 
+    # Select the graph to run: the experimental MCP tool-calling agent when
+    # use_tools is requested, otherwise the default retrieval + validation pipeline.
+    run_graph = get_graph(chat_request.use_tools)
+
     # request.stream = False
     if chat_request.stream:
         return StreamingResponse(
-            stream_response(inputs, config),
+            stream_response(inputs, config, run_graph),
             media_type="text/event-stream",
             # media_type="application/x-ndjson"
         )
 
-    response = await graph.ainvoke(inputs, config=config)
+    response = await run_graph.ainvoke(inputs, config=config)
     # Convert LangChain message objects to dicts for JSON serialization
     response_dict = convert_chunk_to_dict(response)
     return JSONResponse(content=response_dict)
@@ -616,7 +733,16 @@ async def get_models(
             return JSONResponse(status_code=401, content={"error": "Unauthorized"})
 
     models = settings.available_llm_models or [settings.default_llm_model]
-    return JSONResponse(content={"models": models, "default": settings.default_llm_model})
+    # Expose which models can be used in MCP tools mode so the UI can guide the user.
+    # An empty tool_capable_models list means "treat all as capable".
+    tool_capable = settings.tool_capable_models or models
+    return JSONResponse(
+        content={
+            "models": models,
+            "default": settings.default_llm_model,
+            "tool_capable_models": tool_capable,
+        }
+    )
 
 
 class LogsRequest(BaseModel):

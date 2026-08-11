@@ -36,6 +36,23 @@
       .icon-btn { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; border: none; background: transparent; cursor: pointer; color: #64748b; transition: background 0.15s, color 0.15s; text-decoration: none; }
       .icon-btn:hover { background: #f1f5f9; color: #1e293b; }
 
+      /* ── MCP tools toggle ── */
+      .tool-toggle { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; font-weight: 600; color: #475569; cursor: pointer; user-select: none; }
+      .tool-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+      .tool-toggle .track { position: relative; width: 34px; height: 18px; border-radius: 999px; background: #cbd5e1; transition: background 0.15s; flex-shrink: 0; }
+      .tool-toggle .track::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: transform 0.15s; box-shadow: 0 1px 2px rgba(0,0,0,0.2); }
+      .tool-toggle input:checked + .track { background: #2563eb; }
+      .tool-toggle input:checked + .track::after { transform: translateX(16px); }
+      .tool-toggle input:focus-visible + .track { outline: 2px solid #93c5fd; outline-offset: 2px; }
+      .tool-toggle .label-text { white-space: nowrap; }
+
+      /* ── Max-attempts control ── */
+      .attempts-ctrl { display: flex; align-items: center; gap: 0.4rem; font-size: 0.78rem; font-weight: 600; color: #475569; user-select: none; }
+      .attempts-ctrl input { width: 46px; padding: 3px 6px; font-size: 0.78rem; font-weight: 600; color: #1e293b; text-align: center; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+      .attempts-ctrl input:focus-visible { outline: 2px solid #93c5fd; outline-offset: 1px; border-color: #93c5fd; }
+      .attempts-ctrl .label-text { white-space: nowrap; }
+      .attempts-ctrl.is-hidden { display: none; }
+
       /* ── Info banner ── */
       .info-banner {
         flex-shrink: 0;
@@ -88,6 +105,19 @@
           </button>
         </form>
         {% endif %}
+        <label class="tool-toggle" title="Experimental: route your questions through the MCP tool-calling agent instead of the default retrieval pipeline. Turn on to compare results.">
+          <input type="checkbox" id="mcp-tools-toggle" />
+          <span class="track"></span>
+          <span class="label-text">MCP tools</span>
+        </label>
+        <label class="attempts-ctrl" title="How many times the model may try to fix its own SPARQL query before giving up. Higher values can solve more complex queries but take longer (1–20).">
+          <span class="label-text">Max fixes</span>
+          <input type="number" id="max-fixes-input" min="1" max="20" step="1" value="3" />
+        </label>
+        <label class="attempts-ctrl is-hidden" id="max-steps-ctrl" title="MCP tools mode only: how many exploration steps (tool-call rounds) the model may take to reach an answer. Higher values let it chain more queries for complex questions but take longer (1–30).">
+          <span class="label-text">Max steps</span>
+          <input type="number" id="max-steps-input" min="1" max="30" step="1" value="10" />
+        </label>
         <a href="https://github.com/dsl-unibe-ch/sparql-llm" target="_blank" rel="noopener noreferrer" class="icon-btn" title="Source code on GitHub">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
         </a>
@@ -152,6 +182,108 @@
       }
     }
 
+    // ── Header controls: inject `use_tools` and `max_try_fix_sparql` into /chat ──
+    // The <chat-with-context> component is a compiled bundle whose request body
+    // we cannot edit directly, so we wrap window.fetch and add these fields for the
+    // chat endpoint based on the header controls. Defaults: MCP tools OFF, 3 fixes.
+    (function () {
+      var CHAT_ENDPOINT = "{{ chat_endpoint }}";
+      window.__USE_TOOLS__ = false;
+      window.__MAX_FIXES__ = 3;
+      window.__MAX_STEPS__ = 10;
+      window.__TOOL_CAPABLE__ = null; // null = unknown yet; array once /models responds
+
+      var maxStepsCtrl = document.getElementById("max-steps-ctrl");
+      function syncStepsVisibility() {
+        if (maxStepsCtrl) maxStepsCtrl.classList.toggle("is-hidden", !window.__USE_TOOLS__);
+      }
+
+      var toggle = document.getElementById("mcp-tools-toggle");
+      if (toggle) {
+        // Restore last choice within this browser session.
+        try {
+          window.__USE_TOOLS__ = localStorage.getItem("mcpTools") === "true";
+          toggle.checked = window.__USE_TOOLS__;
+        } catch (e) {}
+        toggle.addEventListener("change", function () {
+          window.__USE_TOOLS__ = toggle.checked;
+          try { localStorage.setItem("mcpTools", toggle.checked ? "true" : "false"); } catch (e) {}
+          syncStepsVisibility();
+        });
+      }
+      syncStepsVisibility();
+
+      var maxFixes = document.getElementById("max-fixes-input");
+      function clampFixes(v) {
+        v = parseInt(v, 10);
+        if (isNaN(v)) v = 3;
+        return Math.max(1, Math.min(v, 20));
+      }
+      if (maxFixes) {
+        // Restore last choice within this browser session.
+        try {
+          var saved = localStorage.getItem("maxFixes");
+          if (saved !== null) { window.__MAX_FIXES__ = clampFixes(saved); maxFixes.value = window.__MAX_FIXES__; }
+        } catch (e) {}
+        window.__MAX_FIXES__ = clampFixes(maxFixes.value);
+        maxFixes.addEventListener("change", function () {
+          window.__MAX_FIXES__ = clampFixes(maxFixes.value);
+          maxFixes.value = window.__MAX_FIXES__;
+          try { localStorage.setItem("maxFixes", String(window.__MAX_FIXES__)); } catch (e) {}
+        });
+      }
+
+      var maxSteps = document.getElementById("max-steps-input");
+      function clampSteps(v) {
+        v = parseInt(v, 10);
+        if (isNaN(v)) v = 10;
+        return Math.max(1, Math.min(v, 30));
+      }
+      if (maxSteps) {
+        // Restore last choice within this browser session.
+        try {
+          var savedSteps = localStorage.getItem("maxSteps");
+          if (savedSteps !== null) { window.__MAX_STEPS__ = clampSteps(savedSteps); maxSteps.value = window.__MAX_STEPS__; }
+        } catch (e) {}
+        window.__MAX_STEPS__ = clampSteps(maxSteps.value);
+        maxSteps.addEventListener("change", function () {
+          window.__MAX_STEPS__ = clampSteps(maxSteps.value);
+          maxSteps.value = window.__MAX_STEPS__;
+          try { localStorage.setItem("maxSteps", String(window.__MAX_STEPS__)); } catch (e) {}
+        });
+      }
+
+      var origFetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        try {
+          var url = typeof input === "string" ? input : (input && input.url) || "";
+          var method = ((init && init.method) || (input && input.method) || "GET").toUpperCase();
+          var isChat = method === "POST" && CHAT_ENDPOINT && url.indexOf(CHAT_ENDPOINT) !== -1;
+          if (isChat && init && typeof init.body === "string") {
+            var payload = JSON.parse(init.body);
+            payload.use_tools = !!window.__USE_TOOLS__;
+            payload.max_try_fix_sparql = window.__MAX_FIXES__;
+            payload.max_tool_iterations = window.__MAX_STEPS__;
+            if (
+              payload.use_tools &&
+              Array.isArray(window.__TOOL_CAPABLE__) &&
+              payload.model &&
+              window.__TOOL_CAPABLE__.indexOf(payload.model) === -1
+            ) {
+              console.warn(
+                "MCP tools is ON but model '" + payload.model + "' does not support tool calling; " +
+                "the server will return a notice. Tool-capable models: " + window.__TOOL_CAPABLE__.join(", ")
+              );
+            }
+            init = Object.assign({}, init, { body: JSON.stringify(payload) });
+          }
+        } catch (e) {
+          console.warn("chat option injection skipped:", e);
+        }
+        return origFetch(input, init);
+      };
+    })();
+
     // ── Fetch models and wire up the chat element ──
     (function () {
       var chatEl = document.getElementById("chat-element");
@@ -165,6 +297,23 @@
           if (!data.models || data.models.length === 0) return;
           chatEl.setAttribute("models", data.models.join(","));
           chatEl.setAttribute("model", data.default || data.models[0]);
+          // Record which models can be used in MCP tools mode and surface the list
+          // in the toggle's tooltip so users know their options up front.
+          if (Array.isArray(data.tool_capable_models)) {
+            window.__TOOL_CAPABLE__ = data.tool_capable_models;
+            var toggleEl = document.getElementById("mcp-tools-toggle");
+            var labelEl = toggleEl && toggleEl.closest(".tool-toggle");
+            if (labelEl) {
+              var shortNames = data.tool_capable_models
+                .map(function (m) { return m.split("/").pop(); })
+                .join(", ");
+              labelEl.setAttribute(
+                "title",
+                "Experimental: route your questions through the MCP tool-calling agent. " +
+                  "Only tool-capable models work here: " + shortNames + "."
+              );
+            }
+          }
         })
         .catch(function (err) {
           console.error("Failed to fetch models:", err);

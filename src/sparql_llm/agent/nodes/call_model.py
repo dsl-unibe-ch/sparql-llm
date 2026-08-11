@@ -34,8 +34,8 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     configuration = Configuration.from_runnable_config(config)
     tools = None
 
-    # Set up MCP client (experimental, not used in production)
-    if settings.use_tools:
+    # Set up MCP client (experimental — enabled per-request via configuration.use_tools)
+    if configuration.use_tools:
         mcp_client = MultiServerMCPClient(
             {
                 "expasy-mcp": {
@@ -44,7 +44,14 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
                 }
             }
         )
-        tools = await mcp_client.get_tools()
+        try:
+            tools = await mcp_client.get_tools()
+        except Exception as exc:
+            # If the MCP server is unreachable or returns tools we can't load,
+            # surface a clear message instead of crashing the whole request.
+            raise RuntimeError(
+                f"Could not load MCP tools from {settings.server_url}/mcp ({type(exc).__name__}: {exc})"
+            ) from exc
 
     model = load_chat_model(configuration).bind_tools(tools) if tools else load_chat_model(configuration)
 
@@ -59,14 +66,21 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
 
     prompt_template = ChatPromptTemplate.from_messages(
         [
-            ("system", configuration.system_prompt),
+            ("system", configuration.system_prompt_tools if configuration.use_tools else configuration.system_prompt),
             ("placeholder", "{messages}"),
         ]
     )
-    message_value = prompt_template.invoke(structured_prompt, config)
+    message_value = await prompt_template.ainvoke(structured_prompt, config)
     # print(message_value.messages[0].content)
     # print(message_value)
-    response_msg = model.invoke(message_value, config)
+    # Use the async ``ainvoke`` (not the blocking ``invoke``): this node runs
+    # inside the async LangGraph event loop that also drives the SSE response.
+    # A synchronous ``invoke`` blocks that loop for the whole model call, so no
+    # streamed tokens or heartbeats reach the browser until it finishes — with a
+    # reasoning model doing several fix attempts the chat freezes on
+    # "🔄 Refining query…" and looks stuck ("keeps loading"). ``ainvoke`` yields
+    # control back to the loop so tokens stream live and the UI stays responsive.
+    response_msg = await model.ainvoke(message_value, config)
 
     # print(f"Model response: {response_msg.content}")
 
