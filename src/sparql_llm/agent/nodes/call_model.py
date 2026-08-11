@@ -70,10 +70,17 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
             ("placeholder", "{messages}"),
         ]
     )
-    message_value = prompt_template.invoke(structured_prompt, config)
+    message_value = await prompt_template.ainvoke(structured_prompt, config)
     # print(message_value.messages[0].content)
     # print(message_value)
-    response_msg = model.invoke(message_value, config)
+    # Use the async ``ainvoke`` (not the blocking ``invoke``): this node runs
+    # inside the async LangGraph event loop that also drives the SSE response.
+    # A synchronous ``invoke`` blocks that loop for the whole model call, so no
+    # streamed tokens or heartbeats reach the browser until it finishes — with a
+    # reasoning model doing several fix attempts the chat freezes on
+    # "🔄 Refining query…" and looks stuck ("keeps loading"). ``ainvoke`` yields
+    # control back to the loop so tokens stream live and the UI stays responsive.
+    response_msg = await model.ainvoke(message_value, config)
 
     # print(f"Model response: {response_msg.content}")
 
