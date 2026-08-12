@@ -591,6 +591,11 @@ async def chat(
         raise ValueError("Invalid API key")
 
     chat_request = ChatCompletionRequest(**await request.json())
+    
+    # If natural language mode is enabled, force the use of MCP tools logic
+    if chat_request.natural_language_only:
+        chat_request.use_tools = True
+
     # request.messages = [msg for msg in request.messages if msg.role != "system"]
     # request.messages = [Message(role="system", content=settings.system_prompt), *request.messages]
 

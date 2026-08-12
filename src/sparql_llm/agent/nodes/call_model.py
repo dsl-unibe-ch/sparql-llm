@@ -66,7 +66,24 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
 
     sys_prompt = configuration.system_prompt_tools if configuration.use_tools else configuration.system_prompt
     if configuration.natural_language_only:
-        sys_prompt += "\n\nCRITICAL INSTRUCTION: You must place your reasoning and ALL SPARQL queries inside a <think>...</think> block. Outside of the <think> block, provide ONLY the final natural language answer."
+        # Override the hardcoded instruction that tells the model to output the SPARQL query in the final answer
+        sys_prompt = sys_prompt.replace(
+            "Put the SPARQL inside a markdown ```sparql codeblock",
+            "Put the SPARQL inside a markdown ```sparql codeblock INSIDE a <think> block"
+        )
+        sys_prompt = sys_prompt.replace(
+            "Include the final working SPARQL query in a ```sparql codeblock",
+            "Include the final working SPARQL query in a ```sparql codeblock INSIDE a <think> block"
+        )
+        
+        sys_prompt += (
+            "\n\nCRITICAL INSTRUCTION (NATURAL LANGUAGE ONLY MODE):\n"
+            "1. If you are generating a SPARQL query or exploring data, you MUST place all reasoning, technical details, and SPARQL queries entirely inside a <think>...</think> block. Do NOT output any natural language outside the <think> block during this phase.\n"
+            "2. ONLY when you have the final results and are ready to provide the final answer to the user, output your natural language response outside the <think> block.\n"
+            "3. When you provide your final natural language answer, you MUST still include the final working SPARQL query inside your <think> block so the user can inspect it if they expand the thought process.\n"
+            "4. Your final visible response outside the <think> block must NOT contain any SPARQL queries or technical details. It must be purely natural language.\n"
+            "5. At the very end of your final natural language answer, you MUST ask an engaging follow-up question to keep the conversation interactive (e.g. 'Would you like me to find...', 'Should I explore...')."
+        )
 
     prompt_template = ChatPromptTemplate.from_messages(
         [
