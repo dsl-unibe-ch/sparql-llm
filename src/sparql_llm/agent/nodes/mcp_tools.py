@@ -63,6 +63,7 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list
                 tool_messages.append(
                     ToolMessage(
                         content=content,
+                        name=tool_call["name"],
                         tool_call_id=tool_call["id"],
                     )
                 )
@@ -73,6 +74,7 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list
                 tool_messages.append(
                     ToolMessage(
                         content=f"Error executing tool '{tool_call['name']}': {e!s}",
+                        name=tool_call["name"],
                         tool_call_id=tool_call["id"],
                     )
                 )
