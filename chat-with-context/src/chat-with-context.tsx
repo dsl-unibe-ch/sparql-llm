@@ -40,6 +40,7 @@ customElement(
     const [feedbackSent, setFeedbackSent] = createSignal(false);
     const [availableModels, setAvailableModels] = createSignal<string[]>([]);
     const [selectedModel, setSelectedModel] = createSignal("");
+    const [naturalLanguageOnly, setNaturalLanguageOnly] = createSignal(false);
 
     const state = new ChatState({});
     let chatContainerEl!: HTMLDivElement;
@@ -76,6 +77,11 @@ customElement(
     const handleModelChange = (model: string) => {
       setSelectedModel(model);
       state.model = model;
+    };
+
+    const handleNaturalLanguageOnlyChange = (enabled: boolean) => {
+      setNaturalLanguageOnly(enabled);
+      state.naturalLanguageOnly = enabled;
     };
 
     // Display label: strip "provider/" prefix for readability
@@ -397,7 +403,7 @@ customElement(
               {/* Bottom toolbar */}
               <div class="flex items-center justify-between px-3 pb-2">
                 {/* Left: new chat + model selector */}
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2 flex-wrap">
                   <button
                     title="New conversation"
                     class="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
@@ -423,6 +429,16 @@ customElement(
                       <svg class="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400" xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
                     </div>
                   </Show>
+                  
+                  <label class="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 border-0 rounded-full px-3 py-1.5 transition-colors">
+                    <input 
+                      type="checkbox" 
+                      class="accent-slate-500 w-3 h-3 cursor-pointer"
+                      checked={naturalLanguageOnly()} 
+                      onChange={e => handleNaturalLanguageOnlyChange((e.target as HTMLInputElement).checked)} 
+                    />
+                    <span>Natural Language Only</span>
+                  </label>
                 </div>
 
                 {/* Right: send / stop button */}

@@ -110,6 +110,7 @@ class State(InputState):
 
     steps: Annotated[list[StepOutput], add_to_list] = field(default_factory=list)
     structured_output: list[StructuredOutput] = field(default_factory=list)
+    latest_model_output: str = field(default="")
 
 
 def add_to_list(original_list: list[Any], new_items: list[Any]) -> list[Any]:

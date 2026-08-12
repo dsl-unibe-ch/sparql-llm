@@ -29,16 +29,18 @@ export class ChatState {
   apiUrl: string;
   apiKey: string;
   model: string;
+  naturalLanguageOnly: boolean;
   sessionId: string;
   messages: Accessor<Message[]>;
   setMessages: Setter<Message[]>;
   abortController: AbortController;
   onMessageUpdate: () => void;
 
-  constructor({apiUrl = "", apiKey = "", model = ""}: {apiUrl?: string; apiKey?: string; model?: string}) {
+  constructor({apiUrl = "", apiKey = "", model = "", naturalLanguageOnly = false}: {apiUrl?: string; apiKey?: string; model?: string; naturalLanguageOnly?: boolean}) {
     this.apiUrl = apiUrl;
     this.apiKey = apiKey;
     this.model = model;
+    this.naturalLanguageOnly = naturalLanguageOnly;
     // Generate a unique session ID for this conversation (used by Langfuse to group multi-turn conversations)
     this.sessionId = crypto.randomUUID();
 
@@ -196,6 +198,7 @@ async function streamCustomLangGraph(state: ChatState) {
       stream: true,
       session_id: state.sessionId,
       ...(state.model ? {model: state.model} : {}),
+      natural_language_only: state.naturalLanguageOnly,
     }),
   });
 

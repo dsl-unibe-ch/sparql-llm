@@ -222,6 +222,13 @@ class Configuration:
         },
     )
 
+    natural_language_only: bool = field(
+        default=False,
+        metadata={
+            "description": "If True, instructs the model to enclose all reasoning and SPARQL queries inside a <think> block so they are hidden from the main UI chat body, exposing only natural language answers."
+        },
+    )
+
     system_prompt: str = field(
         default=prompts.RESOLUTION_PROMPT,
         metadata={

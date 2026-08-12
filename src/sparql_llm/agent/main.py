@@ -425,6 +425,7 @@ class ChatCompletionRequest(BaseModel):
     validate_output: bool = True
     enable_sparql_execution: bool = True
     use_tools: bool = settings.use_tools
+    natural_language_only: bool = False
     max_try_fix_sparql: int = settings.default_max_try_fix_sparql
     max_tool_iterations: int = settings.default_max_tool_iterations
     headers: dict[str, str] = {}
@@ -645,11 +646,14 @@ async def chat(
     config = RunnableConfig(
         configurable={
             "model": chat_request.model,
+            "temperature": chat_request.temperature,
+            "max_tokens": chat_request.max_tokens,
             "validate_output": chat_request.validate_output,
             "enable_sparql_execution": chat_request.enable_sparql_execution,
             "use_tools": chat_request.use_tools,
             "max_try_fix_sparql": max_try,
             "max_tool_iterations": max_tool_iterations,
+            "natural_language_only": chat_request.natural_language_only,
         },
         metadata=langfuse_metadata,
         recursion_limit=recursion_limit,

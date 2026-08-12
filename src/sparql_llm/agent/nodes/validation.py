@@ -28,9 +28,11 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
     if not configuration.enable_output_validation:
         return {}
     last_msg = strip_think_blocks(str(state.messages[-1].content))
+    validation_target = getattr(state, "latest_model_output", last_msg) if configuration.natural_language_only else last_msg
+
     validation_steps: list[StepOutput] = []
     recall_messages: list[HumanMessage] = []
-    validation_outputs = validate_sparql_in_msg(last_msg, endpoints_metadata.prefixes_map, endpoints_metadata.void_dict)
+    validation_outputs = validate_sparql_in_msg(validation_target, endpoints_metadata.prefixes_map, endpoints_metadata.void_dict)
     for validation_output in validation_outputs:
         if validation_output["fixed_query"]:
             logger.debug("Auto-fixed prefixes in generated SPARQL query")

@@ -64,9 +64,13 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     # else:
     #     structured_prompt["extracted_entities"] = ""
 
+    sys_prompt = configuration.system_prompt_tools if configuration.use_tools else configuration.system_prompt
+    if configuration.natural_language_only:
+        sys_prompt += "\n\nCRITICAL INSTRUCTION: You must place your reasoning and ALL SPARQL queries inside a <think>...</think> block. Outside of the <think> block, provide ONLY the final natural language answer."
+
     prompt_template = ChatPromptTemplate.from_messages(
         [
-            ("system", configuration.system_prompt_tools if configuration.use_tools else configuration.system_prompt),
+            ("system", sys_prompt),
             ("placeholder", "{messages}"),
         ]
     )
@@ -122,4 +126,4 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
             ]
         }
     # Return the model response as a list to be added to existing messages
-    return {"messages": [response_msg], "passed_validation": True, "steps": reasoning_steps}
+    return {"messages": [response_msg], "passed_validation": True, "steps": reasoning_steps, "latest_model_output": answer_text}
