@@ -286,7 +286,7 @@ customElement(
                                   </button>
                                 </div>
                                 <article
-                                  class="prose max-w-full p-6"
+                                  class="prose max-w-full p-6 max-h-[70vh] overflow-y-auto"
                                   // eslint-disable-next-line solid/no-innerhtml
                                   innerHTML={DOMPurify.sanitize(marked.parse(step.details) as string, {
                                     ADD_TAGS: ["think"],
