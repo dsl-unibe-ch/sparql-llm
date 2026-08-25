@@ -53,8 +53,15 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list
                 content = ""
                 if hasattr(result, "content"):
                     if isinstance(result.content, list):
-                        # Handle list of content items
-                        content = "\n".join(str(item) for item in result.content)
+                        # MCP content items have a .text attribute — use it
+                        # instead of str() which gives the ugly Python repr.
+                        parts = []
+                        for item in result.content:
+                            if hasattr(item, "text"):
+                                parts.append(item.text)
+                            else:
+                                parts.append(str(item))
+                        content = "\n".join(parts)
                     else:
                         content = str(result.content)
                 else:
@@ -63,6 +70,7 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list
                 tool_messages.append(
                     ToolMessage(
                         content=content,
+                        name=tool_call["name"],
                         tool_call_id=tool_call["id"],
                     )
                 )
@@ -73,6 +81,7 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list
                 tool_messages.append(
                     ToolMessage(
                         content=f"Error executing tool '{tool_call['name']}': {e!s}",
+                        name=tool_call["name"],
                         tool_call_id=tool_call["id"],
                     )
                 )
