@@ -2,7 +2,7 @@
 
 Local, curated examples for the RAG corpus. Mix of:
 - The two originals from `elites_suisses_data/llm_documentation/SPARQL_queries_examples/query_examples.md` (with the verified prefix fixes already applied — `sdh-so:` → `sdh-short:` and `sdh-slc:` namespace = `social-life-core/`)
-- Additional examples covering data that is **populated today** (persons, births, parents, marriages via `sdh-slc:C9`)
+- Additional examples covering data that is **populated today** (persons, births, parents, marriages via `sdh-slc:C3`)
 
 When LESSH migrates to SHACL `.ttl`, port whichever of these are still relevant into the upstream repo.
 
@@ -87,7 +87,7 @@ Alternative question: Find the mother and father of Ernst Brenner.
 ```sparql
 PREFIX crm: <http://www.cidoc-crm.org/cidoc-crm/>
 PREFIX sdh-short: <https://sdhss.org/ontology/shortcuts/>
-PREFIX swel: <https://swiss-elites.lod4hss.cloud/resource/>
+PREFIX swel: <https://elites-suisses.lod4hss.org/resource/>
 
 SELECT ?role ?parent ?parentName
 WHERE {
@@ -107,19 +107,19 @@ WHERE {
 
 ## Example 6: Children of a person
 
-Question: Who are the recorded children of Ernst Brenner (swel:p50001)?
+Question: Who are the recorded children of Cecile Forel (swel:p64067)?
 Alternative question: Quels sont les enfants de cette personne ?
 
 ```sparql
 PREFIX crm: <http://www.cidoc-crm.org/cidoc-crm/>
 PREFIX sdh-short: <https://sdhss.org/ontology/shortcuts/>
-PREFIX swel: <https://swiss-elites.lod4hss.cloud/resource/>
+PREFIX swel: <https://elites-suisses.lod4hss.org/resource/>
 
 SELECT DISTINCT ?child ?childName
 WHERE {
   GRAPH <https://swiss-elites.lod4hss.cloud/resource/> {
     ?birth crm:P98 ?child .
-    { ?birth crm:P96 swel:p50001 } UNION { ?birth crm:P97 swel:p50001 }
+    { ?birth crm:P96 swel:p64067 } UNION { ?birth crm:P97 swel:p64067 }
     OPTIONAL { ?child sdh-short:P9 ?childName }
   }
 }
@@ -129,7 +129,7 @@ WHERE {
 
 Question: How many marriages are recorded?
 Alternative question: Combien de mariages sont enregistrés ?
-Comment: Marriages are modelled as instances of the SDHSS class C9 (social relationship event), each linking the spouses via sdh-slc:P20.
+Comment: Marriages are modelled as instances of sdh-slc:C3 (Social Relationship), each linking its two spouses via sdh-slc:P15. The relationship's type is reached with sdh-slc:P16; the single type instance carries sdh-short:P9 "Marriage".
 
 ```sparql
 PREFIX sdh-slc: <https://sdhss.org/ontology/social-life-core/>
@@ -137,7 +137,7 @@ PREFIX sdh-slc: <https://sdhss.org/ontology/social-life-core/>
 SELECT (COUNT(DISTINCT ?marriage) AS ?marriageCount)
 WHERE {
   GRAPH <https://swiss-elites.lod4hss.cloud/resource/> {
-    ?marriage a sdh-slc:C9 .
+    ?marriage a sdh-slc:C3 .
   }
 }
 ```
@@ -151,14 +151,14 @@ Alternative question: Quels étaient les conjoints de cette personne ?
 PREFIX crm: <http://www.cidoc-crm.org/cidoc-crm/>
 PREFIX sdh-slc: <https://sdhss.org/ontology/social-life-core/>
 PREFIX sdh-short: <https://sdhss.org/ontology/shortcuts/>
-PREFIX swel: <https://swiss-elites.lod4hss.cloud/resource/>
+PREFIX swel: <https://elites-suisses.lod4hss.org/resource/>
 
 SELECT DISTINCT ?spouse ?spouseName
 WHERE {
   GRAPH <https://swiss-elites.lod4hss.cloud/resource/> {
-    ?marriage a sdh-slc:C9 ;
-              sdh-slc:P20 swel:p50001 ;
-              sdh-slc:P20 ?spouse .
+    ?marriage a sdh-slc:C3 ;
+              sdh-slc:P15 swel:p50001 ;
+              sdh-slc:P15 ?spouse .
     FILTER(?spouse != swel:p50001)
     OPTIONAL { ?spouse sdh-short:P9 ?spouseName }
   }
@@ -188,7 +188,7 @@ Alternative question: Trouver l'événement de naissance d'une personne.
 
 ```sparql
 PREFIX crm: <http://www.cidoc-crm.org/cidoc-crm/>
-PREFIX swel: <https://swiss-elites.lod4hss.cloud/resource/>
+PREFIX swel: <https://elites-suisses.lod4hss.org/resource/>
 
 SELECT ?birth
 WHERE {
@@ -342,9 +342,11 @@ WHERE {
 }
 ```
 
-## Example 16: Places where study titles were obtained by a person
+## Example 16 *(aspirational)*: Places where study titles were obtained by a person
 
 Question: What are the places where the study titles were obtained by a person?
+
+Comment: NOT ANSWERABLE against the current data. `sdh-sls:P19` has zero occurrences in the store, and no other predicate carries a place of obtention: `sdh-sls:P17` points to the delivering Group (crm:E74), `sdh-sls:P25` to the Academic Discipline (sdh-sls:C9) and `sdh-sls:P10` to the Study title (sdh-sls:C8). Kept as a target for when the curators model it; the assistant should answer "not in the database" until then.
 
 ```sparql
 PREFIX owl: <http://www.w3.org/2002/07/owl#>

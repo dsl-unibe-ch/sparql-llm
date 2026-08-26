@@ -18,21 +18,41 @@
 
 <http://swiss-elites.lod4hss.cloud/void> a void:Dataset ;
     void:uriSpace "https://swiss-elites.lod4hss.cloud/resource/" ;
-    void:triples "455727"^^xsd:integer ;
-    void:entities "91847"^^xsd:integer ;
+    void:triples "735918"^^xsd:integer ;
+    void:entities "155481"^^xsd:integer ;
     void:sparqlEndpoint <https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter> ;
     void:exampleResource swel:p50001 ;
-    void:classes crm:E21, sdh-sls:C3, sdh-sls:C7, crm:E67, sdh-slc:C9, crm:E74, sdh-sls:C9, sdh-slc:C11, sdh-slc:C4 ;
-    void:properties rdf:type, sdh-short:P2, sdh-short:P9, sdh-slc:P23, sdh-sls:P11, sdh-sls:P3, sdh-sls:P9, sdh-sls:P17, sdh-sls:P25, sdh-slc:P20, owl:sameAs, sdh-short:P1, crm:P98, crm:P97, crm:P96, sdh-slc:P16, sdh-sls:P5, sdh:P99 ;
+    void:classes sdh-slc:C5, crm:E21, sdh-sls:C7, sdh-slc:C3, crm:E74, sdh:C13, crm:E67, sdh-sls:C9, sdh-sls:C8, sdh-slc:C11, sdh:C51, sdh-slc:C4 ;
+    void:properties rdf:type, sdh-short:P9, sdh-slc:P1, sdh-slc:P2, sdh-short:P7, sdh-short:P4, sdh-slc:P23, sdh-short:P2, sdh-short:P13, sdh-short:P1, sdh-sls:P9, sdh-sls:P17, sdh-sls:P25, sdh-sls:P10, owl:sameAs, sdh-slc:P15, sdh-slc:P16, sdh-sls:P11, sdh:P99, sdh:P6, crm:P98, crm:P97, crm:P96, sdh-short:P14, sdh-short:P11 ;
+    void:classPartition [
+        void:class sdh-slc:C5 ;
+        void:entities "64290"^^xsd:integer ;
+        void:propertyPartition [
+            void:property rdf:type ;
+            void:triples "64290"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-slc:P1 ;
+            void:triples "64290"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-slc:P2 ;
+            void:triples "64290"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P7 ;
+            void:triples "64076"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P4 ;
+            void:triples "64068"^^xsd:integer
+        ]
+    ] ;
     void:classPartition [
         void:class crm:E21 ;
         void:entities "58729"^^xsd:integer ;
         void:propertyPartition [
             void:property rdf:type ;
-            void:triples "58729"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-short:P2 ;
             void:triples "58729"^^xsd:integer
         ] ;
         void:propertyPartition [
@@ -44,44 +64,16 @@
             void:triples "58534"^^xsd:integer
         ] ;
         void:propertyPartition [
+            void:property sdh-short:P2 ;
+            void:triples "45333"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P13 ;
+            void:triples "22577"^^xsd:integer
+        ] ;
+        void:propertyPartition [
             void:property owl:sameAs ;
             void:triples "10629"^^xsd:integer
-        ]
-    ] ;
-    void:classPartition [
-        void:class sdh-sls:C3 ;
-        void:entities "16572"^^xsd:integer ;
-        void:propertyPartition [
-            void:property rdf:type ;
-            void:triples "33144"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-sls:P11 ;
-            void:triples "20553"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-short:P2 ;
-            void:triples "16572"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-sls:P3 ;
-            void:triples "16572"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-sls:P9 ;
-            void:triples "16572"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-sls:P17 ;
-            void:triples "16572"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-sls:P25 ;
-            void:triples "14749"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-sls:P5 ;
-            void:triples "3981"^^xsd:integer
         ]
     ] ;
     void:classPartition [
@@ -89,18 +81,10 @@
         void:entities "16572"^^xsd:integer ;
         void:propertyPartition [
             void:property rdf:type ;
-            void:triples "33144"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-sls:P11 ;
-            void:triples "20553"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-short:P2 ;
             void:triples "16572"^^xsd:integer
         ] ;
         void:propertyPartition [
-            void:property sdh-sls:P3 ;
+            void:property sdh-short:P1 ;
             void:triples "16572"^^xsd:integer
         ] ;
         void:propertyPartition [
@@ -116,39 +100,19 @@
             void:triples "14749"^^xsd:integer
         ] ;
         void:propertyPartition [
-            void:property sdh-sls:P5 ;
+            void:property sdh-sls:P10 ;
+            void:triples "13987"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-sls:P11 ;
             void:triples "3981"^^xsd:integer
         ]
     ] ;
     void:classPartition [
-        void:class crm:E67 ;
-        void:entities "10228"^^xsd:integer ;
-        void:propertyPartition [
-            void:property rdf:type ;
-            void:triples "10228"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property sdh-short:P1 ;
-            void:triples "10228"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property crm:P98 ;
-            void:triples "10228"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property crm:P97 ;
-            void:triples "10205"^^xsd:integer
-        ] ;
-        void:propertyPartition [
-            void:property crm:P96 ;
-            void:triples "6306"^^xsd:integer
-        ]
-    ] ;
-    void:classPartition [
-        void:class sdh-slc:C9 ;
+        void:class sdh-slc:C3 ;
         void:entities "5631"^^xsd:integer ;
         void:propertyPartition [
-            void:property sdh-slc:P20 ;
+            void:property sdh-slc:P15 ;
             void:triples "11262"^^xsd:integer
         ] ;
         void:propertyPartition [
@@ -162,18 +126,74 @@
     ] ;
     void:classPartition [
         void:class crm:E74 ;
-        void:entities "566"^^xsd:integer ;
+        void:entities "3608"^^xsd:integer ;
         void:propertyPartition [
             void:property rdf:type ;
-            void:triples "566"^^xsd:integer
+            void:triples "3608"^^xsd:integer
         ] ;
         void:propertyPartition [
             void:property sdh-short:P9 ;
-            void:triples "566"^^xsd:integer
+            void:triples "3608"^^xsd:integer
         ] ;
         void:propertyPartition [
             void:property sdh:P99 ;
             void:triples "566"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P11 ;
+            void:triples "57"^^xsd:integer
+        ]
+    ] ;
+    void:classPartition [
+        void:class sdh:C13 ;
+        void:entities "3290"^^xsd:integer ;
+        void:propertyPartition [
+            void:property rdf:type ;
+            void:triples "3290"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P9 ;
+            void:triples "3290"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh:P99 ;
+            void:triples "3290"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property owl:sameAs ;
+            void:triples "1474"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P14 ;
+            void:triples "1467"^^xsd:integer
+        ]
+    ] ;
+    void:classPartition [
+        void:class crm:E67 ;
+        void:entities "3179"^^xsd:integer ;
+        void:propertyPartition [
+            void:property rdf:type ;
+            void:triples "3179"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh:P6 ;
+            void:triples "3179"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property crm:P98 ;
+            void:triples "3179"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P1 ;
+            void:triples "3178"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property crm:P97 ;
+            void:triples "3169"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property crm:P96 ;
+            void:triples "1939"^^xsd:integer
         ]
     ] ;
     void:classPartition [
@@ -186,6 +206,18 @@
         void:propertyPartition [
             void:property sdh-short:P9 ;
             void:triples "118"^^xsd:integer
+        ]
+    ] ;
+    void:classPartition [
+        void:class sdh-sls:C8 ;
+        void:entities "59"^^xsd:integer ;
+        void:propertyPartition [
+            void:property rdf:type ;
+            void:triples "59"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P9 ;
+            void:triples "59"^^xsd:integer
         ]
     ] ;
     void:classPartition [
@@ -202,6 +234,26 @@
         void:propertyPartition [
             void:property sdh-short:P9 ;
             void:triples "2"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P11 ;
+            void:triples "2"^^xsd:integer
+        ]
+    ] ;
+    void:classPartition [
+        void:class sdh:C51 ;
+        void:entities "2"^^xsd:integer ;
+        void:propertyPartition [
+            void:property rdf:type ;
+            void:triples "2"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P9 ;
+            void:triples "2"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P11 ;
+            void:triples "1"^^xsd:integer
         ]
     ] ;
     void:classPartition [
@@ -218,31 +270,51 @@
         void:propertyPartition [
             void:property sdh-short:P9 ;
             void:triples "1"^^xsd:integer
+        ] ;
+        void:propertyPartition [
+            void:property sdh-short:P11 ;
+            void:triples "1"^^xsd:integer
         ]
     ] ;
     void:propertyPartition [
         void:property rdf:type ;
-        void:triples "108419"^^xsd:integer
-    ] ;
-    void:propertyPartition [
-        void:property sdh-short:P2 ;
-        void:triples "75301"^^xsd:integer
+        void:triples "155481"^^xsd:integer
     ] ;
     void:propertyPartition [
         void:property sdh-short:P9 ;
-        void:triples "59416"^^xsd:integer
+        void:triples "65809"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property sdh-slc:P1 ;
+        void:triples "64290"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property sdh-slc:P2 ;
+        void:triples "64290"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property sdh-short:P7 ;
+        void:triples "64076"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property sdh-short:P4 ;
+        void:triples "64068"^^xsd:integer
     ] ;
     void:propertyPartition [
         void:property sdh-slc:P23 ;
         void:triples "58534"^^xsd:integer
     ] ;
     void:propertyPartition [
-        void:property sdh-sls:P11 ;
-        void:triples "20553"^^xsd:integer
+        void:property sdh-short:P2 ;
+        void:triples "45333"^^xsd:integer
     ] ;
     void:propertyPartition [
-        void:property sdh-sls:P3 ;
-        void:triples "16572"^^xsd:integer
+        void:property sdh-short:P13 ;
+        void:triples "22577"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property sdh-short:P1 ;
+        void:triples "19750"^^xsd:integer
     ] ;
     void:propertyPartition [
         void:property sdh-sls:P9 ;
@@ -257,38 +329,50 @@
         void:triples "14749"^^xsd:integer
     ] ;
     void:propertyPartition [
-        void:property sdh-slc:P20 ;
-        void:triples "11262"^^xsd:integer
+        void:property sdh-sls:P10 ;
+        void:triples "13987"^^xsd:integer
     ] ;
     void:propertyPartition [
         void:property owl:sameAs ;
-        void:triples "10632"^^xsd:integer
+        void:triples "12106"^^xsd:integer
     ] ;
     void:propertyPartition [
-        void:property sdh-short:P1 ;
-        void:triples "10228"^^xsd:integer
-    ] ;
-    void:propertyPartition [
-        void:property crm:P98 ;
-        void:triples "10228"^^xsd:integer
-    ] ;
-    void:propertyPartition [
-        void:property crm:P97 ;
-        void:triples "10205"^^xsd:integer
-    ] ;
-    void:propertyPartition [
-        void:property crm:P96 ;
-        void:triples "6306"^^xsd:integer
+        void:property sdh-slc:P15 ;
+        void:triples "11262"^^xsd:integer
     ] ;
     void:propertyPartition [
         void:property sdh-slc:P16 ;
         void:triples "5631"^^xsd:integer
     ] ;
     void:propertyPartition [
-        void:property sdh-sls:P5 ;
+        void:property sdh-sls:P11 ;
         void:triples "3981"^^xsd:integer
     ] ;
     void:propertyPartition [
         void:property sdh:P99 ;
-        void:triples "566"^^xsd:integer
+        void:triples "3856"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property sdh:P6 ;
+        void:triples "3179"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property crm:P98 ;
+        void:triples "3179"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property crm:P97 ;
+        void:triples "3169"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property crm:P96 ;
+        void:triples "1939"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property sdh-short:P14 ;
+        void:triples "1467"^^xsd:integer
+    ] ;
+    void:propertyPartition [
+        void:property sdh-short:P11 ;
+        void:triples "61"^^xsd:integer
     ] .

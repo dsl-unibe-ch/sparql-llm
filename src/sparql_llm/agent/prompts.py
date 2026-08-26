@@ -17,7 +17,7 @@ EXTRACTION_PROMPT = (
 - "intent" (string): one of "access_resources" or "general_information".
     * "access_resources" = the user wants to query the knowledge graph to answer a factual question about Swiss elites.
     * "general_information" = the user is asking a meta-question about the dataset itself (size, coverage, what's modelled, etc).
-- "extracted_classes" (list of strings): potential RDF class names relevant to the question, in their prefixed form. Examples: "crm:E21" (Person), "crm:E67" (Birth), "crm:E74" (Group), "sdh-slc:C11" (Gender), "sdh-slc:C9" (Relationship, incl. marriages), "sdh-sls:C7" (Obtaining a Study Title). Empty list if no class is obvious.
+- "extracted_classes" (list of strings): potential RDF class names relevant to the question, in their prefixed form. Examples: "crm:E21" (Person), "crm:E67" (Birth), "crm:E74" (Group), "sdh-slc:C11" (Gender), "sdh-slc:C5" (Membership), "sdh-slc:C3" (Social Relationship, incl. marriages), "sdh-sls:C7" (Obtaining a Study Title), "sdh:C13" (Geographical Place). Empty list if no class is obvious.
 - "extracted_entities" (list of strings): named entities the user mentioned — person names, organisation names, places, dates. These may be resolved to swel: URIs downstream. Empty list if none.
 - "question_steps" (list of strings): the question decomposed into smaller standalone sub-questions for semantic retrieval. Empty list if the question is already a single step.
 
@@ -38,10 +38,11 @@ Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target i
 
 Prefixes:
 - crm:       <http://www.cidoc-crm.org/cidoc-crm/>           — E21 (Person), E67 (Birth), E69 (Death), E74 (Group); P96 (by mother), P97 (from father), P98 (brought into life)
-- sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — note the "-core/" suffix. C9 (Relationship — this is where marriages/unions live), C11 (Gender), C3 (Social Relationship), C4 (Social Relationship Type); P16 (has relationship type), P20 (had partner), P23 (has gender)
+- sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — note the "-core/" suffix. C5 (Membership — 64k, the largest class: a person's mandate/role in a group), C3 (Social Relationship — this is where marriages/unions live), C4 (Social Relationship Type), C11 (Gender); P1 (membership → person), P2 (membership → group), P15 (relationship → partner, two per relationship), P16 (has relationship type), P23 (has gender). There is NO C9 and NO P20 in this namespace.
 - sdh-sls:   <https://sdhss.org/ontology/social-life-specific/> — social-life-SPECIFIC (NOT "-core/"). C7 (Obtaining a Study Title — the *event*; the title itself is C8), C8 (Study title), C9 (Academic Discipline), C3 (Taking Care of a Person Type — unrelated to education); P9 (was obtained by), P10 (is obtention of), P11 (has academic supervisor), P17 (is delivered by), P19 (is obtained at), P25 (is obtention in)
-- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P1 (at some time within — on events), P2 (has birth date — literal directly on the Person), P9 (has standard label), P13 (has death date)
-- swel:      <https://swiss-elites.lod4hss.cloud/resource/>  — entity URIs (e.g. swel:p12345)
+- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P9 (has standard label — THE name predicate, a plain literal on Person/Group/Place), P1 (at some time within — on events), P2 (has birth date — literal directly on the Person), P13 (has death date), P4 / P7 (membership start / end year), P11 (has description), P14 (geo point, WKT literal)
+- sdh:       <https://sdhss.org/ontology/core/>              — C13 (Geographical Place), C51 (Geographical Place Kind); P6 (event took place at), P99
+- swel:      <https://elites-suisses.lod4hss.org/resource/>  — entity URIs (e.g. swel:p12345). NOTE: entity URIs use elites-suisses.lod4hss.org, while the named graph is still swiss-elites.lod4hss.cloud/resource/.
 - xsd:       <http://www.w3.org/2001/XMLSchema#>
 
 Rules:
@@ -73,10 +74,11 @@ Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target i
 
 Prefixes:
 - crm:       <http://www.cidoc-crm.org/cidoc-crm/>           — E21 (Person), E67 (Birth), P96, P97, P98
-- sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — C11 (Gender), C9 (Marriage/Union), C4 (Social Rel. Type), C3 (Social Rel.), P16, P20, P23 (note the "-core/" suffix)
+- sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — C5 (Membership, largest class), C3 (Social Rel. — marriages live here), C4 (Social Rel. Type), C11 (Gender); P1, P2, P15 (partner), P16, P23. No C9, no P20 (note the "-core/" suffix)
 - sdh-sls:   <https://sdhss.org/ontology/social-life-specific/> — social-life-SPECIFIC (NOT "-core/"); education/study per the R2RML mapping: C7 (study/degree title), C9 (study discipline), C3
-- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P1 (person link), P2 (group link), P9 (label)
-- swel:      <https://swiss-elites.lod4hss.cloud/resource/>  — entity URIs (e.g. swel:p12345)
+- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P9 (label — THE name predicate), P1/P2 (dates on events), P4/P7 (membership start/end year), P14 (geo WKT)
+- sdh:       <https://sdhss.org/ontology/core/>              — C13 (Geographical Place), C51 (Place Kind); P6 (took place at)
+- swel:      <https://elites-suisses.lod4hss.org/resource/>  — entity URIs (e.g. swel:p12345). NOTE: entity URIs use elites-suisses.lod4hss.org, while the named graph is still swiss-elites.lod4hss.cloud/resource/.
 - xsd:       <http://www.w3.org/2001/XMLSchema#>
 
 HOW TO WORK (this is an iterative loop — do NOT stop after writing a single query):
