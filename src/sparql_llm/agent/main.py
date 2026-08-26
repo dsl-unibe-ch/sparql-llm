@@ -615,6 +615,12 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
     yield "data: [DONE]"
 
 
+def tool_capable_models() -> list[str]:
+    """Models usable in MCP tools mode: everything available minus the known-incapable ones."""
+    models = settings.available_llm_models or [settings.default_llm_model]
+    return [m for m in models if m not in settings.tool_incapable_models]
+
+
 # FastAPI does not support Union in response model (even if it says otherwise in docs)
 # so we need to disable response_model for this endpoint
 @app.post("/chat", response_model=None)
@@ -647,8 +653,8 @@ async def chat(
     # Some GPUStack deployments (e.g. the qwen3-vl vision models) are served without
     # the tool-calling flags and will reject any tool request. Rather than let that
     # fail mid-stream, tell the user up front to switch models or turn tools off.
-    tool_capable = settings.tool_capable_models or settings.available_llm_models or [settings.default_llm_model]
-    if chat_request.use_tools and chat_request.model not in tool_capable:
+    tool_capable = tool_capable_models()
+    if chat_request.use_tools and chat_request.model in settings.tool_incapable_models:
         capable_names = ", ".join(m.split("/", 1)[-1] for m in tool_capable) or "(none configured)"
         selected_name = chat_request.model.split("/", 1)[-1]
         msg = (
@@ -782,8 +788,7 @@ async def get_models(
 
     models = settings.available_llm_models or [settings.default_llm_model]
     # Expose which models can be used in MCP tools mode so the UI can guide the user.
-    # An empty tool_capable_models list means "treat all as capable".
-    tool_capable = settings.tool_capable_models or models
+    tool_capable = tool_capable_models()
     return JSONResponse(
         content={
             "models": models,
