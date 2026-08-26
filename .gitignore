@@ -34,3 +34,6 @@ tutorial/.chainlit/translations/*
 !tutorial/.chainlit/translations/en-US.json
 
 .mcpregistry_*
+
+# Internal working notes, not for publication
+PIPELINE_AND_CURATORS.md
