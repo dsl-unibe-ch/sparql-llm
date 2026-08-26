@@ -52,6 +52,24 @@
       .badge-inactive { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; color: #64748b; }
       .badge-superuser { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #fef9c3; color: #854d0e; margin-left: 4px; }
 
+      /* ── Search index ── */
+      .idx-body { padding: 1.25rem; display: flex; flex-direction: column; gap: 0.9rem; }
+      .idx-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; }
+      .idx-note { font-size: 0.82rem; color: #64748b; margin: 0; }
+      .idx-banner { padding: 0.85rem 1rem; border-radius: 8px; font-size: 0.85rem; line-height: 1.5; }
+      .idx-stale { background: #fef3c7; border: 1px solid #fcd34d; color: #78350f; }
+      .idx-current { background: #dcfce7; border: 1px solid #86efac; color: #166534; }
+      .idx-error { background: #fee2e2; border: 1px solid #fca5a5; color: #991b1b; }
+      .idx-changes { margin: 0.5rem 0 0; padding-left: 1.1rem; }
+      .idx-changes li { margin-bottom: 0.25rem; }
+      .btn-reindex { background: #0f172a; color: #fff; border: none; border-radius: 8px; padding: 0.55rem 1.1rem; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+      .btn-reindex:hover:not(:disabled) { background: #1e293b; }
+      .btn-reindex:disabled { opacity: 0.55; cursor: not-allowed; }
+      .idx-status { font-size: 0.82rem; color: #475569; }
+      .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #cbd5e1; border-top-color: #0f172a; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+
       /* ── Add user form ── */
       .add-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; }
       .add-form { padding: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
@@ -113,6 +131,24 @@
       {% if flash_error %}
       <div class="flash flash-error">{{ flash_error }}</div>
       {% endif %}
+
+      <!-- Search index -->
+      <div class="card">
+        <div class="card-header">Search index</div>
+        <div class="idx-body">
+          <p class="idx-note">
+            The assistant answers from a snapshot of the database taken when the index was last
+            built. Rebuild after the triplestore is reloaded, or after the example queries change,
+            so it describes the current data. The replacement index is built first and only
+            switched in once it is ready &mdash; the chatbot keeps working throughout.
+          </p>
+          <div id="idx-banner" class="idx-banner idx-current">Checking the index&hellip;</div>
+          <div class="idx-row">
+            <button id="idx-rebuild" class="btn-reindex" disabled>Rebuild index</button>
+            <span id="idx-status" class="idx-status"></span>
+          </div>
+        </div>
+      </div>
 
       <!-- User list -->
       <div class="card">
@@ -188,5 +224,94 @@
         </form>
       </div>
     </div>
+    <script>
+      (function () {
+        var banner = document.getElementById('idx-banner');
+        var button = document.getElementById('idx-rebuild');
+        var status = document.getElementById('idx-status');
+        var polling = null;
+
+        function esc(t) {
+          var d = document.createElement('div');
+          d.textContent = t;
+          return d.innerHTML;
+        }
+
+        function renderDrift(drift) {
+          if (!drift) return;
+          if (drift.reason === 'endpoint-unreachable') {
+            banner.className = 'idx-banner idx-error';
+            banner.innerHTML = 'Could not reach the SPARQL endpoint, so the index could not be checked.';
+            return;
+          }
+          if (drift.stale) {
+            banner.className = 'idx-banner idx-stale';
+            var items = (drift.changes || []).map(function (c) { return '<li>' + esc(c) + '</li>'; }).join('');
+            banner.innerHTML = '<strong>The database has changed since the index was built.</strong>'
+              + '<ul class="idx-changes">' + items + '</ul>'
+              + 'Rebuild the index so the assistant knows about these.';
+          } else {
+            banner.className = 'idx-banner idx-current';
+            var when = (drift.indexed && drift.indexed.taken_at)
+              ? ' Last built ' + esc(drift.indexed.taken_at) + '.' : '';
+            banner.innerHTML = 'The index matches the database.' + when;
+          }
+        }
+
+        function renderJob(job) {
+          if (!job) return false;
+          var running = (job.state === 'running' || job.state === 'swapping');
+          button.disabled = running;
+          if (running) {
+            status.innerHTML = '<span class="spinner"></span>' + esc(job.message || 'Rebuilding...');
+          } else if (job.state === 'failed') {
+            status.innerHTML = '';
+            banner.className = 'idx-banner idx-error';
+            banner.innerHTML = esc(job.message || 'The rebuild failed.');
+          } else if (job.state === 'done') {
+            status.textContent = job.message || 'Done.';
+          } else {
+            status.textContent = '';
+          }
+          return running;
+        }
+
+        function refresh() {
+          return fetch('/admin/index-status', { credentials: 'same-origin' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) {
+              if (!d) return false;
+              var running = renderJob(d.job);
+              if (!running) renderDrift(d.drift);
+              return running;
+            })
+            .catch(function () { return false; });
+        }
+
+        function poll() {
+          if (polling) return;
+          polling = setInterval(function () {
+            refresh().then(function (running) {
+              if (!running) { clearInterval(polling); polling = null; }
+            });
+          }, 3000);
+        }
+
+        button.addEventListener('click', function () {
+          if (!confirm('Rebuild the search index from the live database? This takes a few minutes. The chatbot keeps working while it runs.')) return;
+          button.disabled = true;
+          status.innerHTML = '<span class="spinner"></span>Starting...';
+          fetch('/admin/reindex', { method: 'POST', credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function () { poll(); })
+            .catch(function () {
+              status.textContent = 'Could not start the rebuild.';
+              button.disabled = false;
+            });
+        });
+
+        refresh().then(function (running) { if (running) poll(); });
+      })();
+    </script>
   </body>
 </html>

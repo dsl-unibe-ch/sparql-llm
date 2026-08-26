@@ -15,6 +15,7 @@ from fastapi import Depends, FastAPI, Form, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.requests import Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langchain_core.runnables import RunnableConfig
@@ -287,6 +288,44 @@ if settings.auth_enabled:
                 "flash_error": flash_error,
             },
         )
+
+    @app.get("/admin/index-status", include_in_schema=False)
+    async def admin_index_status(
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """Is the retrieval index still in step with the endpoint, and is a rebuild running?
+
+        Fetched by the admin page after render rather than during it: the drift check makes
+        three SPARQL queries and should never hold up the page.
+        """
+        if not user.is_superuser:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        from sparql_llm.indexing.drift import check_drift
+        from sparql_llm.indexing.rebuild import read_job
+
+        drift = await run_in_threadpool(check_drift)
+        return JSONResponse({"drift": drift, "job": read_job()})
+
+    @app.post("/admin/reindex", include_in_schema=False)
+    async def admin_reindex(
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """Rebuild the retrieval index from the live endpoint. Superusers only.
+
+        Returns as soon as the job starts. The new index is built into a fresh collection
+        and only swapped in when complete, so the assistant keeps answering from the current
+        index throughout, and a failed rebuild changes nothing.
+        """
+        if not user.is_superuser:
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        from sparql_llm.indexing.rebuild import start_rebuild
+
+        result = await run_in_threadpool(start_rebuild)
+        if not result.get("started"):
+            return JSONResponse(
+                {"error": "A rebuild is already running.", **result}, status_code=409
+            )
+        return JSONResponse(result)
 
     @app.post("/admin/add-user", include_in_schema=False)
     async def admin_add_user(

@@ -207,8 +207,18 @@ def load_expasy_resources_infos(file: str = "expasy_resources_metadata.csv") -> 
     return docs
 
 
-def init_vectordb() -> None:
-    """Initialize the vectordb with example queries and ontology descriptions from the SPARQL endpoints."""
+def init_vectordb(collection_name: str | None = None) -> int:
+    """Build the retrieval index from the SPARQL endpoints.
+
+    Args:
+        collection_name: target Qdrant collection. Defaults to ``settings.docs_collection_name``.
+            Pass a versioned name to build a replacement index without touching the live one —
+            see :func:`rebuild_index_with_alias`.
+
+    Returns:
+        The number of documents indexed.
+    """
+    target = collection_name or settings.docs_collection_name
     docs: list[Document] = []
 
     # Gets documents from the SPARQL endpoints
@@ -312,10 +322,10 @@ The UniProt consortium is headed by Alex Bateman, Alan Bridge and Cathy Wu, supp
     start_time = time.time()
 
     # Initialize the collection
-    if qdrant_client.collection_exists(settings.docs_collection_name):
-        qdrant_client.delete_collection(settings.docs_collection_name)
+    if qdrant_client.collection_exists(target):
+        qdrant_client.delete_collection(target)
     qdrant_client.create_collection(
-        collection_name=settings.docs_collection_name,
+        collection_name=target,
         vectors_config=VectorParams(size=embedding_model.embedding_size, distance=Distance.COSINE),
     )
 
@@ -329,7 +339,7 @@ The UniProt consortium is headed by Alex Bateman, Alan Bridge and Cathy Wu, supp
         # Generate embeddings for this batch
         embeddings = embedding_model.embed([doc.page_content for doc in batch_docs])
         qdrant_client.upsert(
-            collection_name=settings.docs_collection_name,
+            collection_name=target,
             points=models.Batch(
                 ids=list(range(batch_start + 1, batch_end + 1)),
                 vectors=[emb.tolist() for emb in embeddings],
@@ -339,8 +349,9 @@ The UniProt consortium is headed by Alex Bateman, Alan Bridge and Cathy Wu, supp
         print(f"Indexed documents {batch_start + 1}-{batch_end}")
 
     print(
-        f"Done generating and indexing {total_docs} documents into the vectordb in {time.time() - start_time} seconds"
+        f"Done generating and indexing {total_docs} documents into '{target}' in {time.time() - start_time} seconds"
     )
+    return total_docs
 
     # Using langchain vectorstore wrapper
     # from langchain_qdrant import QdrantVectorStore
