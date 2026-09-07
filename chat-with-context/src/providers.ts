@@ -13,6 +13,10 @@ type Step = {
   label: string;
   details: string; // Details about the step as markdown string
   substeps?: {label: string; details: string}[];
+  // Marks the single collapsible "what the agent did" step. Every tool call in a
+  // turn folds into this one step instead of adding a pill (and a message
+  // bubble) of its own.
+  isActivity?: boolean;
 };
 
 export type Message = {
@@ -36,7 +40,17 @@ export class ChatState {
   abortController: AbortController;
   onMessageUpdate: () => void;
 
-  constructor({apiUrl = "", apiKey = "", model = "", naturalLanguageOnly = false}: {apiUrl?: string; apiKey?: string; model?: string; naturalLanguageOnly?: boolean}) {
+  constructor({
+    apiUrl = "",
+    apiKey = "",
+    model = "",
+    naturalLanguageOnly = false,
+  }: {
+    apiUrl?: string;
+    apiKey?: string;
+    model?: string;
+    naturalLanguageOnly?: boolean;
+  }) {
     this.apiUrl = apiUrl;
     this.apiKey = apiKey;
     this.model = model;
@@ -91,13 +105,79 @@ export class ChatState {
     this.onMessageUpdate();
     // this.inputTextEl.scrollIntoView({behavior: "smooth"});
   };
+
+  /** Number of tool calls folded into the current turn's activity step. */
+  toolCallCount = 0;
+
+  /** Record one tool result into the turn's single collapsible activity step.
+   *
+   * Two things happen here that used to go wrong:
+   *
+   * 1. No new message bubble is created. Previously every tool result called
+   *    `appendMessage`, so a seven-step answer left seven near-empty bubbles
+   *    each carrying one pill.
+   * 2. Any prose already streamed into the current bubble is moved into the
+   *    activity details and cleared from the answer. A model that writes its
+   *    answer *and* calls a tool in the same message would otherwise leave that
+   *    prose in the chat body once per tool round — the duplicated answers.
+   */
+  recordToolResult = (label: string, content: string) => {
+    const msg = this.lastMsg();
+    if (!msg) return;
+    this.toolCallCount += 1;
+    const pending = msg.content().trim();
+    if (pending) msg.setContent("");
+    const section =
+      (pending ? `**Draft answer from this round:**\n\n${pending}\n\n` : "") +
+      `**${label}**\n\n\`\`\`\n${content}\n\`\`\`\n\n`;
+    this.upsertActivityStep(`⏳ Searching the knowledge graph… (${this.toolCallCount})`, section);
+  };
+
+  /** Create or update the turn's activity step, appending to its details. */
+  upsertActivityStep = (label: string, detailsToAppend: string) => {
+    this.lastMsg().setSteps(steps => {
+      const idx = steps.findIndex(step => step.isActivity);
+      if (idx === -1) {
+        return [...steps, {node_id: "tools", label, details: detailsToAppend, substeps: [], isActivity: true}];
+      }
+      const next = [...steps];
+      next[idx] = {...next[idx], label, details: next[idx].details + detailsToAppend};
+      return next;
+    });
+    this.scrollToInput();
+    this.onMessageUpdate();
+  };
+
+  /** Settle the activity step once the turn is over, so it stops reading as live. */
+  finishActivityStep = () => {
+    const msg = this.lastMsg();
+    if (!msg) return;
+    const count = this.toolCallCount;
+    this.toolCallCount = 0;
+    if (count === 0) return;
+    msg.setSteps(steps =>
+      steps.map(step =>
+        step.isActivity
+          ? {...step, label: `🔎 ${count} search step${count === 1 ? "" : "s"} · click to inspect`}
+          : step,
+      ),
+    );
+    this.onMessageUpdate();
+  };
 }
 
 // Stream a response from various LLM agent providers (OpenAI-like, LangGraph, LangServe)
 export async function streamResponse(state: ChatState, question: string) {
   state.appendMessage(question, "user");
-  // Query LangGraph through our custom API
-  await streamCustomLangGraph(state);
+  state.toolCallCount = 0;
+  // Query LangGraph through our custom API. The activity step is settled in a
+  // finally so an aborted or failed turn does not leave a pill reading as if
+  // the agent were still searching.
+  try {
+    await streamCustomLangGraph(state);
+  } finally {
+    state.finishActivityStep();
+  }
   // if (state.apiUrl.endsWith(":2024/") || state.apiUrl.endsWith(":8123/")) {
   //   // Query LangGraph API
   //   await streamLangGraphApi(state);
@@ -170,8 +250,7 @@ async function processLangGraphChunk(state: ChatState, chunk: any) {
       // console.log("TOOL res", msg, metadata);
       const name = msg.name ? msg.name.replace(/_/g, " ").replace(/^\w/, (c: string) => c.toUpperCase()) : "Tool";
       const icon = msg.name.includes("resources") ? "📚" : msg.name.includes("execute") ? "📡" : "🔧";
-      state.appendMessage("", "assistant");
-      state.appendStepToLastMsg(metadata.langgraph_node, `${icon} ${name}`, msg.content);
+      state.recordToolResult(`${icon} ${name}`, msg.content);
     } else if (msg.content === "</think>" && msg.type === "AIMessageChunk") {
       // Putting thinking process in a separate step
       state.appendContentToLastMsg(msg.content);
