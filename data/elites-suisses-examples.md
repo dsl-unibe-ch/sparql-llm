@@ -199,57 +199,56 @@ WHERE {
 }
 ```
 
-## Example 11 *(aspirational)*: Members of the Federal Council
+## Example 11: Members of the Federal Council
 
 Question: Who has been a Swiss federal councillor?
 Alternative question: What is the list of all the members of the Federal Council?
-Comment: Will return 0 rows today — only 2 sdh-slc:C11 group instances exist and none are labelled "Federal Council". Indexed so the system learns the pattern for when LESSH populates the organisations side.
+Comment: Verified live 2026-09-07 — returns 100+ persons. Memberships link with `sdh-slc:P1`/`sdh-slc:P2` (NOT `sdh-short:`), and the group is a `crm:E74` matched by its French label; `sdh-slc:C11` is Gender, not Group.
 
 ```sparql
 PREFIX sdh-slc: <https://sdhss.org/ontology/social-life-core/>
 PREFIX sdh-short: <https://sdhss.org/ontology/shortcuts/>
 
-SELECT DISTINCT ?person ?personLabel
+SELECT DISTINCT ?person ?personName
 WHERE {
   GRAPH <https://swiss-elites.lod4hss.cloud/resource/> {
-    ?membership sdh-short:P1 ?person ;
-                sdh-short:P2 ?group .
-    ?group a sdh-slc:C11 ;
-           sdh-short:P9 ?groupLabel .
-    FILTER (regex(str(?groupLabel), "federal council|conseil fédéral", "i"))
-    ?person sdh-short:P9 ?personLabel .
+    ?membership a sdh-slc:C5 ;
+                sdh-slc:P1 ?person ;
+                sdh-slc:P2 ?group .
+    ?group sdh-short:P9 ?groupName .
+    FILTER (LCASE(STR(?groupName)) = "conseil fédéral")
+    ?person sdh-short:P9 ?personName .
   }
 }
+ORDER BY ?personName
 LIMIT 100
 ```
 
-## Example 12 *(aspirational)*: Federal Council in a given year
+## Example 12: Federal Council in a given year
 
 Question: Who was in the Federal Council in 2001?
-Comment: Aspirational — sdh-short:P3 (start date) and sdh-short:P8 (end date) are not in the graph yet.
+Alternative question: Qui siégeait au Conseil fédéral en 2001 ?
+Comment: Verified live 2026-09-07 — returns the 7 councillors of 2001. Membership start/end are `sdh-short:P4`/`sdh-short:P7` and are **plain `xsd:integer` years**, so compare them as numbers; do not build `xsd:date` values from them. The end date is optional (a sitting mandate has none).
 
 ```sparql
-PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 PREFIX sdh-slc: <https://sdhss.org/ontology/social-life-core/>
 PREFIX sdh-short: <https://sdhss.org/ontology/shortcuts/>
 
-SELECT DISTINCT ?person ?personLabel
+SELECT DISTINCT ?person ?personName ?start ?end
 WHERE {
   GRAPH <https://swiss-elites.lod4hss.cloud/resource/> {
-    BIND(xsd:date("2001-01-01") AS ?yearStart)
-    BIND(xsd:date("2001-12-31") AS ?yearEnd)
-
-    ?membership sdh-short:P1 ?person ;
-                sdh-short:P2 ?group ;
-                sdh-short:P3 ?startDate .
-    OPTIONAL { ?membership sdh-short:P8 ?endDate }
-    ?group a sdh-slc:C11 ;
-           sdh-short:P9 ?groupLabel .
-    FILTER (regex(str(?groupLabel), "federal council|conseil fédéral", "i"))
-    FILTER (?startDate <= ?yearEnd && (!BOUND(?endDate) || ?endDate >= ?yearStart))
-    ?person sdh-short:P9 ?personLabel .
+    ?membership a sdh-slc:C5 ;
+                sdh-slc:P1 ?person ;
+                sdh-slc:P2 ?group ;
+                sdh-short:P4 ?start .
+    OPTIONAL { ?membership sdh-short:P7 ?end }
+    ?group sdh-short:P9 ?groupName .
+    FILTER (LCASE(STR(?groupName)) = "conseil fédéral")
+    ?person sdh-short:P9 ?personName .
+    FILTER (?start <= 2001 && (!BOUND(?end) || ?end >= 2001))
   }
 }
+ORDER BY ?personName
 LIMIT 100
 ```
 
