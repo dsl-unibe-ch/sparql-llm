@@ -8,7 +8,7 @@ function newTurn(): ChatState {
   const state = new ChatState({apiUrl: "http://localhost/chat"});
   state.appendMessage("Who was the spouse of Ernst Brenner?", "user");
   state.appendMessage("", "assistant");
-  state.toolCallCount = 0;
+  state.beginTurn();
   return state;
 }
 
@@ -21,11 +21,11 @@ describe("tool activity folding", () => {
     // The reported bug: the agent wrote the same prose in three ReAct rounds and
     // the chat body showed the answer three times.
     const state = newTurn();
-    state.appendContentToLastMsg(ANSWER);
+    state.appendAnswerChunk(ANSWER);
     state.recordToolResult("📡 Execute sparql query", "rows");
-    state.appendContentToLastMsg(ANSWER);
+    state.appendAnswerChunk(ANSWER);
     state.recordToolResult("📡 Execute sparql query", "rows");
-    state.appendContentToLastMsg(ANSWER);
+    state.appendAnswerChunk(ANSWER);
     state.finishActivityStep();
 
     const shown = assistantMessages(state)
@@ -38,7 +38,7 @@ describe("tool activity folding", () => {
   test("tool results do not each open a new message bubble", () => {
     const state = newTurn();
     for (let i = 0; i < 7; i++) state.recordToolResult("📡 Execute sparql query", `rows ${i}`);
-    state.appendContentToLastMsg(ANSWER);
+    state.appendAnswerChunk(ANSWER);
     state.finishActivityStep();
 
     expect(assistantMessages(state).length).toBe(1);
@@ -69,7 +69,6 @@ describe("tool activity folding", () => {
 
   test("nothing the agent did is lost — details keep every tool result", () => {
     const state = newTurn();
-    state.appendContentToLastMsg("draft prose that was replaced");
     state.recordToolResult("📡 Execute sparql query", "the query rows");
     state.recordToolResult("🔧 Search sparql docs", "the docs");
     state.finishActivityStep();
@@ -77,7 +76,6 @@ describe("tool activity folding", () => {
     const details = assistantMessages(state)[0].steps()[0].details;
     expect(details).toContain("the query rows");
     expect(details).toContain("the docs");
-    expect(details).toContain("draft prose that was replaced");
   });
 
   test("a single-step label reads in the singular", () => {
@@ -87,9 +85,53 @@ describe("tool activity folding", () => {
     expect(assistantMessages(state)[0].steps()[0].label).toContain("1 search step ");
   });
 
+  test("the answer survives when the turn ends on a tool call", () => {
+    // The agent answered, then kept exploring and never spoke again. Clearing
+    // the prose on each tool result threw the only answer away and left the
+    // turn with nothing but an activity pill.
+    const state = newTurn();
+    state.appendAnswerChunk(ANSWER);
+    state.recordToolResult("📡 Execute sparql query", "rows");
+    state.recordToolResult("📡 Execute sparql query", "more rows");
+    state.finishActivityStep();
+
+    expect(assistantMessages(state)[0].content().trim()).toBe(ANSWER);
+  });
+
+  test("a superseded draft is replaced, not appended, when a later round speaks", () => {
+    const state = newTurn();
+    state.appendAnswerChunk("first draft");
+    state.recordToolResult("📡 Execute sparql query", "rows");
+    state.appendAnswerChunk(ANSWER);
+    state.finishActivityStep();
+
+    const shown = assistantMessages(state)[0].content().trim();
+    expect(shown).toBe(ANSWER);
+    expect(shown).not.toContain("first draft");
+  });
+
+  test("a superseded draft is preserved in the activity details", () => {
+    const state = newTurn();
+    state.appendAnswerChunk("first draft");
+    state.recordToolResult("📡 Execute sparql query", "rows");
+    state.appendAnswerChunk(ANSWER);
+    state.finishActivityStep();
+
+    expect(assistantMessages(state)[0].steps()[0].details).toContain("first draft");
+  });
+
+  test("prose streamed in one round is not cleared until the next round speaks", () => {
+    // Avoids the flicker of blanking the answer the moment a tool result lands
+    // when nothing may ever replace it.
+    const state = newTurn();
+    state.appendAnswerChunk(ANSWER);
+    state.recordToolResult("📡 Execute sparql query", "rows");
+    expect(assistantMessages(state)[0].content().trim()).toBe(ANSWER);
+  });
+
   test("a turn with no tool calls adds no activity step", () => {
     const state = newTurn();
-    state.appendContentToLastMsg(ANSWER);
+    state.appendAnswerChunk(ANSWER);
     state.finishActivityStep();
 
     const msg = assistantMessages(state)[0];

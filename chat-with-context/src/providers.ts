@@ -109,28 +109,50 @@ export class ChatState {
   /** Number of tool calls folded into the current turn's activity step. */
   toolCallCount = 0;
 
+  /** True when the visible prose predates the most recent tool result.
+   *
+   * Such prose is a draft the agent wrote before it had finished exploring, so
+   * it is replaced *if* a later round speaks. It is deliberately not cleared on
+   * the spot: when the agent's last act is a tool call and it never speaks
+   * again, that draft is the only answer there is, and blanking it eagerly left
+   * the turn showing nothing but an activity pill.
+   */
+  private draftSuperseded = false;
+
+  /** Append streamed answer prose, dropping a draft the agent has moved past. */
+  appendAnswerChunk = (newContent: string) => {
+    const msg = this.lastMsg();
+    if (!msg) return;
+    if (this.draftSuperseded) {
+      this.draftSuperseded = false;
+      const draft = msg.content().trim();
+      if (draft) {
+        msg.setContent("");
+        this.upsertActivityStep(
+          `⏳ Searching the knowledge graph… (${this.toolCallCount})`,
+          `**Earlier draft answer, replaced after further searching:**\n\n${draft}\n\n`,
+        );
+      }
+    }
+    this.appendContentToLastMsg(newContent);
+  };
+
   /** Record one tool result into the turn's single collapsible activity step.
    *
-   * Two things happen here that used to go wrong:
-   *
-   * 1. No new message bubble is created. Previously every tool result called
-   *    `appendMessage`, so a seven-step answer left seven near-empty bubbles
-   *    each carrying one pill.
-   * 2. Any prose already streamed into the current bubble is moved into the
-   *    activity details and cleared from the answer. A model that writes its
-   *    answer *and* calls a tool in the same message would otherwise leave that
-   *    prose in the chat body once per tool round — the duplicated answers.
+   * No new message bubble is created: previously every tool result called
+   * `appendMessage`, so a seven-step answer left seven near-empty bubbles each
+   * carrying one pill. Any prose already on screen is marked as superseded
+   * rather than removed — see `draftSuperseded`.
    */
   recordToolResult = (label: string, content: string) => {
     const msg = this.lastMsg();
     if (!msg) return;
     this.toolCallCount += 1;
-    const pending = msg.content().trim();
-    if (pending) msg.setContent("");
-    const section =
-      (pending ? `**Draft answer from this round:**\n\n${pending}\n\n` : "") +
-      `**${label}**\n\n\`\`\`\n${content}\n\`\`\`\n\n`;
-    this.upsertActivityStep(`⏳ Searching the knowledge graph… (${this.toolCallCount})`, section);
+    if (msg.content().trim()) this.draftSuperseded = true;
+    this.upsertActivityStep(
+      `⏳ Searching the knowledge graph… (${this.toolCallCount})`,
+      `**${label}**\n\n\`\`\`\n${content}\n\`\`\`\n\n`,
+    );
   };
 
   /** Create or update the turn's activity step, appending to its details. */
@@ -148,12 +170,19 @@ export class ChatState {
     this.onMessageUpdate();
   };
 
+  /** Reset the per-turn activity bookkeeping before a new question is sent. */
+  beginTurn = () => {
+    this.toolCallCount = 0;
+    this.draftSuperseded = false;
+  };
+
   /** Settle the activity step once the turn is over, so it stops reading as live. */
   finishActivityStep = () => {
     const msg = this.lastMsg();
     if (!msg) return;
     const count = this.toolCallCount;
     this.toolCallCount = 0;
+    this.draftSuperseded = false;
     if (count === 0) return;
     msg.setSteps(steps =>
       steps.map(step =>
@@ -169,7 +198,7 @@ export class ChatState {
 // Stream a response from various LLM agent providers (OpenAI-like, LangGraph, LangServe)
 export async function streamResponse(state: ChatState, question: string) {
   state.appendMessage(question, "user");
-  state.toolCallCount = 0;
+  state.beginTurn();
   // Query LangGraph through our custom API. The activity step is settled in a
   // finally so an aborted or failed turn does not leave a pill reading as if
   // the agent were still searching.
@@ -259,7 +288,7 @@ async function processLangGraphChunk(state: ChatState, chunk: any) {
     } else if (msg.content && msg.type === "AIMessageChunk" && metadata.langgraph_node === "call_model") {
       // This will only stream response from the langgraph node "call_model"
       // console.log("AIMessageChunk", msg, metadata);
-      state.appendContentToLastMsg(msg.content);
+      state.appendAnswerChunk(msg.content);
     }
   }
 }
