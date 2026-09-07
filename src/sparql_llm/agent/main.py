@@ -25,7 +25,7 @@ from pydantic import BaseModel
 from sparql_llm.agent.graph import get_graph, graph
 from sparql_llm.config import settings
 from sparql_llm.mcp_server import get_mcp_app
-from sparql_llm.utils import logger, strip_think_stream
+from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
 
 if settings.sentry_url:
     import sentry_sdk
@@ -518,6 +518,13 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
     # boundary (every node emits an "updates" event when it finishes).
     think_buffer = ""
     emitted_len = 0
+    # "Natural language only" mode additionally removes any ```sparql block the
+    # model wrote into its visible answer. The prompt already asks it to keep the
+    # query inside <think> (call_model.py), but models ignore that often enough
+    # that the guarantee has to be enforced here. Nothing is lost: the query is
+    # still surfaced as the "💭 Thought process" step and as the
+    # "open in editor" link built from structured_output.
+    natural_language_only = bool(config.get("configurable", {}).get("natural_language_only"))
 
     try:
         async for event, chunk in run_graph.astream(inputs, stream_mode=["messages", "updates"], config=config):
@@ -562,6 +569,8 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
                 if isinstance(content, str) and content and getattr(msg, "type", "") != "tool":
                     think_buffer += content
                     visible = strip_think_stream(think_buffer)
+                    if natural_language_only:
+                        visible = strip_sparql_stream(visible)
                     if len(visible) <= emitted_len:
                         # Everything new is reasoning or an incomplete tag — hold back.
                         continue

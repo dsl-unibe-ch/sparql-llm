@@ -70,6 +70,86 @@ def strip_think_stream(buffer: str) -> str:
             return s[:-k]
     return s
 
+
+_FENCE = "```"
+_SPARQL_FENCE = "```sparql"
+
+
+def strip_sparql_stream(buffer: str) -> str:
+    """Return the portion of a *streamed* buffer with SPARQL codeblocks removed.
+
+    In "natural language only" mode the visible answer must contain no SPARQL —
+    the query still reaches the user through the "Thought process" step and the
+    "open in editor" link built from the agent's structured output. The system
+    prompt asks the model to keep the query inside ``<think>``, but a mid-sized
+    model routinely ignores that negative instruction, so the codeblock is also
+    removed here, where it cannot be argued with.
+
+    Like :func:`strip_think_stream` this operates on the *whole accumulated
+    buffer* and returns only the text that is safe to show:
+
+    - fenced blocks whose info string starts with ``sparql`` (any case) are
+      dropped whole, leaving no blank line behind,
+    - fences with any other info string (```` ``` ````, ```` ```json ````…) and
+      inline code spans pass through untouched,
+    - a still-open SPARQL fence holds back everything from the fence onward,
+    - a trailing partial fence marker (`` ` ``, ``` `` ```, ```` ``` ````,
+      ```` ```spa ````) is held back until the info string is known, so an
+      opening fence is never emitted before we can classify it.
+
+    Call it on the growing buffer each chunk and emit only the newly revealed
+    suffix. The returned visible prefix is monotonic, so the cursor in
+    ``stream_response`` never has to walk backwards.
+    """
+    lines = buffer.split("\n")
+    # The final element is the line still being streamed ("" when the buffer
+    # ends on a newline); it is the only one whose classification can change.
+    partial = lines.pop()
+
+    visible: list[str] = []
+    in_fence = False
+    fence_is_sparql = False
+    for line in lines:
+        marker = line.lstrip()
+        if marker.startswith(_FENCE):
+            if in_fence:
+                closing_sparql = fence_is_sparql
+                in_fence = False
+                fence_is_sparql = False
+                if closing_sparql:
+                    continue
+            else:
+                in_fence = True
+                fence_is_sparql = marker[len(_FENCE) :].strip().lower().startswith("sparql")
+                if fence_is_sparql:
+                    continue
+        elif in_fence and fence_is_sparql:
+            continue
+        visible.append(line + "\n")
+
+    if in_fence:
+        # Inside a SPARQL block the partial line is reasoning-in-progress; inside
+        # any other block it is ordinary content and streams as usual.
+        if not fence_is_sparql:
+            visible.append(partial)
+    elif not _may_open_sparql_fence(partial):
+        visible.append(partial)
+    return "".join(visible)
+
+
+def _may_open_sparql_fence(partial: str) -> bool:
+    """True when a partial line could still turn out to open a SPARQL block.
+
+    Holds back ``` ``` ``` and its prefixes until enough of the info string has
+    arrived to classify the fence. ``` ```json ``` is released immediately, and a
+    line that merely *contains* backticks (an inline ``sdh-slc:C3`` CURIE) is
+    never held, since only a line starting with the fence can open a block.
+    """
+    marker = partial.lstrip().lower()
+    if not marker:
+        return False
+    return marker.startswith(_SPARQL_FENCE) or _SPARQL_FENCE.startswith(marker)
+
 # Disable logger in your code with logging.getLogger("sparql_llm").setLevel(logging.WARNING)
 logger = logging.getLogger("sparql_llm")
 logger.setLevel(logging.INFO)
