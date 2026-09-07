@@ -23,6 +23,7 @@ from sparql_llm.loaders.ontology_profiles_loader import (
     fetch_ontology_terms,
     fetch_shacl_shapes,
 )
+from sparql_llm.indexing.sync_examples import synced_examples_path
 from sparql_llm.loaders.sparql_info_loader import GENERAL_INFO_DOC_TYPE
 from sparql_llm.utils import EndpointsMetadataManager, get_prefix_converter
 
@@ -232,6 +233,18 @@ def init_vectordb(collection_name: str | None = None) -> int:
                 examples_file,
                 endpoint_url=endpoint["endpoint_url"],
             ).load()
+            # Examples the curators publish in their own repository, refreshed and
+            # endpoint-tested by sync_examples at the start of every rebuild. A separate
+            # gitignored file so a rebuild never dirties the server's working tree; absent
+            # on a first run or when their repository was unreachable, which is not fatal.
+            synced_file = synced_examples_path(examples_file)
+            if synced_file.exists():
+                synced_docs = SparqlExamplesMdLoader(
+                    synced_file,
+                    endpoint_url=endpoint["endpoint_url"],
+                ).load()
+                print(f"  📥 {len(synced_docs)} example doc(s) synced from the curators' repo")
+                docs += synced_docs
         else:
             docs += SparqlExamplesLoader(
                 endpoint["endpoint_url"],

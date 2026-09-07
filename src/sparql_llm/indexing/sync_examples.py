@@ -44,8 +44,12 @@ CURATOR_SOURCES: tuple[str, ...] = (
     "llm_documentation/SPARQL_queries_examples/query_obtaining_study_title.md",
 )
 
-BEGIN_MARKER = "<!-- BEGIN synced from elites-suisses — do not edit inside this block -->"
-END_MARKER = "<!-- END synced from elites-suisses -->"
+#: The synced material is written here rather than into the curated file. That file is
+#: git-tracked, and rewriting it during a rebuild would leave the server's working tree
+#: dirty for the next `git pull` to conflict with. Nothing is lost by keeping it out of
+#: our history: the curators' own repository is the audit trail. `data/*` is gitignored
+#: with a short whitelist, so this path is ignored automatically.
+SYNCED_SUFFIX = "-synced"
 
 _SECTION = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _SPARQL_BLOCK = re.compile(r"```\s*sparql\s*\n(.*?)```", re.DOTALL)
@@ -179,26 +183,23 @@ def render_examples(examples: list[Example]) -> str:
     return "\n".join(parts)
 
 
+def synced_examples_path(curated_file: str | Path) -> Path:
+    """Where the curators' synced examples are written, beside the curated file.
+
+    A distinct file, never the curated one: a rebuild must not modify anything git
+    tracks on the server.
+    """
+    curated = Path(curated_file)
+    return curated.with_name(f"{curated.stem}{SYNCED_SUFFIX}{curated.suffix}")
+
+
 def _question_key(question: str) -> str:
     """Comparable form of a question: case, spacing and trailing punctuation ignored."""
     return re.sub(r"[^a-z0-9]+", " ", question.lower()).strip()
 
 
-def curated_section(existing: str) -> str:
-    """The part of our examples file we maintain by hand, i.e. outside the markers.
-
-    The previously synced block must be excluded: it is this function's own output from
-    the last run, and counting it as ours would make every re-sync drop everything.
-    """
-    if BEGIN_MARKER in existing and END_MARKER in existing:
-        start = existing.index(BEGIN_MARKER)
-        end = existing.index(END_MARKER) + len(END_MARKER)
-        return existing[:start] + existing[end:]
-    return existing
-
-
 def drop_already_curated(
-    examples: list[Example], existing: str
+    examples: list[Example], curated: str
 ) -> tuple[list[Example], list[Example]]:
     """Skip curator examples we already answer with a hand-written one.
 
@@ -206,8 +207,11 @@ def drop_already_curated(
     straight sync would index each question twice and let the duplicates crowd better
     matches out of the retrieved set. Ours win because they carry the endpoint-verified
     comments; when the curators improve one, delete ours and the sync picks theirs up.
+
+    Only the hand-curated file is consulted. The synced file is separate, so a re-sync
+    cannot mistake its own previous output for something we curate.
     """
-    ours = {_question_key(q) for q in _QUESTION.findall(curated_section(existing))}
+    ours = {_question_key(q) for q in _QUESTION.findall(curated)}
     kept: list[Example] = []
     skipped: list[Example] = []
     for example in examples:
@@ -217,19 +221,6 @@ def drop_already_curated(
         else:
             kept.append(example)
     return kept, skipped
-
-
-def merge_into(existing: str, block: str) -> str:
-    """Splice the synced block into our examples file, replacing any previous one.
-
-    Our own examples sit outside the markers and are never touched.
-    """
-    payload = f"{BEGIN_MARKER}\n\n{block.rstrip()}\n\n{END_MARKER}"
-    if BEGIN_MARKER in existing and END_MARKER in existing:
-        start = existing.index(BEGIN_MARKER)
-        end = existing.index(END_MARKER) + len(END_MARKER)
-        return existing[:start] + payload + existing[end:]
-    return existing.rstrip() + "\n\n" + payload + "\n"
 
 
 def fetch(url: str, client: httpx.Client | None = None) -> str:
@@ -257,7 +248,8 @@ def sync_curator_examples(
     time and the report says so.
     """
     endpoint = endpoint or settings.endpoints[0]["endpoint_url"]
-    target_path = Path(target) if target else Path(settings.endpoints[0]["examples_file"])
+    curated_path = Path(target) if target else Path(settings.endpoints[0]["examples_file"])
+    target_path = synced_examples_path(curated_path)
     report: dict[str, Any] = {
         "accepted": 0,
         "rejected": [],
@@ -283,8 +275,8 @@ def sync_curator_examples(
     for example in parsed:
         example.query = normalise_query(example.query)
 
-    existing = target_path.read_text(encoding="utf-8") if target_path.exists() else ""
-    parsed, already_ours = drop_already_curated(parsed, existing)
+    curated = curated_path.read_text(encoding="utf-8") if curated_path.exists() else ""
+    parsed, already_ours = drop_already_curated(parsed, curated)
     report["skipped_as_curated"] = [e.title for e in already_ours]
 
     accepted, rejected = validate(parsed, endpoint)
@@ -293,22 +285,30 @@ def sync_curator_examples(
         {"title": e.title, "source": Path(e.source).name, "reason": e.error} for e in rejected
     ]
 
-    if not accepted:
-        # Nothing to write is only a problem if their whole offering failed. Once we
-        # already curate everything good they publish — today's steady state — an
-        # accepted count of zero alongside a rejected query is a warning about that one
-        # query, not a failed sync.
-        if rejected and not already_ours:
-            report["error"] = "no curator example passed validation — leaving the corpus unchanged"
-            logger.warning("Example sync: %s", report["error"])
-        return report
+    # An empty accepted set is only alarming if their whole offering failed. Once we
+    # already curate everything good they publish — today's steady state — zero accepted
+    # alongside a rejected query is a warning about that one query, not a failed sync.
+    if not accepted and rejected and not already_ours:
+        report["error"] = "no curator example passed validation"
+        logger.warning("Example sync: %s", report["error"])
 
     if dry_run:
         return report
 
+    header = (
+        "<!-- Generated by sparql_llm.indexing.sync_examples — do not edit.\n"
+        "     Source of truth: lod4hss-projects/elites-suisses, "
+        "llm_documentation/SPARQL_queries_examples/\n"
+        "     Every query below was executed against the endpoint before being written. -->\n\n"
+        "# Elites Suisses — example queries synced from the curators\n\n"
+    )
+    # Written even when empty: the file mirrors what they currently publish, so an
+    # example they delete or break disappears from our corpus on the next rebuild
+    # instead of lingering because nothing overwrote it.
     try:
-        target_path.write_text(merge_into(existing, render_examples(accepted)), encoding="utf-8")
+        target_path.write_text(header + render_examples(accepted), encoding="utf-8")
         report["written"] = True
+        report["path"] = str(target_path)
     except Exception as exc:
         report["error"] = f"could not write {target_path}: {exc}"
         logger.warning("Example sync: %s", report["error"])

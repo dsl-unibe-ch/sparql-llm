@@ -1,23 +1,26 @@
 """Offline tests for the curator example sync.
 
-The curators own the example queries in their own repository; a rebuild pulls
-them in. Everything here is the pure part of that: parsing what they wrote
-(their layout and ours), repairing the two long-standing prefix typos, rendering
-into the layout our Markdown loader expects, and splicing the result into our
-examples file without disturbing the examples we curate ourselves.
+The curators own the example queries in their own repository; a rebuild pulls them
+in. Everything here is the pure part of that: parsing what they wrote (their layout
+and ours), repairing the two long-standing prefix typos, rendering into the layout
+our Markdown loader expects, and deciding what not to duplicate.
+
+The synced material is written to its own file, which is gitignored — their
+repository is the audit trail, and keeping it out of ours means a rebuild on the
+server never leaves a dirty working tree for the next `git pull` to trip over.
 
 Executing the queries needs the endpoint and is covered by scripts/check_examples.py.
 """
 
+from pathlib import Path
+
 from sparql_llm.indexing.sync_examples import (
-    BEGIN_MARKER,
-    END_MARKER,
     Example,
     drop_already_curated,
-    merge_into,
     normalise_query,
     parse_examples,
     render_examples,
+    synced_examples_path,
 )
 
 OUR_LAYOUT = """# Heading
@@ -45,6 +48,24 @@ SELECT ?s WHERE { ?o sdh-slp:P11 ?s }
 ```
 """
 
+CURATED = """# Ours
+
+## Example 13: Dates of study titles
+
+Question: What are the dates of the study titles obtained by a person?
+
+```sparql
+SELECT ?d WHERE { ?o sdh-short:P1 ?d }
+```
+"""
+
+
+def _ex(question: str) -> Example:
+    return Example(title="t", questions=[question], query="ASK {}", source="theirs.md")
+
+
+# ── Parsing ───────────────────────────────────────────────────────────────────
+
 
 def test_parses_our_layout_keeping_both_phrasings():
     examples = parse_examples(OUR_LAYOUT, source="ours.md")
@@ -70,6 +91,9 @@ def test_a_title_is_derived_when_the_curators_give_none():
     assert "?" not in examples[0].title  # a title, not the raw question
 
 
+# ── Prefix repair ─────────────────────────────────────────────────────────────
+
+
 def test_normalise_repairs_the_two_standing_prefix_typos():
     q = "PREFIX sdh-slc: <https://sdhss.org/ontology/social-life/>\nSELECT * { ?m sdh-so:P1 ?p }"
     fixed = normalise_query(q)
@@ -83,6 +107,9 @@ def test_normalise_leaves_a_correct_query_alone():
     assert normalise_query(q) == q
 
 
+# ── Rendering ─────────────────────────────────────────────────────────────────
+
+
 def test_rendered_output_can_be_parsed_back():
     # Round trip: what we write must be readable by the same parser the loader uses.
     examples = parse_examples(THEIR_LAYOUT, source="theirs.md")
@@ -91,42 +118,21 @@ def test_rendered_output_can_be_parsed_back():
     assert [e.query for e in reparsed] == [e.query for e in examples]
 
 
-def test_merge_appends_a_marked_block_when_none_exists():
-    merged = merge_into("# Ours\n\n## Example 1: Mine\n\nQuestion: q\n\n```sparql\nASK {}\n```\n", "SYNCED")
-    assert BEGIN_MARKER in merged and END_MARKER in merged
-    assert "## Example 1: Mine" in merged
-    assert "SYNCED" in merged
+# ── Where the synced file goes ────────────────────────────────────────────────
 
 
-def test_merge_replaces_the_previous_block_instead_of_stacking():
-    once = merge_into("# Ours\n", "FIRST")
-    twice = merge_into(once, "SECOND")
-    assert twice.count(BEGIN_MARKER) == 1
-    assert "FIRST" not in twice
-    assert "SECOND" in twice
+def test_synced_file_sits_beside_the_curated_one_under_a_distinct_name():
+    path = synced_examples_path("data/elites-suisses-examples.md")
+    assert path == Path("data/elites-suisses-examples-synced.md")
 
 
-def test_merge_never_touches_our_own_examples():
-    ours = "# Ours\n\n## Example 1: Mine\n\nQuestion: q\n\n```sparql\nASK {}\n```\n"
-    twice = merge_into(merge_into(ours, "A"), "B")
-    assert "## Example 1: Mine" in twice
-    assert twice.index("## Example 1: Mine") < twice.index(BEGIN_MARKER)
+def test_synced_file_is_never_the_curated_file():
+    # The whole point: a rebuild must not rewrite a git-tracked file on the server.
+    for curated in ("data/x.md", "data/elites-suisses-examples.md", "other/y.md"):
+        assert synced_examples_path(curated) != Path(curated)
 
 
-CURATED = """# Ours
-
-## Example 13: Dates of study titles
-
-Question: What are the dates of the study titles obtained by a person?
-
-```sparql
-SELECT ?d WHERE { ?o sdh-short:P1 ?d }
-```
-"""
-
-
-def _ex(question: str) -> Example:
-    return Example(title="t", questions=[question], query="ASK {}", source="theirs.md")
+# ── Not indexing the same question twice ──────────────────────────────────────
 
 
 def test_an_example_we_already_curate_is_not_synced_twice():
@@ -150,8 +156,11 @@ def test_a_question_we_do_not_have_is_kept():
     assert skipped == []
 
 
-def test_the_previous_synced_block_does_not_count_as_curated():
-    # Otherwise the second sync would drop every example the first one added.
-    once = merge_into(CURATED, render_examples([_ex("Who founded the Rotary Club?")]))
-    kept, _ = drop_already_curated([_ex("Who founded the Rotary Club?")], once)
-    assert len(kept) == 1, "a re-sync must not treat its own previous output as ours"
+def test_resyncing_does_not_drop_what_the_previous_sync_added():
+    # Dedupe consults only the hand-curated file. Because the synced material lives
+    # in a separate file, a second run cannot mistake its own output for ours.
+    theirs = [_ex("Who founded the Rotary Club?")]
+    first, _ = drop_already_curated(theirs, CURATED)
+    second, _ = drop_already_curated([_ex("Who founded the Rotary Club?")], CURATED)
+    assert len(first) == 1
+    assert len(second) == 1
