@@ -345,7 +345,7 @@ WHERE {
 
 Question: What are the places where the study titles were obtained by a person?
 
-Comment: NOT ANSWERABLE against the current data. `sdh-sls:P19` has zero occurrences in the store, and no other predicate carries a place of obtention: `sdh-sls:P17` points to the delivering Group (crm:E74), `sdh-sls:P25` to the Academic Discipline (sdh-sls:C9) and `sdh-sls:P10` to the Study title (sdh-sls:C8). Kept as a target for when the curators model it; the assistant should answer "not in the database" until then.
+Comment: NOT ANSWERABLE against the current data. Re-verified 2026-09-07: an `sdh-sls:C7` obtention carries exactly six predicates — `sdh-short:P1` (date), `sdh-sls:P9` (person), `P17` (institution), `P25` (discipline), `P10` (title), `P11` (supervisor). `sdh-sls:P19` has zero occurrences. Going one hop through the institution is a dead end too: its only other predicate, `sdh:P99`, is the same constant (`g-ty6`) on all 16,570 — a type marker, not a location. Kept as a target for when the curators model it; the assistant should answer "not in the database" until then.
 
 ```sparql
 PREFIX owl: <http://www.w3.org/2002/07/owl#>
