@@ -30,6 +30,7 @@ from qdrant_client import models
 from sparql_llm.config import settings
 from sparql_llm.indexing.drift import save_fingerprint, take_fingerprint
 from sparql_llm.indexing.index_resources import init_vectordb, qdrant_client
+from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.utils import logger
 
 #: Job status, shared across workers. Written atomically; safe to read at any moment.
@@ -129,7 +130,17 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     version = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     target = f"{alias}-{version}"
 
-    _set_job("running", f"Building new index '{target}'…", collection=target)
+    # Pull the curators' examples first, so a rebuild always indexes what they have
+    # published rather than whatever was last copied across by hand. Every query is
+    # executed before it is written; the ones that fail are left out and reported, since
+    # an example that returns nothing is indistinguishable to the model from one that
+    # works. This never raises — an unreachable repo leaves the previous corpus in place.
+    _set_job("running", "Fetching and testing the curators' example queries…", collection=target)
+    examples_report = sync_curator_examples()
+    examples_summary = format_report(examples_report)
+    logger.info("Example sync: %s", examples_summary)
+
+    _set_job("running", f"{examples_summary}. Building new index '{target}'…", collection=target)
 
     # Fingerprint BEFORE building so the recorded snapshot can never claim to be newer
     # than the data the index was actually built from.
@@ -185,11 +196,19 @@ def rebuild_index_with_alias() -> dict[str, Any]:
         "previous": previous,
         "triples": fingerprint.triples,
         "classes": len(fingerprint.classes),
+        "examples_accepted": examples_report["accepted"],
+        "examples_rejected": examples_report["rejected"],
     }
+    # A rejected example is the one outcome an admin must not miss: the rebuild
+    # succeeded, but something the curators wrote is not in the assistant. Put it in the
+    # headline message rather than only in the structured payload.
+    warning = ""
+    if examples_report["rejected"] or examples_report["error"]:
+        warning = f" ⚠ {examples_summary}"
     _set_job(
         "done",
         f"Index rebuilt: {doc_count} documents covering {len(fingerprint.classes)} classes "
-        f"({fingerprint.triples:,} triples).",
+        f"({fingerprint.triples:,} triples).{warning}",
         **result,
     )
     return result
