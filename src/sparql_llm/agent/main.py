@@ -171,8 +171,9 @@ if settings.auth_enabled:
         success: str = "",
     ) -> HTMLResponse:
         return templates.TemplateResponse(
+            request,
             "change-password.html",
-            {"request": request, "current_user": user, "error": error, "success": success},
+            {"current_user": user, "error": error, "success": success},
         )
 
     @app.post("/change-password", response_class=HTMLResponse, include_in_schema=False)
@@ -187,8 +188,9 @@ if settings.auth_enabled:
 
         def _render(error: str = "", success: str = "") -> HTMLResponse:
             return templates.TemplateResponse(
+                request,
                 "change-password.html",
-                {"request": request, "current_user": user, "error": error, "success": success},
+                {"current_user": user, "error": error, "success": success},
             )
 
         if new_password != confirm_password:
@@ -211,7 +213,7 @@ if settings.auth_enabled:
 
     @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
     async def login_page(request: Request, error: str = "", next: str = "/") -> HTMLResponse:
-        return templates.TemplateResponse("login.html", {"request": request, "error": error, "next": next})
+        return templates.TemplateResponse(request, "login.html", {"error": error, "next": next})
 
     @app.post("/login", response_class=HTMLResponse, include_in_schema=False)
     async def login_form(
@@ -231,8 +233,9 @@ if settings.auth_enabled:
                     raise Exception("Invalid credentials")
             except Exception:
                 return templates.TemplateResponse(
+                    request,
                     "login.html",
-                    {"request": request, "error": "Invalid email or password.", "next": next},
+                    {"error": "Invalid email or password.", "next": next},
                     status_code=401,
                 )
 
@@ -277,9 +280,9 @@ if settings.auth_enabled:
             for u in users
         ]
         return templates.TemplateResponse(
+            request,
             "admin.html",
             {
-                "request": request,
                 "current_user": user,
                 "current_role": role_of(user),
                 "users": users,
@@ -826,9 +829,9 @@ async def chat_ui(
 ) -> HTMLResponse:
     """Render the chat UI using jinja2 + HTML."""
     return templates.TemplateResponse(
+        request,
         "index.html",
         {
-            "request": request,
             "api_key": settings.chat_api_key,
             "chat_endpoint": "/chat",
             "feedback_endpoint": "/feedback",
