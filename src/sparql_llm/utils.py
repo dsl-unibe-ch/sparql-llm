@@ -40,13 +40,9 @@ def strip_think_stream(buffer: str) -> str:
     """Return the portion of a *streamed* buffer that is safe to display.
 
     Reasoning models (e.g. minimax-m2.7 on GPUStack) interleave their
-    chain-of-thought as ``<think>…</think>`` inside the streamed ``content``.
-    Token streaming means a tag can be split across chunks, and the opening
-    ``<think>`` often arrives glued to the first reasoning word
-    (``"<think>The"``), so a per-chunk ``strip_think_blocks`` leaks it.
-
-    This operates on the *whole accumulated buffer* instead and returns only the
-    text that is safe to show:
+    chain-of-thought as ``<think>…</think>`` inside the streamed ``content``, and a
+    tag can be split across chunks. So this works on the *whole accumulated buffer*
+    and returns only the text that is safe to show:
 
     - complete ``<think>…</think>`` blocks are removed,
     - everything after an unclosed ``<think>`` is held back (still streaming),
@@ -78,12 +74,9 @@ _SPARQL_FENCE = "```sparql"
 def strip_sparql_stream(buffer: str) -> str:
     """Return the portion of a *streamed* buffer with SPARQL codeblocks removed.
 
-    In "natural language only" mode the visible answer must contain no SPARQL —
-    the query still reaches the user through the "Thought process" step and the
-    "open in editor" link built from the agent's structured output. The prompt
-    does not ask the model to hide it (qwen on GPUStack cannot write into a
-    ``<think>`` block, and asking made it restart its search), so the codeblock
-    is removed here instead.
+    In "natural language only" mode the visible answer contains no SPARQL; the
+    query still reaches the user through the "Thought process" step and the
+    "open in editor" link built from the agent's structured output.
 
     Like :func:`strip_think_stream` this operates on the *whole accumulated
     buffer* and returns only the text that is safe to show:
@@ -150,14 +143,10 @@ def _may_open_sparql_fence(partial: str) -> bool:
         return False
     return marker.startswith(_SPARQL_FENCE) or _SPARQL_FENCE.startswith(marker)
 
+
 # Disable logger in your code with logging.getLogger("sparql_llm").setLevel(logging.WARNING)
 logger = logging.getLogger("sparql_llm")
 logger.setLevel(logging.INFO)
-# handler = logging.StreamHandler()
-# formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-# handler.setFormatter(formatter)
-# logger.addHandler(handler)
-# logger.propagate = False
 
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
@@ -428,8 +417,3 @@ class EndpointsMetadataManager:
         """Get endpoints VoID schema dict, loading lazily if needed."""
         self._ensure_loaded()
         return self._void_dict or {}
-
-    # def reset(self) -> None:
-    #     """Reset cached metadata (useful for re-initialization after init_vectordb)."""
-    #     self._prefixes_map = {}
-    #     self._void_dict = {}

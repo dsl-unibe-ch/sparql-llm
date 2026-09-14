@@ -1,4 +1,4 @@
-"""Node to call the model to solve the user question given the context previosuly extracted.
+"""Node to call the model to solve the user question given the context previously extracted.
 
 Works with a chat model with tool calling support.
 """
@@ -16,9 +16,6 @@ from sparql_llm.agent.utils import count_tool_rounds, fenced, get_msg_text, load
 from sparql_llm.config import Configuration, settings
 from sparql_llm.utils import extract_think_blocks, strip_think_blocks
 
-# from sparql_llm.agent.nodes.retrieval_docs import format_docs
-# from sparql_llm.agent.nodes.retrieval_entities import format_extracted_entities
-
 
 async def call_model(state: State, config: RunnableConfig) -> dict[str, list[AnyMessage] | bool]:
     """Call the LLM powering our "agent".
@@ -35,10 +32,9 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     configuration = Configuration.from_runnable_config(config)
     tools = None
     # Once the tool-call rounds reach the "Max steps" budget, the model is told to
-    # answer from the results it already has, instead of the run ending on a canned
-    # "maximum steps" message. Tools stay bound: with none bound, the models tried
-    # to carry on anyway and wrote their tool calls into the answer as raw markup.
-    # Bound, a stray call is parsed properly and route_tools_output stops it.
+    # answer from the results it already has. Tools stay bound: without them, models
+    # write their calls into the answer as raw markup, while a bound stray call is
+    # parsed and route_tools_output stops it.
     final_turn = configuration.use_tools and count_tool_rounds(state.messages) >= configuration.max_tool_iterations
 
     # Set up MCP client (experimental — enabled per-request via configuration.use_tools)
@@ -67,20 +63,13 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     structured_prompt: dict[str, Any] = {
         "messages": [*state.messages, HumanMessage(content=FINAL_TURN_PROMPT)] if final_turn else state.messages,
     }
-    # structured_prompt["retrieved_docs"] = format_docs(state.retrieved_docs)
-    # if configuration.enable_entities_resolution:
-    #     structured_prompt["extracted_entities"] = format_extracted_entities(state.extracted_entities)
-    # else:
-    #     structured_prompt["extracted_entities"] = ""
 
     sys_prompt = configuration.system_prompt_tools if configuration.use_tools else configuration.system_prompt
     if configuration.natural_language_only:
         # The user sees only the prose answer: stream_response strips SPARQL blocks
         # from it, and the queries the model ran are shown in the "Thought process"
-        # step built below. The prompt used to ask the model to put its SPARQL inside
-        # a <think> block instead, but qwen on GPUStack returns its reasoning on a
-        # separate channel and cannot write into one: it answered, then restarted the
-        # whole search from its first tool call.
+        # step built below. Do not ask the model to hide its SPARQL in a <think> block:
+        # qwen on GPUStack reasons on a separate channel and cannot write into one.
         sys_prompt += (
             "\n\nNATURAL LANGUAGE ONLY MODE:\n"
             "- The user sees only your prose. The queries you ran and their results are shown to them separately, "
@@ -98,35 +87,20 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
         ]
     )
     message_value = await prompt_template.ainvoke(structured_prompt, config)
-    # print(message_value.messages[0].content)
-    # print(message_value)
-    # Use the async ``ainvoke`` (not the blocking ``invoke``): this node runs
-    # inside the async LangGraph event loop that also drives the SSE response.
-    # A synchronous ``invoke`` blocks that loop for the whole model call, so no
-    # streamed tokens or heartbeats reach the browser until it finishes — with a
-    # reasoning model doing several fix attempts the chat freezes on
-    # "🔄 Refining query…" and looks stuck ("keeps loading"). ``ainvoke`` yields
-    # control back to the loop so tokens stream live and the UI stays responsive.
+    # ``ainvoke``, not ``invoke``: a blocking call would stall the event loop that
+    # streams the response, freezing the chat until the model returns.
     response_msg = await model.ainvoke(message_value, config)
 
-    # print(f"Model response: {response_msg.content}")
-
     # Reasoning models (e.g. minimax-m2.7) emit their chain-of-thought inline as
-    # <think>…</think>. Surface it as a collapsible "💭 Thought process" step and
-    # strip it from the stored answer. The live token stream is cleaned
-    # separately in main.py:stream_response; this keeps the *persisted* message
-    # (used by validation and the non-streaming path) clean too. When there is no
-    # reasoning block (e.g. gpt-oss-120b keeps it on a separate channel), no step
-    # is added.
+    # <think>…</think>. Show it as a "💭 Thought process" step and strip it from the
+    # stored answer, which validation and the non-streaming path read (stream_response
+    # cleans the live stream). Without a reasoning block, no step is added.
     reasoning_steps: list[StepOutput] = []
     answer_text = get_msg_text(response_msg)
     reasoning = extract_think_blocks(answer_text)
 
-    # In natural language mode, programmatically extract the technical details
-    # (tool calls, SPARQL queries, tool results) from the conversation history
-    # and inject them into the thought process bubble. This way the user sees
-    # a clean natural-language answer, but can expand the thought process to
-    # inspect every query the model ran behind the scenes.
+    # Natural-language mode: list the tool calls and their results from the
+    # conversation in the thought process step, so every query stays inspectable.
     if configuration.natural_language_only:
         technical_details = []
 
@@ -147,8 +121,7 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
                 for tc in past_msg.tool_calls:
                     tool_name = tc.get("name", "unknown_tool")
                     args = tc.get("args", {})
-                    # The tool's argument is sparql_query; checking only for "query"
-                    # showed every executed query as a raw argument dict.
+                    # The tool's argument is sparql_query; "query" is a fallback.
                     sparql_query = args.get("sparql_query") or args.get("query")
                     if tool_name == "execute_sparql_query" and sparql_query:
                         technical_details.append(f"**Executed SPARQL query:**\n{fenced(sparql_query, 'sparql')}")
@@ -194,14 +167,6 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     has_tool_calls = bool(getattr(response_msg, "tool_calls", None) or getattr(response_msg, "invalid_tool_calls", None))
     if has_tool_calls and not state.is_last_step:
         return {"messages": [response_msg], "passed_validation": False}
-
-    # TODO: improve the tool use with a supervizor node that check if tool calls are needed or stop
-    # last_msg = state.messages[-1]
-    # if isinstance(last_msg, (ToolMessage, FunctionMessage)) and last_msg.name in ["access_biomedical_resources", "execute_sparql_query"]:
-    #     # If the last message is from one of these tools, we need to check if the response
-    #     # might require further tool calls, regardless of whether it explicitly has tool_calls
-    #     # This handles cases where output from previous tool calls might trigger a need for more tools
-    #     return {"messages": [response_msg], "passed_validation": False}
 
     # Handle the case when it's the last step and the model still wants to use a tool
     if state.is_last_step and has_tool_calls:

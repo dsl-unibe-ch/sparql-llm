@@ -18,12 +18,10 @@ class GptOssChatOpenAI(ChatOpenAI):
     """ChatOpenAI for gpt-oss on GPUStack, recovering answers filed as reasoning.
 
     With tools bound and streaming off (see ``disable_streaming`` below), GPUStack
-    intermittently returns gpt-oss's final answer in ``reasoning_content`` and
-    leaves ``content`` empty. ChatOpenAI ignores ``reasoning_content``, so the
-    chat showed a blank reply. Replaying such requests showed the misfiled text is
-    the finished answer, while a correctly filed reply fills ``content`` and keeps
-    genuine reasoning in ``reasoning_content``. So a reply with neither content
-    nor tool calls gets its ``reasoning_content`` as content.
+    sometimes returns gpt-oss's final answer in ``reasoning_content``, which
+    ChatOpenAI ignores, and leaves ``content`` empty. A normal reply fills ``content``
+    and keeps genuine reasoning in ``reasoning_content``, so only a reply with neither
+    content nor tool calls takes its ``reasoning_content`` as content.
     """
 
     def _create_chat_result(self, response: Any, generation_info: dict | None = None) -> ChatResult:
@@ -36,11 +34,7 @@ class GptOssChatOpenAI(ChatOpenAI):
 
 
 def load_chat_model(configuration: Configuration) -> BaseChatModel:
-    """Load a chat model from a fully specified name.
-
-    Args:
-        fully_specified_name (str): String in the format 'provider/model'.
-    """
+    """Load the chat model named by ``configuration.model``, in the format 'provider/model'."""
     provider, model_name = configuration.model.split("/", maxsplit=1)
     if provider == "openrouter":
         # https://openrouter.ai/docs/community/lang-chain
@@ -50,32 +44,15 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             temperature=configuration.temperature,
             api_key=SecretStr(os.getenv("OPENROUTER_API_KEY") or ""),
             seed=configuration.seed,
-            # default_headers={
-            #     "HTTP-Referer": getenv("YOUR_SITE_URL"),
-            #     "X-Title": getenv("YOUR_SITE_NAME"),
-            # },
         )
     if provider == "gpustack":
-        # gpt-oss-120b served via GPUStack/vLLM is broken for STREAMING
-        # tool-calling requests: with ``stream=true`` and tools bound it
-        # intermittently (≈5 out of 6 times) returns an empty completion —
-        # finish_reason="stop", no content, no tool calls — because it produced
-        # only hidden reasoning and never emitted a final message or tool call.
-        # Non-streaming requests are reliable (6/6 return a proper tool call).
-        # LangGraph's ``stream_mode="messages"`` (used by the chat UI) forces
-        # streaming, so gpt-oss returns nothing and the UI shows a blank reply.
-        # ``disable_streaming="tool_calling"`` makes LangChain use a
-        # non-streaming request whenever tools are bound, while keeping token
-        # streaming for ordinary chat (which gpt-oss handles fine). Other models
-        # (minimax, qwen3-coder) stream tool calls correctly, so we only disable
-        # streaming for gpt-oss to preserve the nicer live token UX elsewhere.
+        # With tools bound, gpt-oss on GPUStack/vLLM often returns an empty completion
+        # to a streamed request but answers reliably when not streamed. So it streams
+        # only when no tools are bound; the other models stream tool calls fine.
         disable_streaming: bool | str = "tool_calling" if "gpt-oss" in model_name else False
 
-        # Explicit timeout + max_retries: without these, a hung GPUStack
-        # connection waits the openai SDK default of 600 seconds, which looks
-        # like "the second question never returns". With them, a stuck call
-        # raises after ~90s and the upstream code paths (including the
-        # structured-extraction fallback) can recover.
+        # The openai SDK would wait 600 s on a hung connection; fail after ~90 s
+        # instead, so the callers' fallbacks can recover.
         chat_class = GptOssChatOpenAI if "gpt-oss" in model_name else ChatOpenAI
         return chat_class(
             base_url=os.getenv("OPENAI_BASE_URL", "https://gpustack.unibe.ch/v1"),
@@ -87,56 +64,6 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             max_retries=1,
             disable_streaming=disable_streaming,
         )
-
-    # if provider == "groq":
-    #     # https://python.langchain.com/docs/integrations/chat/groq/
-    #     from langchain_groq import ChatGroq
-
-    #     return ChatGroq(
-    #         model=model_name,
-    #         max_tokens=configuration.max_tokens,
-    #         temperature=configuration.temperature,
-    #         timeout=None,
-    #         max_retries=2,
-    #     )
-    # if provider == "together":
-    #     # https://python.langchain.com/docs/integrations/chat/together/
-    #     from langchain_together import ChatTogether
-    #     return ChatTogether(
-    #         model=model_name,
-    #         max_tokens=configuration.max_tokens,
-    #         temperature=configuration.temperature,
-    #         timeout=None,
-    #         max_retries=2,
-    #     )
-    # if provider == "hf":
-    #     # https://python.langchain.com/docs/integrations/chat/huggingface/
-    #     from langchain_huggingface import ChatHuggingFace, HuggingFaceEndpoint
-    #     return ChatHuggingFace(
-    #         llm=HuggingFaceEndpoint(
-    #             # repo_id="HuggingFaceH4/zephyr-7b-beta",
-    #             repo_id=model_name,
-    #             task="text-generation",
-    #             max_new_tokens=configuration.max_tokens,
-    #             do_sample=False,
-    #             repetition_penalty=1.03,
-    #         )
-    #     )
-    # if provider == "azure":
-    #     # https://learn.microsoft.com/en-us/azure/ai-studio/how-to/develop/langchain
-    #     from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
-    #     return AzureAIChatCompletionsModel(
-    #         endpoint=settings.azure_inference_endpoint,
-    #         credential=settings.azure_inference_credential,
-    #         model_name=model_name,
-    #     )
-    # if provider == "deepseek":
-    #     # https://python.langchain.com/docs/integrations/chat/deepseek/
-    #     from langchain_deepseek import ChatDeepSeek
-    #     return ChatDeepSeek(
-    #         model=model_name,
-    #         temperature=configuration.temperature,
-    #     )
     return init_chat_model(
         model_name,
         model_provider=provider,
@@ -145,10 +72,6 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
         timeout=None,
         max_retries=2,
         seed=configuration.seed,
-        # reasoning={
-        #     "effort": "low",  # 'low', 'medium', or 'high'
-        #     "summary": "auto",  # 'detailed', 'auto', or None
-        # },
     )
 
 
@@ -164,9 +87,7 @@ def count_tool_rounds(messages: list[AnyMessage]) -> int:
 def fenced(text: str, lang: str = "") -> str:
     """Wrap text in a markdown code fence longer than any backtick run inside it.
 
-    Tool results carry their own ``` fences; wrapped in another ``` fence, the chat's
-    markdown renderer paired them up wrongly, showing the result as loose text with an
-    empty code box after it.
+    Tool results carry their own ``` fences, which a plain ``` wrapper would close early.
     """
     longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
     fence = "`" * max(3, longest + 1)
