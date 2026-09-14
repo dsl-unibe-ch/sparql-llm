@@ -45,20 +45,3 @@ export const style = `chat-with-context {
   .cwc-sidebar { position: static; transform: none; z-index: auto; }
   .cwc-backdrop, .cwc-drawer-toggle { display: none; }
 }`;
-
-// // A function to extract a SPARQL query from markdown text
-// export function extractSparqlQuery(markdownContent: string) {
-//   // Regular expression to match SPARQL queries within code blocks
-//   const queryRegex = /```sparql([\s\S]*?)```/g;
-//   const queries = [...markdownContent.matchAll(queryRegex)].map(match => match[1].trim());
-
-//   // Get the last SPARQL query
-//   const lastQuery = queries.length > 0 ? queries[queries.length - 1] : null;
-//   if (!lastQuery) return null;
-
-//   const endpointRegex = /#.*(https?:\/\/[^\s]+)/i;
-//   const endpointMatch = lastQuery.match(endpointRegex);
-//   const endpointUrl = endpointMatch ? endpointMatch[1] : null;
-//   if (!endpointUrl) return null;
-//   return getEditorUrl(lastQuery, endpointUrl);
-// }

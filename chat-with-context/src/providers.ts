@@ -124,7 +124,6 @@ export class ChatState {
     this.lastMsg().setSteps(steps => [...steps, {node_id, label, details, substeps}]);
     this.scrollToInput();
     this.onMessageUpdate();
-    // this.inputTextEl.scrollIntoView({behavior: "smooth"});
   };
 
   /** Number of tool calls folded into the current turn's activity step. */
@@ -133,10 +132,9 @@ export class ChatState {
   /** True when the visible prose predates the most recent tool result.
    *
    * Such prose is a draft the agent wrote before it had finished exploring, so
-   * it is replaced *if* a later round speaks. It is deliberately not cleared on
-   * the spot: when the agent's last act is a tool call and it never speaks
-   * again, that draft is the only answer there is, and blanking it eagerly left
-   * the turn showing nothing but an activity pill.
+   * it is replaced *if* a later round speaks. It is not cleared on the spot:
+   * when the agent's last act is a tool call and it never speaks again, that
+   * draft is the only answer there is.
    */
   private draftSuperseded = false;
 
@@ -160,10 +158,8 @@ export class ChatState {
 
   /** Record one tool result into the turn's single collapsible activity step.
    *
-   * No new message bubble is created: previously every tool result called
-   * `appendMessage`, so a seven-step answer left seven near-empty bubbles each
-   * carrying one pill. Any prose already on screen is marked as superseded
-   * rather than removed — see `draftSuperseded`.
+   * No new message bubble is created. Any prose already on screen is marked as
+   * superseded rather than removed — see `draftSuperseded`.
    */
   recordToolResult = (label: string, content: string) => {
     const msg = this.lastMsg();
@@ -220,15 +216,14 @@ export class ChatState {
 /** A code fence longer than any backtick run in `text`, so fences inside it stay literal.
  *
  * Tool results carry their own ``` fences (SPARQL results come back as a fenced
- * JSON block). Wrapped in a plain ``` fence, marked paired the fences up wrongly:
- * the result rendered as loose text and an empty code box trailed it.
+ * JSON block), which a plain ``` wrapper would close early.
  */
 export function fenceFor(text: string): string {
   const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map(match => match[0].length));
   return "`".repeat(Math.max(3, longest + 1));
 }
 
-// Stream a response from various LLM agent providers (OpenAI-like, LangGraph, LangServe)
+// Stream the agent's response to a question from our LangGraph API
 export async function streamResponse(state: ChatState, question: string) {
   state.appendMessage(question, "user");
   state.beginTurn();
@@ -240,37 +235,23 @@ export async function streamResponse(state: ChatState, question: string) {
   } finally {
     state.finishActivityStep();
   }
-  // if (state.apiUrl.endsWith(":2024/") || state.apiUrl.endsWith(":8123/")) {
-  //   // Query LangGraph API
-  //   await streamLangGraphApi(state);
-  // } else if (state.apiUrl.endsWith("/completions/")) {
-  //   // Query the OpenAI-compatible chat API
-  //   await streamOpenAILikeApi(state);
-  // } else {
-  //   // Query LangGraph through our custom API
-  //   await streamCustomLangGraph(state);
-  // }
 }
 
 async function processLangGraphChunk(state: ChatState, chunk: any) {
   if (chunk.event === "error") {
     throw new Error(`An error occurred. Please try again. ${chunk.data.error}: ${chunk.data.message}`);
   }
-  // console.log(chunk);
   // Handle updates to the state (nodes that are retrieving stuff without querying the LLM usually)
   if (chunk.event === "updates") {
-    // console.log("UPDATES", chunk);
     for (const nodeId of Object.keys(chunk.data)) {
       const nodeData = chunk.data[nodeId];
       if (!nodeData) continue;
       if (nodeData.steps) {
         // Handle most generic steps output sent by the agent
         for (const step of nodeData.steps) {
-          // console.log("STEP", step);
           // Handle step specific to post-generation validation
           if (step.type === "recall") {
             // When `recall` is called, the model will re-generate the response, so we create a new message
-            // state.lastMsg().setContent("");
             state.appendMessage("", "assistant");
           } else if (step.fixed_message) {
             // If the update contains a message with a fix
@@ -300,16 +281,8 @@ async function processLangGraphChunk(state: ChatState, chunk: any) {
   if (chunk.event === "messages") {
     const [msg, metadata] = chunk.data;
     if (metadata.structured_output_format) return;
-    // console.log("MESSAGES", msg, metadata);
-    // if (msg.tool_calls?.length > 0) {
-    //   // Tools calls requested by the model
-    //   const toolNames = msg.tool_calls.map((tool_call: any) => tool_call.name).join(", ");
-    //   if (toolNames) state.appendStepToLastMsg(metadata.langgraph_node, `🔧 Calling tool ${toolNames}`);
-    //   console.log("TOOL call", msg, metadata);
-    // }
     if (msg.content && msg.type === "tool") {
       // If tool called by model
-      // console.log("TOOL res", msg, metadata);
       const name = msg.name ? msg.name.replace(/_/g, " ").replace(/^\w/, (c: string) => c.toUpperCase()) : "Tool";
       const icon = msg.name.includes("resources") ? "📚" : msg.name.includes("execute") ? "📡" : "🔧";
       state.recordToolResult(`${icon} ${name}`, msg.content);
@@ -320,7 +293,6 @@ async function processLangGraphChunk(state: ChatState, chunk: any) {
       state.lastMsg().setContent("");
     } else if (msg.content && msg.type === "AIMessageChunk" && metadata.langgraph_node === "call_model") {
       // This will only stream response from the langgraph node "call_model"
-      // console.log("AIMessageChunk", msg, metadata);
       state.appendAnswerChunk(msg.content);
     }
   }
@@ -371,106 +343,3 @@ async function streamCustomLangGraph(state: ChatState) {
     }
   }
 }
-
-// // Types of objects used when interacting with LLM agents
-// type RefenceDocument = {
-//   page_content: string;
-//   metadata: {
-//     doc_type: string;
-//     endpoint_url: string;
-//     question: string;
-//     answer: string;
-//     score: number;
-//   };
-// };
-
-// // NOTE: experimental, kept for reference, would need to be updated to properly uses steps output
-// import {Client} from "@langchain/langgraph-sdk";
-// import { RemoteGraph } from "@langchain/langgraph/remote";
-// import { isAIMessageChunk } from "@langchain/core/messages";
-// async function streamLangGraphApi(state: ChatState) {
-//   const client = new Client({apiUrl: state.apiUrl});
-//   const graphName = "agent";
-
-//   // https://langchain-ai.github.io/langgraphjs/how-tos/stream-tokens
-//   // https://langchain-ai.github.io/langgraph/cloud/how-tos/stream_messages
-//   // https://langchain-ai.github.io/langgraph/concepts/streaming/
-//   const thread = await client.threads.create();
-//   const streamResponse = client.runs.stream(thread["thread_id"], graphName, {
-//     // input: {messages: [{role: "human", content: "what is 3 times 6?"}]},
-//     // input: {messages: [{role: "human", content: question}]},
-//     input: {messages: state.messages().map(({content, role}) => ({content: content(), role}))},
-//     config: {configurable: {}},
-//     streamMode: ["messages-tuple", "updates"],
-//     signal: state.abortController.signal,
-//   });
-//   state.appendMessage("", "assistant");
-//   for await (const chunk of streamResponse) {
-//     processLangGraphChunk(state, chunk);
-//   }
-// }
-
-// async function streamOpenAILikeApi(state: ChatState) {
-//   // Experimental, would need to be updated to properly uses steps output
-//   const response = await fetch(`${state.apiUrl}chat/completions`, {
-//     method: "POST",
-//     headers: {
-//       "Content-Type": "application/json",
-//       Authorization: `Bearer ${state.apiKey}`,
-//     },
-//     signal: state.abortController.signal,
-//     body: JSON.stringify({
-//       messages: state.messages().map(({content, role}) => ({content: content(), role})),
-//       model: state.model,
-//       // model: "azure_ai/mistral-large",
-//       max_tokens: 500,
-//       stream: true,
-//       // api_key: state.apiKey,
-//     }),
-//   });
-
-//   state.appendMessage("", "assistant");
-//   const reader = response.body?.getReader()!;
-//   const decoder = new TextDecoder("utf-8");
-//   let partialLine = ""; // Buffer for incomplete lines
-
-//   // Iterate stream response
-//   while (true) {
-//     if (reader) {
-//       const {value, done} = await reader.read();
-//       if (done) break;
-//       const chunkStr = decoder.decode(value, {stream: true});
-//       // Combine with any leftover data from the previous iteration
-//       const combined = partialLine + chunkStr;
-//       if (partialLine) partialLine = "";
-//       for (const line of combined.split("\n").filter(line => line.trim() !== "")) {
-//         if (line === "data: [DONE]") return;
-//         if (line.startsWith("data: ")) {
-//           // console.log(line)
-//           try {
-//             const json = JSON.parse(line.substring(6));
-//             if (json.retrieved_docs) {
-//               state.appendStepToLastMsg(
-//                 `📚️ Using ${json.retrieved_docs.length} documents`,
-//                 "retrieve",
-//                 json.retrieved_docs,
-//               );
-//             } else {
-//               const newContent = json.choices[0].delta?.content;
-//               if (newContent) {
-//                 // console.log(newContent);
-//                 state.appendContentToLastMsg(newContent);
-//               }
-//             }
-//           } catch {
-//             partialLine = line;
-//           }
-//         }
-//       }
-//     }
-//   }
-
-//   // Extract query once message complete
-//   // const query = extractSparqlQuery(state.lastMsg().content());
-//   // if (query) state.lastMsg().setLinks([{url: query, ...queryLinkLabels}]);
-// }

@@ -186,5 +186,3 @@ export function hljsDefineSparql(hljs: any) {
     ],
   };
 }
-
-// window.hljsDefineSparql = hljsDefineSparql;
