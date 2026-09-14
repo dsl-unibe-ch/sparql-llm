@@ -1,3 +1,4 @@
+import {marked} from "marked";
 import {describe, expect, test} from "vitest";
 
 import {ChatState} from "./providers";
@@ -15,6 +16,21 @@ function newTurn(): ChatState {
 function assistantMessages(state: ChatState) {
   return state.messages().filter(m => m.role === "assistant");
 }
+
+describe("tool result rendering", () => {
+  test("a tool result with its own code fences renders as one code block", () => {
+    // Tool results already contain ``` fences (SPARQL results come back as a fenced
+    // JSON block). Wrapped in another ``` fence, marked paired them up wrongly: the
+    // JSON rendered as loose text and an empty code box trailed every result.
+    const state = newTurn();
+    const result = 'Results of SPARQL query execution:\n```\n{"spouseName": "Sturzenegger, Lina"}\n```';
+    state.recordToolResult("📡 Execute sparql query", result);
+    const html = marked.parse(assistantMessages(state)[0].steps()[0].details) as string;
+    const blocks = [...html.matchAll(/<pre><code[^>]*>([\s\S]*?)<\/code><\/pre>/g)].map(m => m[1]);
+    expect(blocks.length).toBe(1);
+    expect(blocks[0]).toContain("Sturzenegger, Lina");
+  });
+});
 
 describe("tool activity folding", () => {
   test("a model that restates its answer each tool round renders it once", () => {

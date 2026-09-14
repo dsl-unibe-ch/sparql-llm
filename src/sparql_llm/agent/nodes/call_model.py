@@ -12,7 +12,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from sparql_llm.agent.prompts import FINAL_TURN_PROMPT
 from sparql_llm.agent.state import State, StepOutput
-from sparql_llm.agent.utils import count_tool_rounds, get_msg_text, load_chat_model
+from sparql_llm.agent.utils import count_tool_rounds, fenced, get_msg_text, load_chat_model
 from sparql_llm.config import Configuration, settings
 from sparql_llm.utils import extract_think_blocks, strip_think_blocks
 
@@ -147,10 +147,11 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
                 for tc in past_msg.tool_calls:
                     tool_name = tc.get("name", "unknown_tool")
                     args = tc.get("args", {})
-                    if tool_name == "execute_sparql_query" and "query" in args:
-                        technical_details.append(
-                            f"**Executed SPARQL query:**\n```sparql\n{args['query']}\n```"
-                        )
+                    # The tool's argument is sparql_query; checking only for "query"
+                    # showed every executed query as a raw argument dict.
+                    sparql_query = args.get("sparql_query") or args.get("query")
+                    if tool_name == "execute_sparql_query" and sparql_query:
+                        technical_details.append(f"**Executed SPARQL query:**\n{fenced(sparql_query, 'sparql')}")
                     elif tool_name == "search_sparql_docs":
                         q = args.get("question", args.get("query", ""))
                         technical_details.append(f"**Searched documentation:** {q}")
@@ -175,13 +176,9 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
                     # Truncate very long results for readability
                     display = tool_content[:2000] + ("…" if len(tool_content) > 2000 else "")
                     if tool_name == "execute_sparql_query":
-                        technical_details.append(
-                            f"**Query results:**\n```\n{display}\n```"
-                        )
+                        technical_details.append(f"**Query results:**\n{fenced(display)}")
                     else:
-                        technical_details.append(
-                            f"**Results from `{tool_name}`:**\n```\n{display}\n```"
-                        )
+                        technical_details.append(f"**Results from `{tool_name}`:**\n{fenced(display)}")
 
         if technical_details:
             injected = "\n\n---\n### Technical Details\n\n" + "\n\n".join(technical_details)

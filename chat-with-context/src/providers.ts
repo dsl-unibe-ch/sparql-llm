@@ -149,9 +149,10 @@ export class ChatState {
     if (!msg) return;
     this.toolCallCount += 1;
     if (msg.content().trim()) this.draftSuperseded = true;
+    const fence = fenceFor(content);
     this.upsertActivityStep(
       `⏳ Searching the knowledge graph… (${this.toolCallCount})`,
-      `**${label}**\n\n\`\`\`\n${content}\n\`\`\`\n\n`,
+      `**${label}**\n\n${fence}\n${content}\n${fence}\n\n`,
     );
   };
 
@@ -193,6 +194,17 @@ export class ChatState {
     );
     this.onMessageUpdate();
   };
+}
+
+/** A code fence longer than any backtick run in `text`, so fences inside it stay literal.
+ *
+ * Tool results carry their own ``` fences (SPARQL results come back as a fenced
+ * JSON block). Wrapped in a plain ``` fence, marked paired the fences up wrongly:
+ * the result rendered as loose text and an empty code box trailed it.
+ */
+export function fenceFor(text: string): string {
+  const longest = Math.max(0, ...[...text.matchAll(/`+/g)].map(match => match[0].length));
+  return "`".repeat(Math.max(3, longest + 1));
 }
 
 // Stream a response from various LLM agent providers (OpenAI-like, LangGraph, LangServe)

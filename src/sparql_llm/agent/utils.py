@@ -1,6 +1,7 @@
 """Utilities for the AI agent, e.g. load model."""
 
 import os
+import re
 from typing import Any
 
 from langchain.chat_models import init_chat_model
@@ -158,6 +159,18 @@ def count_tool_rounds(messages: list[AnyMessage]) -> int:
     or a model that keeps garbling its calls would never reach the budget.
     """
     return sum(1 for m in messages if isinstance(m, AIMessage) and (m.tool_calls or m.invalid_tool_calls))
+
+
+def fenced(text: str, lang: str = "") -> str:
+    """Wrap text in a markdown code fence longer than any backtick run inside it.
+
+    Tool results carry their own ``` fences; wrapped in another ``` fence, the chat's
+    markdown renderer paired them up wrongly, showing the result as loose text with an
+    empty code box after it.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{lang}\n{text}\n{fence}"
 
 
 def get_msg_text(msg: AnyMessage) -> str:
