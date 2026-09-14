@@ -13,6 +13,7 @@ Mounted only when auth is enabled — without a user there is nobody to own a ch
 """
 
 import html
+import json
 import re
 import unicodedata
 import uuid
@@ -21,7 +22,6 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
 from fastapi_users_db_sqlalchemy.generics import now_utc
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import delete, select
@@ -235,6 +235,8 @@ async def export_conversation(
             "updated_at": conv.updated_at.isoformat(),
             "messages": conv.messages,
         }
-        return JSONResponse(exported, headers=headers)
+        # Indented and with accents kept as-is, so the downloaded file is readable.
+        readable = json.dumps(exported, indent=4, ensure_ascii=False)
+        return Response(readable, media_type="application/json; charset=utf-8", headers=headers)
     markdown = conversation_to_markdown(conv.title, conv.messages, conv.created_at)
     return Response(markdown, media_type="text/markdown; charset=utf-8", headers=headers)

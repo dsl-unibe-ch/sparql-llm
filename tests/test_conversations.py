@@ -195,6 +195,12 @@ def test_json_export_is_a_download_of_the_whole_chat(client):
     assert exported["messages"] == _thread()
 
 
+def test_json_export_is_human_readable(client):
+    _save(client, "c1", _thread(question="Qui était Ernst Brenner ?"))
+    text = client.get("/conversations/c1/export?format=json").content.decode("utf-8")
+    assert '\n    "title": "Qui était Ernst Brenner ?"' in text  # indented by 4, accent kept
+
+
 def test_markdown_export_is_a_download(client):
     _save(client, "c1")
     response = client.get("/conversations/c1/export?format=md")
