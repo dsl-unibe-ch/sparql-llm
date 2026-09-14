@@ -81,7 +81,7 @@ WHERE {
 
 ## Example 5: List parents of a specific person
 
-Question: Who are the parents of the person with URI <https://swiss-elites.lod4hss.cloud/resource/p50001>?
+Question: Who are the parents of the person with URI <https://elites-suisses.lod4hss.org/resource/p50001>?
 Alternative question: Find the mother and father of Ernst Brenner.
 
 ```sparql

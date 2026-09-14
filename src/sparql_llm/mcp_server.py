@@ -13,7 +13,7 @@ from sparql_llm.validate_sparql import validate_sparql
 # What are the rat orthologs of the human TP53?
 # TODO: MCP integrated https://github.com/modelcontextprotocol/python-sdk/pull/1007
 
-PROMPT_TOOL_SPARQL = """Formulate a precise SPARQL query to access specific biological data and answer the user's question.
+PROMPT_TOOL_SPARQL = """Formulate a precise SPARQL query to answer the user's question from the knowledge graph.
 
 ## SPARQL Query Guidelines
 - **Always include the endpoint URL** as a comment at the start: `#+ endpoint: http://example.org/sparql`

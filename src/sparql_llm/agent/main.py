@@ -569,6 +569,20 @@ def convert_chunk_to_dict(obj: Any) -> Any:
         return obj
 
 
+def hide_sparql_in_answers(response_dict: dict[str, Any]) -> dict[str, Any]:
+    """Remove SPARQL codeblocks from the assistant messages of a finished run.
+
+    "Natural language only" mode promises an answer without SPARQL.
+    ``stream_response`` enforces that while streaming; the non-streaming path
+    returns the finished state instead, so it is enforced here. The queries the
+    model executed stay available in the messages' tool calls.
+    """
+    for msg in response_dict.get("messages", []):
+        if isinstance(msg, dict) and msg.get("type") == "ai" and isinstance(msg.get("content"), str):
+            msg["content"] = strip_sparql_stream(msg["content"])
+    return response_dict
+
+
 async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = graph) -> AsyncGenerator[str, Any]:
     """Stream the response from the assistant.
 
@@ -589,9 +603,9 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
     think_buffer = ""
     emitted_len = 0
     # "Natural language only" mode additionally removes any ```sparql block the
-    # model wrote into its visible answer. The prompt already asks it to keep the
-    # query inside <think> (call_model.py), but models ignore that often enough
-    # that the guarantee has to be enforced here. Nothing is lost: the query is
+    # model wrote into its visible answer. The prompt no longer asks it to hide the
+    # query (qwen cannot write into a <think> block, see call_model.py), so this
+    # filter is what keeps the answer free of SPARQL. Nothing is lost: the query is
     # still surfaced as the "💭 Thought process" step and as the
     # "open in editor" link built from structured_output.
     natural_language_only = bool(config.get("configurable", {}).get("natural_language_only"))
@@ -807,6 +821,8 @@ async def chat(
     response = await run_graph.ainvoke(inputs, config=config)
     # Convert LangChain message objects to dicts for JSON serialization
     response_dict = convert_chunk_to_dict(response)
+    if chat_request.natural_language_only:
+        hide_sparql_in_answers(response_dict)
     return JSONResponse(content=response_dict)
 
 

@@ -80,10 +80,10 @@ def strip_sparql_stream(buffer: str) -> str:
 
     In "natural language only" mode the visible answer must contain no SPARQL —
     the query still reaches the user through the "Thought process" step and the
-    "open in editor" link built from the agent's structured output. The system
-    prompt asks the model to keep the query inside ``<think>``, but a mid-sized
-    model routinely ignores that negative instruction, so the codeblock is also
-    removed here, where it cannot be argued with.
+    "open in editor" link built from the agent's structured output. The prompt
+    does not ask the model to hide it (qwen on GPUStack cannot write into a
+    ``<think>`` block, and asking made it restart its search), so the codeblock
+    is removed here instead.
 
     Like :func:`strip_think_stream` this operates on the *whole accumulated
     buffer* and returns only the text that is safe to show:
