@@ -29,7 +29,7 @@ from qdrant_client import models
 
 from sparql_llm.config import settings
 from sparql_llm.indexing.drift import save_fingerprint, take_fingerprint
-from sparql_llm.indexing.index_resources import init_vectordb, qdrant_client
+from sparql_llm.indexing.index_resources import endpoints_metadata, init_vectordb, qdrant_client
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.utils import logger
 
@@ -140,6 +140,17 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     examples_summary = format_report(examples_report)
     logger.info("Example sync: %s", examples_summary)
 
+    # Refresh the query validator's schema from the same VoID the index is built from.
+    # It is cached in data/endpoints_metadata.json, which used to be written only when
+    # missing: vm7 validated against a months-old schema and rejected correct queries.
+    # A failure here keeps the previous schema and is reported with the result.
+    schema_warning = ""
+    try:
+        endpoints_metadata.refresh()
+    except Exception as exc:
+        logger.warning("Could not refresh the query validator's schema: %s", exc)
+        schema_warning = f" ⚠ Query validator schema not refreshed ({exc}); the previous one is still in use."
+
     _set_job("running", f"{examples_summary}. Building new index '{target}'…", collection=target)
 
     # Fingerprint BEFORE building so the recorded snapshot can never claim to be newer
@@ -208,7 +219,7 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     _set_job(
         "done",
         f"Index rebuilt: {doc_count} documents covering {len(fingerprint.classes)} classes "
-        f"({fingerprint.triples:,} triples).{warning}",
+        f"({fingerprint.triples:,} triples).{warning}{schema_warning}",
         **result,
     )
     return result

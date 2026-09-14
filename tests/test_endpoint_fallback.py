@@ -25,6 +25,12 @@ def test_corrupted_url_falls_back_to_the_only_endpoint(one_endpoint):
     assert resolve_endpoint_url(corrupted) == ENDPOINT
 
 
+def test_missing_url_means_the_only_endpoint(one_endpoint):
+    # gpt-oss once left endpoint_url out entirely ("Field required"); the tool
+    # now defaults it to "".
+    assert resolve_endpoint_url("") == ENDPOINT
+
+
 def test_configured_url_is_kept(one_endpoint):
     assert resolve_endpoint_url(ENDPOINT) == ENDPOINT
 

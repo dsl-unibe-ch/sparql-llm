@@ -363,7 +363,7 @@ class EndpointsMetadataManager:
             return
         # Try loading from file first
         try:
-            with open(ENDPOINTS_METADATA_FILE) as f:
+            with open(ENDPOINTS_METADATA_FILE, encoding="utf-8") as f:
                 data = json.load(f)
                 self._prefixes_map = data.get("prefixes_map", {})
                 self._void_dict = data.get("classes_schema", {})
@@ -377,23 +377,43 @@ class EndpointsMetadataManager:
         except Exception as e:
             logger.debug(f"Could not load metadata from {ENDPOINTS_METADATA_FILE}: {e}")
 
+        self._cache(*self._fetch())
+
+    def refresh(self) -> None:
+        """Rebuild the metadata from its sources, replacing the cached file.
+
+        The cache file used to be written only when missing, so a schema change
+        never reached the query validator: vm7 kept validating against a
+        months-old snapshot and rejected every correct marriage query. The admin
+        index rebuild calls this. Only this process sees the new schema at once;
+        other workers pick it up from the file when they restart.
+        """
+        prefixes_map, void_dict = self._fetch()
+        if not any(void_dict.values()):
+            raise RuntimeError("no classes schema found for any endpoint; the previous schema is kept")
+        self._cache(prefixes_map, void_dict)
+
+    def _fetch(self) -> tuple[dict[str, str], "EndpointsSchemaDict"]:
+        """Build the prefixes map and classes schema from the endpoints and their VoID files."""
+        prefixes_map: dict[str, str] = {}
+        void_dict: EndpointsSchemaDict = {}
         logger.info(f"Fetching metadata for {len(self._endpoints)} endpoints...")
         for endpoint in self._endpoints:
             logger.info(f"Fetching {endpoint['endpoint_url']} metadata...")
             void_file = endpoint.get("void_file")
-            self._void_dict[endpoint["endpoint_url"]] = get_schema_for_endpoint(
-                endpoint["endpoint_url"], void_file
-            )
-            self._prefixes_map = get_prefixes_for_endpoint(
-                endpoint["endpoint_url"], endpoint.get("examples_file"), self._prefixes_map
-            )
+            void_dict[endpoint["endpoint_url"]] = get_schema_for_endpoint(endpoint["endpoint_url"], void_file)
+            prefixes_map = get_prefixes_for_endpoint(endpoint["endpoint_url"], endpoint.get("examples_file"), prefixes_map)
             # Endpoints that don't support SHACL prefix queries (e.g. Wisski):
             # extract prefixes from the VoID Turtle file's @prefix declarations.
             if void_file:
-                _merge_prefixes_from_turtle(void_file, self._prefixes_map)
-        # Cache to JSON file
-        with open(ENDPOINTS_METADATA_FILE, "w") as f:
-            json.dump({"prefixes_map": self._prefixes_map, "classes_schema": self._void_dict}, f, indent=2)
+                _merge_prefixes_from_turtle(void_file, prefixes_map)
+        return prefixes_map, void_dict
+
+    def _cache(self, prefixes_map: dict[str, str], void_dict: "EndpointsSchemaDict") -> None:
+        """Write the metadata to the cache file, then swap it in."""
+        with open(ENDPOINTS_METADATA_FILE, "w", encoding="utf-8") as f:
+            json.dump({"prefixes_map": prefixes_map, "classes_schema": void_dict}, f, indent=2)
+        self._prefixes_map, self._void_dict = prefixes_map, void_dict
         self._initialized = True
         logger.info(f"💾 Cached endpoints metadata to {ENDPOINTS_METADATA_FILE.resolve()}")
 

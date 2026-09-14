@@ -24,6 +24,10 @@ from pathlib import Path
 
 ENDPOINT = "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter"
 GRAPH = "https://swiss-elites.lod4hss.cloud/resource/"
+# Entity URIs are minted on a different host from the named graph. The query
+# validator adds missing prefixes from this file, so swel: must name the entity
+# space, or a correct swel:p50001 becomes a URI that matches nothing.
+ENTITY_SPACE = "https://elites-suisses.lod4hss.org/resource/"
 OUT_PATH = Path(__file__).parent.parent / "data" / "elites-suisses-void.ttl"
 
 
@@ -42,7 +46,7 @@ PREFIXES = {
     "https://sdhss.org/ontology/shortcuts/": "sdh-short",
     "https://sdhss.org/ontology/core/": "sdh",
     "https://sdhss.org/ontology/crm-supplement/": "crm-sup",
-    "https://swiss-elites.lod4hss.cloud/resource/": "swel",
+    ENTITY_SPACE: "swel",
     "http://www.w3.org/1999/02/22-rdf-syntax-ns#": "rdf",
     "http://www.w3.org/2000/01/rdf-schema#": "rdfs",
     "http://www.w3.org/2002/07/owl#": "owl",
@@ -103,7 +107,7 @@ def main() -> None:
         lines.append(f"@prefix {p}: <{ns}> .")
     lines.append("")
     lines.append("<http://swiss-elites.lod4hss.cloud/void> a void:Dataset ;")
-    lines.append(f'    void:uriSpace "{GRAPH}" ;')
+    lines.append(f'    void:uriSpace "{ENTITY_SPACE}" ;')
     lines.append(f'    void:triples "{triples}"^^xsd:integer ;')
     lines.append(f'    void:entities "{entities}"^^xsd:integer ;')
     lines.append(f"    void:sparqlEndpoint <{ENDPOINT}> ;")

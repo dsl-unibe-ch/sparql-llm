@@ -8,7 +8,7 @@
 @prefix sdh-short: <https://sdhss.org/ontology/shortcuts/> .
 @prefix sdh: <https://sdhss.org/ontology/core/> .
 @prefix crm-sup: <https://sdhss.org/ontology/crm-supplement/> .
-@prefix swel: <https://swiss-elites.lod4hss.cloud/resource/> .
+@prefix swel: <https://elites-suisses.lod4hss.org/resource/> .
 @prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
 @prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
@@ -17,7 +17,7 @@
 @prefix dct: <http://purl.org/dc/terms/> .
 
 <http://swiss-elites.lod4hss.cloud/void> a void:Dataset ;
-    void:uriSpace "https://swiss-elites.lod4hss.cloud/resource/" ;
+    void:uriSpace "https://elites-suisses.lod4hss.org/resource/" ;
     void:triples "735918"^^xsd:integer ;
     void:entities "155481"^^xsd:integer ;
     void:sparqlEndpoint <https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter> ;

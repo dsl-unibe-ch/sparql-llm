@@ -252,12 +252,12 @@ Returns:
 {format_docs(relevant_docs)}"""
 
     @mcp.tool()
-    def execute_sparql_query(sparql_query: str, endpoint_url: str) -> str:
+    def execute_sparql_query(sparql_query: str, endpoint_url: str = "") -> str:
         """Execute a SPARQL query against a SPARQL endpoint.
 
         Args:
             sparql_query: A valid SPARQL query string
-            endpoint_url: The SPARQL endpoint URL to execute the query against
+            endpoint_url: The SPARQL endpoint URL to execute the query against (defaults to the configured endpoint)
 
         Returns:
             The query results in JSON format
