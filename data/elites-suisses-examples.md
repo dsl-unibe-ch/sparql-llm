@@ -153,7 +153,7 @@ PREFIX sdh-slc: <https://sdhss.org/ontology/social-life-core/>
 PREFIX sdh-short: <https://sdhss.org/ontology/shortcuts/>
 PREFIX swel: <https://elites-suisses.lod4hss.org/resource/>
 
-SELECT DISTINCT ?spouse ?spouseName
+SELECT DISTINCT ?spouse ?spouseName ?relTypeName
 WHERE {
   GRAPH <https://swiss-elites.lod4hss.cloud/resource/> {
     ?marriage a sdh-slc:C3 ;
@@ -161,6 +161,12 @@ WHERE {
               sdh-slc:P15 ?spouse .
     FILTER(?spouse != swel:p50001)
     OPTIONAL { ?spouse sdh-short:P9 ?spouseName }
+    # The relationship type is two separate triples: joining them with ";"
+    # would keep ?marriage as the subject and break the query.
+    OPTIONAL {
+      ?marriage sdh-slc:P16 ?relType .
+      ?relType sdh-short:P9 ?relTypeName .
+    }
   }
 }
 ```
