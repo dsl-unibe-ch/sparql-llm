@@ -637,18 +637,8 @@ customElement(
 
               {/* Bottom toolbar */}
               <div class="flex items-center justify-between px-3 pb-2">
-                {/* Left: new chat + model selector */}
+                {/* Left: model selector + answer style */}
                 <div class="flex items-center gap-2 flex-wrap">
-                  <button
-                    title="New conversation"
-                    class="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                    onClick={() => newChat()}
-                    type="button"
-                    aria-label="Start a new conversation"
-                  >
-                    <img src={editIcon} alt="New conversation" class="iconBtn w-4 h-4" />
-                  </button>
-
                   <Show when={availableModels().length > 1}>
                     <div class="relative">
                       <select
@@ -665,15 +655,36 @@ customElement(
                     </div>
                   </Show>
                   
-                  <label class="flex items-center gap-1.5 cursor-pointer text-xs font-medium text-slate-500 bg-slate-100 hover:bg-slate-200 border-0 rounded-full px-3 py-1.5 transition-colors">
-                    <input 
-                      type="checkbox" 
-                      class="accent-slate-500 w-3 h-3 cursor-pointer"
-                      checked={naturalLanguageOnly()} 
-                      onChange={e => handleNaturalLanguageOnlyChange((e.target as HTMLInputElement).checked)} 
-                    />
-                    <span>Natural Language Only</span>
-                  </label>
+                  {/* Answer style: both modes named, the active one highlighted */}
+                  <div class="flex items-center rounded-full bg-slate-100 p-0.5 text-xs font-medium" role="radiogroup" aria-label="Answer style">
+                    <For
+                      each={[
+                        {naturalOnly: false, label: "SPARQL", title: "Show the SPARQL query alongside the answer"},
+                        {
+                          naturalOnly: true,
+                          label: "Natural text",
+                          title: "Answer in plain language only; the query stays available in the steps above the answer",
+                        },
+                      ]}
+                    >
+                      {option => (
+                        <button
+                          type="button"
+                          role="radio"
+                          aria-checked={naturalLanguageOnly() === option.naturalOnly}
+                          title={option.title}
+                          class={`rounded-full px-3 py-1 transition-colors ${
+                            naturalLanguageOnly() === option.naturalOnly
+                              ? "bg-white text-slate-700 shadow-sm"
+                              : "text-slate-500 hover:text-slate-700"
+                          }`}
+                          onClick={() => handleNaturalLanguageOnlyChange(option.naturalOnly)}
+                        >
+                          {option.label}
+                        </button>
+                      )}
+                    </For>
+                  </div>
                 </div>
 
                 {/* Right: send / stop button */}
