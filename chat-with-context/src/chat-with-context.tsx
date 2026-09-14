@@ -362,7 +362,7 @@ customElement(
                                 <a
                                   class="block px-3 py-1.5 text-slate-700 no-underline hover:bg-slate-100"
                                   href={conversationUrl(conversation.id, "/export?format=md")}
-                                  download
+                                  download=""
                                   onClick={() => setMenuOpenId("")}
                                 >
                                   Export Markdown
@@ -370,7 +370,7 @@ customElement(
                                 <a
                                   class="block px-3 py-1.5 text-slate-700 no-underline hover:bg-slate-100"
                                   href={conversationUrl(conversation.id, "/export?format=json")}
-                                  download
+                                  download=""
                                   onClick={() => setMenuOpenId("")}
                                 >
                                   Export JSON
