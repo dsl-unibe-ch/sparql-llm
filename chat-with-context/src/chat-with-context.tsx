@@ -636,9 +636,9 @@ customElement(
               />
 
               {/* Bottom toolbar */}
-              <div class="flex items-center justify-end gap-2 px-3 pb-2">
-                {/* Model selector + answer style, beside the send button */}
-                <div class="flex flex-wrap items-center justify-end gap-2">
+              <div class="flex items-center justify-between gap-2 px-3 pb-2">
+                {/* Left: model selector + answer style */}
+                <div class="flex flex-wrap items-center gap-2">
                   <Show when={availableModels().length > 1}>
                     <div class="relative">
                       <select
