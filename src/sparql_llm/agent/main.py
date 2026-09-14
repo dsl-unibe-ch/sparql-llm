@@ -7,21 +7,21 @@ import logging
 import os
 import pathlib
 import re
+import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote_plus
 
-from fastapi import Depends, FastAPI, Form, Request, status
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.requests import Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
-from starlette.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langchain_core.runnables import RunnableConfig
 from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from sparql_llm.agent.graph import get_graph, graph
 from sparql_llm.agent.roles import (
@@ -57,20 +57,27 @@ langfuse_handler = [CallbackHandler(update_trace=True)] if os.getenv("LANGFUSE_S
 
 mcp = get_mcp_app()
 
-# Auth imports (only when auth is enabled to avoid import errors if not installed)
+# Login, the users database and the admin pages exist only when auth is enabled.
 if settings.auth_enabled:
-    import fastapi_users.exceptions as _fu_exc
-    from fastapi_users.authentication import CookieTransport
+    from fastapi_users.db import SQLAlchemyUserDatabase
+    from fastapi_users.password import PasswordHelper
+    from sqlalchemy import select
 
     from sparql_llm.agent.auth import (
         User,
+        UserManager,
+        async_session_maker,
         auth_backend,
+        cookie_transport,
         create_db_and_tables,
         current_active_user,
         fastapi_users,
-        get_user_manager,
-        optional_current_user,
+        get_jwt_strategy,
     )
+    from sparql_llm.agent.conversations import delete_conversations_of
+    from sparql_llm.agent.conversations import router as conversations_router
+    from sparql_llm.indexing.drift import check_drift
+    from sparql_llm.indexing.rebuild import read_job, start_rebuild
 
 
 def is_valid_login_redirect(value: str):
@@ -87,37 +94,20 @@ def is_valid_login_redirect(value: str):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan that initializes the MCP session manager and auth DB."""
     if settings.auth_enabled:
-        # Ensure the data directory exists
         pathlib.Path(settings.auth_db_path).parent.mkdir(parents=True, exist_ok=True)
         await create_db_and_tables()
-        # Create initial admin user if credentials are configured
+        # Create the initial admin account when one is configured and missing.
         if settings.admin_email and settings.admin_password:
-            from fastapi_users.password import PasswordHelper
-
-            from sparql_llm.agent.auth import User, async_session_maker, get_user_manager
-            from sparql_llm.agent.auth import UserManager
-            from sparql_llm.agent.auth import get_user_db
-            from sparql_llm.agent.auth import SQLAlchemyUserDatabase
-            from fastapi_users import schemas
-
             async with async_session_maker() as session:
-                from sparql_llm.agent.auth import User as UserModel
-                from fastapi_users.db import SQLAlchemyUserDatabase
-
-                user_db = SQLAlchemyUserDatabase(session, UserModel)
-                password_helper = PasswordHelper()
-                manager = UserManager(user_db)
+                manager = UserManager(SQLAlchemyUserDatabase(session, User))
                 try:
-                    from fastapi_users import schemas as fu_schemas
                     existing = await manager.get_by_email(settings.admin_email)
                     logger.info(f"🔐 Admin user already exists: {existing.email}")
                 except Exception:
-                    hashed = password_helper.hash(settings.admin_password)
-                    from sqlalchemy import insert
-                    import uuid as _uuid
+                    hashed = PasswordHelper().hash(settings.admin_password)
                     await session.execute(
-                        UserModel.__table__.insert().values(
-                            id=_uuid.uuid4(),
+                        User.__table__.insert().values(
+                            id=uuid.uuid4(),
                             email=settings.admin_email,
                             hashed_password=hashed,
                             is_active=True,
@@ -152,9 +142,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
+
 # ── Auth routes ────────────────────────────────────────────────────────────────
 if settings.auth_enabled:
-    # Mount fastapi-users cookie login/logout router
+    # fastapi-users' cookie login/logout API
     app.include_router(
         fastapi_users.get_auth_router(auth_backend),
         prefix="/auth",
@@ -162,18 +154,12 @@ if settings.auth_enabled:
     )
 
     # Each user's saved chats, private to them.
-    from sparql_llm.agent.conversations import delete_conversations_of
-    from sparql_llm.agent.conversations import router as conversations_router
-
     app.include_router(conversations_router)
-
-    templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
 
     @app.post("/logout", include_in_schema=False)
     async def logout_redirect(request: Request) -> RedirectResponse:
         """Clear the auth cookie and redirect to /login."""
         response = RedirectResponse(url="/login", status_code=302)
-        from sparql_llm.agent.auth import cookie_transport
         response.delete_cookie(key=cookie_transport.cookie_name)
         return response
 
@@ -198,10 +184,6 @@ if settings.auth_enabled:
         user: "User" = Depends(current_active_user),
     ) -> HTMLResponse:
         """Verify the current password then update to the new one."""
-        from fastapi_users.password import PasswordHelper
-        from sparql_llm.agent.auth import async_session_maker, User as UserModel
-        from fastapi_users.db import SQLAlchemyUserDatabase
-        from sparql_llm.agent.auth import UserManager
 
         def _render(error: str = "", success: str = "") -> HTMLResponse:
             return templates.TemplateResponse(
@@ -215,15 +197,13 @@ if settings.auth_enabled:
             return _render(error="New password must be at least 8 characters.")
 
         password_helper = PasswordHelper()
-        # Verify current password
         verified, _ = password_helper.verify_and_update(current_password, user.hashed_password)
         if not verified:
             return _render(error="Current password is incorrect.")
 
-        # Save new password
         new_hashed = password_helper.hash(new_password)
         async with async_session_maker() as session:
-            db_user = await session.get(UserModel, user.id)
+            db_user = await session.get(User, user.id)
             db_user.hashed_password = new_hashed
             await session.commit()
 
@@ -241,17 +221,8 @@ if settings.auth_enabled:
         next: str = Form("/"),
     ) -> HTMLResponse:
         """Handle the HTML login form, set the auth cookie, and redirect."""
-        from fastapi_users.authentication import CookieTransport
-        from fastapi_users.exceptions import UserInactive, UserNotExists
-
-        from sparql_llm.agent.auth import async_session_maker, get_user_manager
-        from sparql_llm.agent.auth import User as UserModel
-        from fastapi_users.db import SQLAlchemyUserDatabase
-
         async with async_session_maker() as session:
-            user_db = SQLAlchemyUserDatabase(session, UserModel)
-            from sparql_llm.agent.auth import UserManager
-            manager = UserManager(user_db)
+            manager = UserManager(SQLAlchemyUserDatabase(session, User))
             try:
                 user = await manager.authenticate(
                     credentials=type("Creds", (), {"username": username, "password": password})()
@@ -265,13 +236,9 @@ if settings.auth_enabled:
                     status_code=401,
                 )
 
-        # Issue JWT token and set cookie
-        from sparql_llm.agent.auth import auth_backend, get_jwt_strategy
-        strategy = get_jwt_strategy()
-        token = await strategy.write_token(user)
+        token = await get_jwt_strategy().write_token(user)
         response = RedirectResponse(url=next if is_valid_login_redirect(next) else "/", status_code=302)
-        # Set cookie matching the transport config
-        from sparql_llm.agent.auth import cookie_transport
+        # The cookie the fastapi-users transport reads back on every request.
         response.set_cookie(
             key=cookie_transport.cookie_name,
             value=token,
@@ -297,10 +264,8 @@ if settings.auth_enabled:
         """
         if not can_manage(user):
             return RedirectResponse("/", status_code=302)
-        from sparql_llm.agent.auth import async_session_maker, User as UserModel
-        from sqlalchemy import select
         async with async_session_maker() as session:
-            result = await session.execute(select(UserModel).order_by(UserModel.email))
+            result = await session.execute(select(User).order_by(User.email))
             users = result.scalars().all()
         rows = [
             {
@@ -337,9 +302,6 @@ if settings.auth_enabled:
         """
         if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        from sparql_llm.indexing.drift import check_drift
-        from sparql_llm.indexing.rebuild import read_job
-
         drift = await run_in_threadpool(check_drift)
         return JSONResponse({"drift": drift, "job": read_job()})
 
@@ -355,8 +317,6 @@ if settings.auth_enabled:
         """
         if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        from sparql_llm.indexing.rebuild import start_rebuild
-
         result = await run_in_threadpool(start_rebuild)
         if not result.get("started"):
             return JSONResponse(
@@ -384,16 +344,12 @@ if settings.auth_enabled:
             return RedirectResponse("/", status_code=302)
         if not can_create(user, role):
             return _flash("error", f"You cannot create a user with the role '{role}'.")
-        from fastapi_users.password import PasswordHelper
-        from sparql_llm.agent.auth import async_session_maker, User as UserModel
-        import uuid as _uuid
-        password_helper = PasswordHelper()
-        hashed = password_helper.hash(password)
+        hashed = PasswordHelper().hash(password)
         try:
             async with async_session_maker() as session:
                 await session.execute(
-                    UserModel.__table__.insert().values(
-                        id=_uuid.uuid4(),
+                    User.__table__.insert().values(
+                        id=uuid.uuid4(),
                         email=email,
                         hashed_password=hashed,
                         is_active=True,
@@ -415,11 +371,9 @@ if settings.auth_enabled:
         """Remove a user account. Curators may remove plain users only; nobody themselves."""
         if not can_manage(user):
             return RedirectResponse("/", status_code=302)
-        from sparql_llm.agent.auth import async_session_maker, User as UserModel
-        import uuid as _uuid
         try:
             async with async_session_maker() as session:
-                db_user = await session.get(UserModel, _uuid.UUID(user_id))
+                db_user = await session.get(User, uuid.UUID(user_id))
                 if db_user is None:
                     return _flash("error", "No such user.")
                 if not can_delete(user, db_user):
@@ -442,11 +396,9 @@ if settings.auth_enabled:
         """Change a user's role. Admins only, and never on their own account."""
         if not can_manage(user):
             return RedirectResponse("/", status_code=302)
-        from sparql_llm.agent.auth import async_session_maker, User as UserModel
-        import uuid as _uuid
         try:
             async with async_session_maker() as session:
-                db_user = await session.get(UserModel, _uuid.UUID(user_id))
+                db_user = await session.get(User, uuid.UUID(user_id))
                 if db_user is None:
                     return _flash("error", "No such user.")
                 if not can_set_role(user, db_user, role):
@@ -459,16 +411,9 @@ if settings.auth_enabled:
         except Exception as exc:
             return _flash("error", str(exc))
 
-else:
-    templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
-
-# Redirect unauthenticated browser requests to /login instead of 401 JSON
-if settings.auth_enabled:
-    from fastapi.exceptions import HTTPException
-
     @app.exception_handler(401)
-    async def unauthorized_handler(request: Request, exc: HTTPException) -> RedirectResponse:
-        # API calls (Accept: application/json or non-GET) get a proper 401
+    async def unauthorized_handler(request: Request, exc: HTTPException) -> RedirectResponse | JSONResponse:
+        """Send a logged-out browser to /login; API calls (JSON or non-GET) get a plain 401."""
         accept = request.headers.get("accept", "")
         if request.method != "GET" or "application/json" in accept:
             return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
@@ -490,10 +435,7 @@ except Exception:
 uvicorn_logger = logging.getLogger("uvicorn")
 uvicorn_logger.setLevel(logging.WARNING)
 
-# Error logger — writes full tracebacks from the chat pipeline to a readable file
-# (journald requires elevated perms to read). Used by stream_response so failures
-# — especially in the experimental MCP tools mode — are diagnosable and surfaced
-# to the user with a real reason instead of a generic banner.
+# Full tracebacks from the chat pipeline, in a file readable without journald permissions.
 error_logger = logging.getLogger("agent_error_logger")
 error_logger.setLevel(logging.ERROR)
 try:
@@ -513,18 +455,13 @@ logger.info(f"""💬 Chat UI at {api_url}
 
 
 # ── Unified auth dependency ────────────────────────────────────────────────────
-# When auth is enabled, `require_user` enforces a valid session cookie.
-# When auth is disabled it's a no-op so development works without credentials.
-if settings.auth_enabled:
-    async def _noop():
-        return None
+# With auth enabled, `require_user` enforces a valid session cookie; without it,
+# it is a no-op so development works without credentials.
+async def _noop() -> None:
+    return None
 
-    require_user = current_active_user
-else:
-    async def _noop():  # type: ignore[no-redef]
-        return None
 
-    require_user = _noop  # type: ignore[assignment]
+require_user = current_active_user if settings.auth_enabled else _noop
 
 
 class Message(BaseModel):
@@ -554,8 +491,7 @@ def convert_chunk_to_dict(obj: Any) -> Any:
     Required because LangGraph objects are not serializable by default.
     And they use a mix of tuples, dataclasses (State, Configuration) and pydantic BaseModel (BaseMessage).
     """
-    # {'retrieve': {'retrieved_docs': [Document(metadata={'endpoint_url':
-    # When sending a msg LangGraph sends a tuple with the message and the metadata
+    # LangGraph sends a message as a (message, metadata) tuple
     if isinstance(obj, tuple) and len(obj) == 2:
         # Message and metadata
         return [convert_chunk_to_dict(obj[0]), convert_chunk_to_dict(obj[1])]
@@ -569,9 +505,6 @@ def convert_chunk_to_dict(obj: Any) -> Any:
         return obj.dict()  # type: ignore
     elif hasattr(obj, "__dict__"):
         return obj.__dict__
-    # elif hasattr(obj, "__dict__") and not isinstance(obj, type):
-    #     # Convert dataclass or other objects to dict, but skip type objects
-    #     return {k: convert_chunk_to_dict(v) for k, v in obj.__dict__.items()}
     else:
         return obj
 
@@ -591,36 +524,25 @@ def hide_sparql_in_answers(response_dict: dict[str, Any]) -> dict[str, Any]:
 
 
 async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = graph) -> AsyncGenerator[str, Any]:
-    """Stream the response from the assistant.
+    """Stream the graph's run to the chat UI as server-sent events.
 
-    Reasoning ("thinking") models served via GPUStack — e.g. minimax-m2.7 —
-    interleave their chain-of-thought as ``<think>…</think>`` blocks inside the
-    streamed ``content``. We strip those blocks from every node's token stream so
-    the chat UI never renders them (the call_model node re-surfaces its own
-    reasoning as a populated step). The previous per-chunk substring filter leaked
-    the opening ``<think>`` token (and the first word glued to it, e.g.
-    ``"<think>The"``) because a tag split across token boundaries was never
-    matched. Instead we accumulate the call_model output and re-derive the
-    visible (non-reasoning) text on every chunk via ``strip_think_stream``,
-    emitting only the newly revealed delta — robust to tags split across any
-    number of chunks.
+    Reasoning models (e.g. minimax-m2.7 on GPUStack) interleave ``<think>…</think>``
+    blocks with their answer, and a tag can be split across any number of tokens. So
+    the text of each message is accumulated, its visible part re-derived with
+    ``strip_think_stream`` on every chunk, and only the newly visible delta is sent.
+    The call_model node shows the reasoning itself as a "Thought process" step.
     """
-    # Per-message accumulator for the call_model stream, reset at each node
-    # boundary (every node emits an "updates" event when it finishes).
+    # Text of the message being streamed, reset at each node boundary (every node
+    # emits an "updates" event when it finishes).
     think_buffer = ""
     emitted_len = 0
-    # "Natural language only" mode additionally removes any ```sparql block the
-    # model wrote into its visible answer. The prompt no longer asks it to hide the
-    # query (qwen cannot write into a <think> block, see call_model.py), so this
-    # filter is what keeps the answer free of SPARQL. Nothing is lost: the query is
-    # still surfaced as the "💭 Thought process" step and as the
-    # "open in editor" link built from structured_output.
+    # Natural-language mode hides any ```sparql block from the answer. The queries stay
+    # visible in the "Thought process" step and the "open in editor" link.
     natural_language_only = bool(config.get("configurable", {}).get("natural_language_only"))
 
     try:
         async for event, chunk in run_graph.astream(inputs, stream_mode=["messages", "updates"], config=config):
             if event == "updates":
-                # New node starting → reset the think-stripping accumulator.
                 think_buffer = ""
                 emitted_len = 0
                 chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
@@ -635,18 +557,11 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
                 continue
 
             if event == "messages":
-                msg, metadata = chunk
+                msg, _metadata = chunk
                 content = getattr(msg, "content", "") if msg else ""
-                # A model that is *making a tool call* should not render prose in
-                # the chat body — the tool step bubble already shows the action.
-                # This matters for gpt-oss-120b, which (unlike other models)
-                # duplicates the tool-call arguments JSON into ``content`` (e.g.
-                # ``{"question": "...", "sparql_query": "..."}``). Without this
-                # guard that raw JSON would be streamed to the UI as garbage text
-                # before the real answer. The final, tool-call-free message still
-                # streams normally, so the actual answer is unaffected.
-                # A call whose arguments did not parse lands in invalid_tool_calls,
-                # with the same duplicated JSON in content, so it is hidden too.
+                # A message making a tool call is shown as its tool step, so its text is
+                # not streamed: gpt-oss copies the call's JSON arguments into ``content``,
+                # also for calls whose arguments failed to parse (invalid_tool_calls).
                 has_tool_calls = bool(
                     getattr(msg, "tool_calls", None)
                     or getattr(msg, "tool_call_chunks", None)
@@ -654,13 +569,9 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
                 )
                 if has_tool_calls and getattr(msg, "type", "") != "tool":
                     continue
-                # Strip inline <think> reasoning from every streamed LLM token (both
-                # the extract_user_question and call_model nodes run reasoning models).
-                # Tool results are not LLM token streams, so leave them untouched.
-                # Holding back incomplete tags also stops a bare "</think>" from ever
-                # reaching the UI, where it would create an empty "Thought process"
-                # step. The actual reasoning is surfaced as a populated step by the
-                # call_model node instead.
+                # Tool results are not model output and pass through untouched. Holding
+                # back incomplete tags also keeps a lone "</think>" out of the UI, where
+                # it would open an empty "Thought process" step.
                 if isinstance(content, str) and content and getattr(msg, "type", "") != "tool":
                     think_buffer += content
                     visible = strip_think_stream(think_buffer)
@@ -673,13 +584,9 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
                     emitted_len = len(visible)
 
             chunk_dict = convert_chunk_to_dict({"event": event, "data": chunk})
-            # Frontend only renders assistant text when type == "AIMessageChunk".
-            # When streaming is disabled for a model (gpt-oss uses
-            # disable_streaming="tool_calling" because it drops streamed tool
-            # calls), the final answer arrives as a single, non-streamed
-            # AIMessage whose serialized type is "ai" — which the UI would
-            # silently drop, showing a blank reply. Relabel it to
-            # "AIMessageChunk" so it renders identically to a streamed answer.
+            # The UI renders assistant text only from "AIMessageChunk". A model with
+            # streaming disabled (gpt-oss with tools bound) sends its answer as a single
+            # "ai" message, so relabel it to render the same way.
             if event == "messages":
                 data = chunk_dict.get("data")
                 if isinstance(data, list) and data and isinstance(data[0], dict) and data[0].get("type") == "ai":
@@ -687,11 +594,8 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
             yield f"data: {json.dumps(chunk_dict)}\n\n"
             await asyncio.sleep(0)
     except Exception as exc:
-        # Any failure inside the graph (model rejecting tool calls, MCP transport
-        # errors, recursion limit, etc.) would otherwise break the SSE stream and
-        # show the UI a generic "contact an admin" banner with no detail. Log the
-        # full traceback to the readable error log and surface a short, real reason
-        # to the user as an assistant message so the chat stays usable.
+        # Keep the chat usable: log the traceback and answer with the actual reason
+        # rather than letting the stream break.
         use_tools = bool(config.get("configurable", {}).get("use_tools"))
         error_logger.exception(
             "Chat stream failed (use_tools=%s, model=%s): %s",
@@ -740,23 +644,18 @@ async def chat(
         raise ValueError("Invalid API key")
 
     chat_request = ChatCompletionRequest(**await request.json())
-    
-    # If natural language mode is enabled, force the use of MCP tools logic
+
+    # Natural-language mode runs on the MCP tools agent.
     if chat_request.natural_language_only:
         chat_request.use_tools = True
-
-    # request.messages = [msg for msg in request.messages if msg.role != "system"]
-    # request.messages = [Message(role="system", content=settings.system_prompt), *request.messages]
 
     question: str = chat_request.messages[-1].content if chat_request.messages else ""
     question_logger.info(f"User question: {question}")
     if not question:
         raise ValueError("No question provided")
 
-    # Guard: MCP tools mode requires a model that supports tool/function calling.
-    # Some GPUStack deployments (e.g. the qwen3-vl vision models) are served without
-    # the tool-calling flags and will reject any tool request. Rather than let that
-    # fail mid-stream, tell the user up front to switch models or turn tools off.
+    # MCP tools mode needs tool calling, which some GPUStack deployments (e.g. qwen3-vl)
+    # reject. Say so up front rather than failing mid-stream.
     tool_capable = tool_capable_models()
     if chat_request.use_tools and chat_request.model in settings.tool_incapable_models:
         capable_names = ", ".join(m.split("/", 1)[-1] for m in tool_capable) or "(none configured)"
@@ -778,23 +677,18 @@ async def chat(
             return StreamingResponse(_reject(), media_type="text/event-stream")
         return JSONResponse(content={"messages": [{"role": "assistant", "content": msg}]})
 
-    # print(request.model)
     # Pass session_id via metadata for Langfuse to properly group multi-turn conversations
     # https://langfuse.com/docs/integrations/langchain/tracing#trace-attributes
     langfuse_metadata = {}
     if chat_request.session_id:
         langfuse_metadata["langfuse_session_id"] = chat_request.session_id
 
-    # Clamp the user-requested number of self-correction attempts to a sane range
-    # so a bad/huge value can't run forever or blow past the graph recursion limit.
+    # Clamp the user's limits so a huge value cannot run away.
     max_try = max(1, min(chat_request.max_try_fix_sparql, 20))
-    # MCP tools mode only: how many tool-call rounds (exploration steps) the model
-    # may take before it must answer. Clamped to a sane range too.
+    # MCP tools mode: tool-call rounds allowed before the model must answer.
     max_tool_iterations = max(1, min(chat_request.max_tool_iterations, 30))
-    # Each pipeline fix attempt and each tools exploration step costs ~2 graph steps.
-    # Scale the LangGraph recursion limit so a higher attempt/step count doesn't trip
-    # a GraphRecursionError; never go below the original 25. We size for whichever
-    # mode could run so the same config is safe regardless of use_tools.
+    # A fix attempt or a tool round takes ~2 graph steps. Size the recursion limit for
+    # whichever mode runs, never below LangGraph's default of 25.
     recursion_limit = max(25, 2 * max_try + 10, 2 * max_tool_iterations + 10)
 
     config = RunnableConfig(
@@ -817,16 +711,13 @@ async def chat(
         "messages": [(msg.role, msg.content) for msg in chat_request.messages[-10:]],
     }
 
-    # Select the graph to run: the experimental MCP tool-calling agent when
-    # use_tools is requested, otherwise the default retrieval + validation pipeline.
+    # The MCP tool-calling agent, or the retrieval + validation pipeline.
     run_graph = get_graph(chat_request.use_tools)
 
-    # request.stream = False
     if chat_request.stream:
         return StreamingResponse(
             stream_response(inputs, config, run_graph),
             media_type="text/event-stream",
-            # media_type="application/x-ndjson"
         )
 
     response = await run_graph.ainvoke(inputs, config=config)
@@ -877,14 +768,11 @@ async def get_models(
     request: Request,
     _user: Any = Depends(require_user),
 ) -> JSONResponse:
-    """Return the list of available LLM models for the chat UI dropdown.
+    """Return the models offered in the chat UI's picker.
 
-    When ``settings.available_llm_models`` is configured, that explicit list is
-    returned as-is — no upstream API call is made, so embedding models, Whisper
-    models, and other non-chat models on GPUStack are never exposed.
-
-    When the list is empty, the endpoint falls back to
-    ``[settings.default_llm_model]``.
+    That is ``settings.available_llm_models``, or ``[settings.default_llm_model]`` when
+    it is empty. The provider is never asked, so GPUStack's embedding and other non-chat
+    models stay hidden.
     """
     if settings.chat_api_key:
         auth_header = request.headers.get("Authorization", "")
@@ -919,10 +807,7 @@ async def get_user_logs(logs_request: LogsRequest) -> JSONResponse:
         for line in file:
             match = pattern.search(line)
             if match:
-                # date_time = match.group(1)
-                question = match.group(2)
-                # questions.append({"date": date_time, "question": question})
-                questions.add(question)
+                questions.add(match.group(2))
     return JSONResponse(content=list(questions))
 
 
@@ -955,32 +840,3 @@ async def chat_ui(
             "can_manage": can_manage(_user),
         },
     )
-
-
-# NOTE: experimental AG-UI endpoint
-# from ag_ui.core.types import RunAgentInput
-# from ag_ui.encoder import EventEncoder
-# @app.post("/agent", response_model=list[str])
-# async def langgraph_agent_endpoint(request: Request):
-#     """Handle LangGraph agent requests with SSE streaming."""
-#     # Parse the request body
-#     input_data = RunAgentInput(**await request.json())
-#     # Get the accept header from the request
-#     accept_header = request.headers.get("accept")
-#     # Create an event encoder to properly format SSE events
-#     encoder = EventEncoder(accept=accept_header)
-#     async def event_generator():
-#         async for event in graph.run(input_data):
-#             yield encoder.encode(event)
-#     return StreamingResponse(
-#         event_generator(),
-#         media_type=encoder.get_content_type()
-#     )
-
-# Test it:
-# curl -X POST http://localhost:8000/agent -H "Content-Type: application/json" -H "Accept: text/event-stream" -d '{
-#  "messages": [
-#  	 {"id": "msg_1", "role": "user", "content": "What is the HGNC symbol for the P68871 protein?"}
-#  ],
-#  "threadId": "t1", "runId": "r1", "tools": [], "context": [], "state": {}, "forwardedProps" : {}
-# }'
