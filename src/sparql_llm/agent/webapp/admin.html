@@ -51,6 +51,10 @@
       .badge-active { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #dcfce7; color: #166534; }
       .badge-inactive { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; color: #64748b; }
       .badge-superuser { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #fef9c3; color: #854d0e; margin-left: 4px; }
+      .badge-curator { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #e0e7ff; color: #3730a3; margin-left: 4px; }
+      .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; }
+      select { padding: 0.5rem 0.6rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.85rem; color: #1e293b; background: #fff; }
+      .row-actions select { padding: 0.25rem 0.4rem; font-size: 0.78rem; border-radius: 6px; }
 
       /* ── Search index ── */
       .idx-body { padding: 1.25rem; display: flex; flex-direction: column; gap: 0.9rem; }
@@ -123,7 +127,7 @@
 
     <div class="main-layout">
       <h1>User management</h1>
-      <p class="subtitle">Manage who can access Swiss Elites Chat. Signed in as <strong>{{ current_user.email }}</strong>.</p>
+      <p class="subtitle">Manage who can access Swiss Elites Chat. Signed in as <strong>{{ current_user.email }}</strong> ({{ role_labels[current_role] }}).</p>
 
       {% if flash_success %}
       <div class="flash flash-success">{{ flash_success }}</div>
@@ -158,11 +162,13 @@
               <th>Email</th>
               <th>Status</th>
               <th>Role</th>
-              <th style="width:80px"></th>
+              <th></th>
             </tr>
           </thead>
           <tbody>
-            {% for u in users %}
+            {# What each row offers comes from main.py's role rules, not from logic here. #}
+            {% for row in rows %}
+            {% set u = row.user %}
             <tr>
               <td>{{ u.email }}</td>
               <td>
@@ -173,19 +179,37 @@
                 {% endif %}
               </td>
               <td>
-                {% if u.is_superuser %}
+                {% if row.role == "admin" %}
                 <span class="badge-superuser">Admin</span>
+                {% elif row.role == "curator" %}
+                <span class="badge-curator">Curator</span>
                 {% else %}
                 User
                 {% endif %}
               </td>
               <td>
-                {% if u.email != current_user.email %}
-                <form method="post" action="/admin/delete-user" style="margin:0" onsubmit="return confirm('Delete {{ u.email }}?')">
-                  <input type="hidden" name="user_id" value="{{ u.id }}" />
-                  <button type="submit" class="btn-danger">Delete</button>
-                </form>
-                {% endif %}
+                <div class="row-actions">
+                  {% if row.assignable %}
+                  <form method="post" action="/admin/set-role" style="margin:0">
+                    <input type="hidden" name="user_id" value="{{ u.id }}" />
+                    {# Email and role travel as data attributes so no user text is ever spliced into JavaScript. #}
+                    <select name="role" aria-label="Role for {{ u.email }}"
+                            data-email="{{ u.email }}" data-current="{{ row.role }}"
+                            onchange="if (confirm('Make ' + this.dataset.email + ' ' + this.options[this.selectedIndex].text + '?')) { this.form.submit(); } else { this.value = this.dataset.current; }">
+                      {% for r in row.assignable %}
+                      <option value="{{ r }}"{% if r == row.role %} selected{% endif %}>{{ role_labels[r] }}</option>
+                      {% endfor %}
+                    </select>
+                  </form>
+                  {% endif %}
+                  {% if row.can_delete %}
+                  <form method="post" action="/admin/delete-user" style="margin:0"
+                        data-email="{{ u.email }}" onsubmit="return confirm('Remove ' + this.dataset.email + '?')">
+                    <input type="hidden" name="user_id" value="{{ u.id }}" />
+                    <button type="submit" class="btn-danger">Remove</button>
+                  </form>
+                  {% endif %}
+                </div>
               </td>
             </tr>
             {% endfor %}
@@ -208,13 +232,19 @@
             <label for="password">Password</label>
             <input type="password" id="password" name="password" required placeholder="••••••••" />
           </div>
-          <div class="form-group" style="flex:0">
-            <label>&nbsp;</label>
-            <div class="checkbox-group">
-              <input type="checkbox" id="is_superuser" name="is_superuser" value="1" />
-              <label for="is_superuser">Admin</label>
-            </div>
+          {% if creatable_roles|length > 1 %}
+          <div class="form-group" style="flex:0; min-width:120px">
+            <label for="role">Role</label>
+            <select id="role" name="role">
+              {% for r in creatable_roles %}
+              <option value="{{ r }}">{{ role_labels[r] }}</option>
+              {% endfor %}
+            </select>
           </div>
+          {% else %}
+          {# Curators can only create plain users; the server enforces it regardless. #}
+          <input type="hidden" name="role" value="user" />
+          {% endif %}
           <div class="form-group" style="flex:0">
             <label>&nbsp;</label>
             <button type="submit" class="btn-primary">Add user</button>

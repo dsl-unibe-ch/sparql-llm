@@ -10,6 +10,7 @@ import re
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
 from typing import Any
+from urllib.parse import quote_plus
 
 from fastapi import Depends, FastAPI, Form, Request, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,18 @@ from langfuse.langchain import CallbackHandler
 from pydantic import BaseModel
 
 from sparql_llm.agent.graph import get_graph, graph
+from sparql_llm.agent.roles import (
+    ROLE_LABELS,
+    USER,
+    assignable_roles,
+    can_create,
+    can_delete,
+    can_manage,
+    can_set_role,
+    creatable_roles,
+    role_flags,
+    role_of,
+)
 from sparql_llm.config import settings
 from sparql_llm.mcp_server import get_mcp_app
 from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
@@ -270,20 +283,38 @@ if settings.auth_enabled:
         flash_error: str = "",
         user: "User" = Depends(current_active_user),
     ) -> HTMLResponse:
-        """Admin panel — lists all users. Superusers only."""
-        if not user.is_superuser:
+        """Admin panel — index status and rebuild, and users. Admins and curators.
+
+        What each row offers (remove, change role) is decided here by the rules in
+        ``roles`` rather than in the template, so the page and the endpoints that enforce
+        the same rules cannot disagree.
+        """
+        if not can_manage(user):
             return RedirectResponse("/", status_code=302)
         from sparql_llm.agent.auth import async_session_maker, User as UserModel
         from sqlalchemy import select
         async with async_session_maker() as session:
             result = await session.execute(select(UserModel).order_by(UserModel.email))
             users = result.scalars().all()
+        rows = [
+            {
+                "user": u,
+                "role": role_of(u),
+                "can_delete": can_delete(user, u),
+                "assignable": assignable_roles(user, u),
+            }
+            for u in users
+        ]
         return templates.TemplateResponse(
             "admin.html",
             {
                 "request": request,
                 "current_user": user,
+                "current_role": role_of(user),
                 "users": users,
+                "rows": rows,
+                "creatable_roles": creatable_roles(user),
+                "role_labels": ROLE_LABELS,
                 "flash_success": flash_success,
                 "flash_error": flash_error,
             },
@@ -298,7 +329,7 @@ if settings.auth_enabled:
         Fetched by the admin page after render rather than during it: the drift check makes
         three SPARQL queries and should never hold up the page.
         """
-        if not user.is_superuser:
+        if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         from sparql_llm.indexing.drift import check_drift
         from sparql_llm.indexing.rebuild import read_job
@@ -310,13 +341,13 @@ if settings.auth_enabled:
     async def admin_reindex(
         user: "User" = Depends(current_active_user),
     ) -> JSONResponse:
-        """Rebuild the retrieval index from the live endpoint. Superusers only.
+        """Rebuild the retrieval index from the live endpoint. Admins and curators.
 
         Returns as soon as the job starts. The new index is built into a fresh collection
         and only swapped in when complete, so the assistant keeps answering from the current
         index throughout, and a failed rebuild changes nothing.
         """
-        if not user.is_superuser:
+        if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
         from sparql_llm.indexing.rebuild import start_rebuild
 
@@ -327,17 +358,26 @@ if settings.auth_enabled:
             )
         return JSONResponse(result)
 
+    def _flash(kind: str, message: str) -> RedirectResponse:
+        """Back to the admin page with a message. Quoted, so any text survives the URL."""
+        return RedirectResponse(f"/admin?flash_{kind}={quote_plus(message)}", status_code=302)
+
+    # Every user-management endpoint re-checks the role rules server-side. The admin page
+    # only hides buttons a role may not use; hiding is not enforcement.
+
     @app.post("/admin/add-user", include_in_schema=False)
     async def admin_add_user(
         request: Request,
         email: str = Form(...),
         password: str = Form(...),
-        is_superuser: str = Form(""),
+        role: str = Form(USER),
         user: "User" = Depends(current_active_user),
     ) -> RedirectResponse:
-        """Create a new user account."""
-        if not user.is_superuser:
+        """Create a user account. Curators may create plain users only."""
+        if not can_manage(user):
             return RedirectResponse("/", status_code=302)
+        if not can_create(user, role):
+            return _flash("error", f"You cannot create a user with the role '{role}'.")
         from fastapi_users.password import PasswordHelper
         from sparql_llm.agent.auth import async_session_maker, User as UserModel
         import uuid as _uuid
@@ -351,14 +391,14 @@ if settings.auth_enabled:
                         email=email,
                         hashed_password=hashed,
                         is_active=True,
-                        is_superuser=bool(is_superuser),
                         is_verified=True,
+                        **role_flags(role),
                     )
                 )
                 await session.commit()
-            return RedirectResponse(f"/admin?flash_success=User+{email}+created+successfully", status_code=302)
+            return _flash("success", f"User {email} created as {ROLE_LABELS[role]}.")
         except Exception as exc:
-            return RedirectResponse(f"/admin?flash_error={exc}", status_code=302)
+            return _flash("error", str(exc))
 
     @app.post("/admin/delete-user", include_in_schema=False)
     async def admin_delete_user(
@@ -366,21 +406,51 @@ if settings.auth_enabled:
         user_id: str = Form(...),
         user: "User" = Depends(current_active_user),
     ) -> RedirectResponse:
-        """Delete a user account."""
-        if not user.is_superuser:
+        """Remove a user account. Curators may remove plain users only; nobody themselves."""
+        if not can_manage(user):
             return RedirectResponse("/", status_code=302)
         from sparql_llm.agent.auth import async_session_maker, User as UserModel
         import uuid as _uuid
         try:
             async with async_session_maker() as session:
-                uid = _uuid.UUID(user_id)
-                db_user = await session.get(UserModel, uid)
-                if db_user:
-                    await session.delete(db_user)
-                    await session.commit()
-            return RedirectResponse("/admin?flash_success=User+deleted", status_code=302)
+                db_user = await session.get(UserModel, _uuid.UUID(user_id))
+                if db_user is None:
+                    return _flash("error", "No such user.")
+                if not can_delete(user, db_user):
+                    return _flash("error", f"You cannot remove {db_user.email}.")
+                email = db_user.email
+                await session.delete(db_user)
+                await session.commit()
+            return _flash("success", f"User {email} removed.")
         except Exception as exc:
-            return RedirectResponse(f"/admin?flash_error={exc}", status_code=302)
+            return _flash("error", str(exc))
+
+    @app.post("/admin/set-role", include_in_schema=False)
+    async def admin_set_role(
+        request: Request,
+        user_id: str = Form(...),
+        role: str = Form(...),
+        user: "User" = Depends(current_active_user),
+    ) -> RedirectResponse:
+        """Change a user's role. Admins only, and never on their own account."""
+        if not can_manage(user):
+            return RedirectResponse("/", status_code=302)
+        from sparql_llm.agent.auth import async_session_maker, User as UserModel
+        import uuid as _uuid
+        try:
+            async with async_session_maker() as session:
+                db_user = await session.get(UserModel, _uuid.UUID(user_id))
+                if db_user is None:
+                    return _flash("error", "No such user.")
+                if not can_set_role(user, db_user, role):
+                    return _flash("error", f"You cannot change the role of {db_user.email}.")
+                for column, value in role_flags(role).items():
+                    setattr(db_user, column, value)
+                email = db_user.email
+                await session.commit()
+            return _flash("success", f"{email} is now {ROLE_LABELS[role]}.")
+        except Exception as exc:
+            return _flash("error", str(exc))
 
 else:
     templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
@@ -843,7 +913,6 @@ async def chat_ui(
     _user: Any = Depends(require_user),
 ) -> HTMLResponse:
     """Render the chat UI using jinja2 + HTML."""
-    is_superuser = getattr(_user, "is_superuser", False)
     return templates.TemplateResponse(
         "index.html",
         {
@@ -853,7 +922,8 @@ async def chat_ui(
             "feedback_endpoint": "/feedback",
             "examples": ",".join(settings.example_questions),
             "auth_enabled": settings.auth_enabled,
-            "is_superuser": is_superuser,
+            # Shows the header link to /admin — curators need it too.
+            "can_manage": can_manage(_user),
         },
     )
 

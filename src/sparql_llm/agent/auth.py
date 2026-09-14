@@ -6,9 +6,11 @@ from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport, JWTStrategy
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID, SQLAlchemyUserDatabase
+from sqlalchemy import Boolean, false
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from sparql_llm.agent.roles import ensure_role_column
 from sparql_llm.config import settings
 
 # ── Database setup ────────────────────────────────────────────────────────────
@@ -24,12 +26,16 @@ class Base(DeclarativeBase):
 
 
 class User(SQLAlchemyBaseUserTableUUID, Base):
-    pass
+    # Curator role (see sparql_llm.agent.roles). Admin stays fastapi-users' is_superuser.
+    is_curator: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
 
 
 async def create_db_and_tables() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # create_all never alters an existing table, so a database created before the
+        # curator role existed gets the column added here.
+        await conn.run_sync(ensure_role_column)
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
