@@ -4,7 +4,7 @@ import os
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
@@ -125,6 +125,11 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
         #     "summary": "auto",  # 'detailed', 'auto', or None
         # },
     )
+
+
+def count_tool_rounds(messages: list[AnyMessage]) -> int:
+    """Count tool-call rounds (exploration steps): one per AIMessage that requested tools."""
+    return sum(1 for m in messages if isinstance(m, AIMessage) and m.tool_calls)
 
 
 def get_msg_text(msg: AnyMessage) -> str:

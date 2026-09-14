@@ -12,6 +12,7 @@ from sparql_llm.agent.nodes.mcp_tools import mcp_tools_node
 from sparql_llm.agent.nodes.retrieval_docs import retrieve
 from sparql_llm.agent.nodes.validation import validate_output
 from sparql_llm.agent.state import InputState, State
+from sparql_llm.agent.utils import count_tool_rounds
 from sparql_llm.config import Configuration, settings
 
 # from sparql_llm.agent.nodes.tools import TOOLS
@@ -56,11 +57,12 @@ def route_tools_output(state: State, config: RunnableConfig) -> Literal["__end__
     are executed and fed back to the model. Otherwise the model has produced its
     final answer and we stop.
 
-    To bound exploration, we count how many tool-call rounds (exploration steps)
-    have already happened — one per AIMessage that requested tools — and stop once
-    that reaches ``max_tool_iterations``. Unlike the pipeline graph, ``try_count``
-    is never incremented here, so this message-based counter is what limits the
-    loop.
+    Exploration is bounded by counting tool-call rounds — one per AIMessage that
+    requested tools. Once ``max_tool_iterations`` rounds have run, call_model tells
+    the model to answer from what it has, so it normally answers and we end here.
+    If it asks for a tool anyway, we route to ``max_tries_reached`` instead of
+    running it. Unlike the pipeline graph, ``try_count`` is never incremented
+    here, so this message-based counter is what limits the loop.
 
     Args:
         state: The current state of the conversation.
@@ -72,9 +74,8 @@ def route_tools_output(state: State, config: RunnableConfig) -> Literal["__end__
 
     last_msg = state.messages[-1]
     if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
-        # Count tool-call rounds so far (including this one).
-        tool_rounds = sum(1 for m in state.messages if isinstance(m, AIMessage) and m.tool_calls)
-        if tool_rounds > configuration.max_tool_iterations:
+        # Tool-call rounds so far, including this one.
+        if count_tool_rounds(state.messages) > configuration.max_tool_iterations:
             return "max_tries_reached"
         return "tools"
 

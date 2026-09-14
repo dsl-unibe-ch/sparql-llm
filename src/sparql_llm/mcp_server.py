@@ -32,6 +32,15 @@ We suggest you to make the query less restricted, e.g. use a broader regex for s
 ignore case, make sure you are not overriding an existing variable with BIND, or break down your query in smaller parts
 and check them one by one."""
 
+# An empty result is not always a mistake: "no children recorded" is a real answer.
+# Telling the model to always fix and retry sent it round the loop again for
+# queries that were already correct.
+EMPTY_RESULT_PROMPT = """SPARQL query returned no results.
+An empty result can be the real answer: if the entity is already confirmed and the pattern comes from the examples,
+report that nothing is recorded and stop. If you were looking something up by name, or wrote the pattern yourself,
+the query is probably too restrictive: use a broader, case-insensitive string match, check the class, predicates and
+prefixes, or break the query into smaller parts."""
+
 
 def get_mcp_app(enable_resources_info_tool: bool = True) -> FastMCP:
     """Get the MCP server instance."""
@@ -265,7 +274,7 @@ Returns:
             bindings = res.get("results", {}).get("bindings")
             if not bindings:
                 # If no results, return a message to ask fix the query
-                resp_msg += f"SPARQL query returned no results. {FIX_QUERY_PROMPT}\n```sparql\n{sparql_query}\n```"
+                resp_msg += f"{EMPTY_RESULT_PROMPT}\n```sparql\n{sparql_query}\n```"
             else:
                 # If results, return them (limit to first 50 rows if too many)
                 resp_msg += f"Results of SPARQL query execution on {endpoint_url}"

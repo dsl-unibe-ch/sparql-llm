@@ -5,13 +5,14 @@ Works with a chat model with tool calling support.
 
 from typing import Any
 
-from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from sparql_llm.agent.prompts import FINAL_TURN_PROMPT
 from sparql_llm.agent.state import State, StepOutput
-from sparql_llm.agent.utils import get_msg_text, load_chat_model
+from sparql_llm.agent.utils import count_tool_rounds, get_msg_text, load_chat_model
 from sparql_llm.config import Configuration, settings
 from sparql_llm.utils import extract_think_blocks, strip_think_blocks
 
@@ -33,6 +34,12 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     """
     configuration = Configuration.from_runnable_config(config)
     tools = None
+    # Once the tool-call rounds reach the "Max steps" budget, the model is told to
+    # answer from the results it already has, instead of the run ending on a canned
+    # "maximum steps" message. Tools stay bound: with none bound, the models tried
+    # to carry on anyway and wrote their tool calls into the answer as raw markup.
+    # Bound, a stray call is parsed properly and route_tools_output stops it.
+    final_turn = configuration.use_tools and count_tool_rounds(state.messages) >= configuration.max_tool_iterations
 
     # Set up MCP client (experimental — enabled per-request via configuration.use_tools)
     if configuration.use_tools:
@@ -55,8 +62,10 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
 
     model = load_chat_model(configuration).bind_tools(tools) if tools else load_chat_model(configuration)
 
+    # The budget instruction goes last, where the model weighs it most. It is sent
+    # for this call only and never stored in the conversation.
     structured_prompt: dict[str, Any] = {
-        "messages": state.messages,
+        "messages": [*state.messages, HumanMessage(content=FINAL_TURN_PROMPT)] if final_turn else state.messages,
     }
     # structured_prompt["retrieved_docs"] = format_docs(state.retrieved_docs)
     # if configuration.enable_entities_resolution:
@@ -66,23 +75,20 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
 
     sys_prompt = configuration.system_prompt_tools if configuration.use_tools else configuration.system_prompt
     if configuration.natural_language_only:
-        # Override the hardcoded instruction that tells the model to output the SPARQL query in the final answer
-        sys_prompt = sys_prompt.replace(
-            "Put the SPARQL inside a markdown ```sparql codeblock",
-            "Put the SPARQL inside a markdown ```sparql codeblock INSIDE a <think> block"
-        )
-        sys_prompt = sys_prompt.replace(
-            "Include the final working SPARQL query in a ```sparql codeblock",
-            "Include the final working SPARQL query in a ```sparql codeblock INSIDE a <think> block"
-        )
-        
+        # The user sees only the prose answer: stream_response strips SPARQL blocks
+        # from it, and the queries the model ran are shown in the "Thought process"
+        # step built below. The prompt used to ask the model to put its SPARQL inside
+        # a <think> block instead, but qwen on GPUStack returns its reasoning on a
+        # separate channel and cannot write into one: it answered, then restarted the
+        # whole search from its first tool call.
         sys_prompt += (
-            "\n\nCRITICAL INSTRUCTION (NATURAL LANGUAGE ONLY MODE):\n"
-            "1. If you are generating a SPARQL query or exploring data, you MUST place all reasoning, technical details, and SPARQL queries entirely inside a <think>...</think> block. Do NOT output any natural language outside the <think> block during this phase.\n"
-            "2. ONLY when you have the final results and are ready to provide the final answer to the user, output your natural language response outside the <think> block.\n"
-            "3. When you provide your final natural language answer, you MUST still include the final working SPARQL query inside your <think> block so the user can inspect it if they expand the thought process.\n"
-            "4. Your final visible response outside the <think> block must NOT contain any SPARQL queries or technical details. It must be purely natural language.\n"
-            "5. At the very end of your final natural language answer, you MUST ask an engaging follow-up question to keep the conversation interactive (e.g. 'Would you like me to find...', 'Should I explore...')."
+            "\n\nNATURAL LANGUAGE ONLY MODE:\n"
+            "- The user sees only your prose. The queries you ran and their results are shown to them separately, "
+            "and any ```sparql codeblock is hidden from them automatically.\n"
+            "- Write the final answer in plain natural language, without technical details such as URIs, prefixes "
+            "or explanations of the query.\n"
+            "- At the very end, offer one short follow-up the user might want (e.g. 'Would you like me to find...'). "
+            "Only OFFER it: do NOT call any tool to prepare it, the user decides whether to continue."
         )
 
     prompt_template = ChatPromptTemplate.from_messages(

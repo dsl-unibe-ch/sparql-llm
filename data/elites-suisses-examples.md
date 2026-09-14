@@ -432,3 +432,26 @@ WHERE {
 
 }
 ```
+
+## Example 19: Find a person by full name
+
+Question: Find the person named Ernst Brenner.
+Alternative question: What is the URI of Ernst Brenner?
+Alternative question: Trouvez la personne nommée Ernst Brenner.
+
+```sparql
+PREFIX crm: <http://www.cidoc-crm.org/cidoc-crm/>
+PREFIX sdh-short: <https://sdhss.org/ontology/shortcuts/>
+
+SELECT ?person ?name
+WHERE {
+  GRAPH <https://swiss-elites.lod4hss.cloud/resource/> {
+    ?person a crm:E21 ;
+            sdh-short:P9 ?name .
+    # Names are stored "Surname, Firstname" ("Brenner, Ernst"), so the full name as
+    # typed matches nothing: match each part of the name separately.
+    FILTER(CONTAINS(LCASE(STR(?name)), "brenner") && CONTAINS(LCASE(STR(?name)), "ernst"))
+  }
+}
+LIMIT 50
+```

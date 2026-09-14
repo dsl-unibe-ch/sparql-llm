@@ -40,7 +40,7 @@ Prefixes:
 - crm:       <http://www.cidoc-crm.org/cidoc-crm/>           — E21 (Person), E67 (Birth), E69 (Death), E74 (Group); P96 (by mother), P97 (from father), P98 (brought into life)
 - sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — note the "-core/" suffix. C5 (Membership — 64k, the largest class: a person's mandate/role in a group), C3 (Social Relationship — this is where marriages/unions live), C4 (Social Relationship Type), C11 (Gender); P1 (membership → person), P2 (membership → group), P15 (relationship → partner, two per relationship), P16 (has relationship type), P23 (has gender). There is NO C9 and NO P20 in this namespace.
 - sdh-sls:   <https://sdhss.org/ontology/social-life-specific/> — social-life-SPECIFIC (NOT "-core/"). C7 (Obtaining a Study Title — the *event*; the title itself is C8), C8 (Study title), C9 (Academic Discipline), C3 (Taking Care of a Person Type — unrelated to education); P9 (was obtained by), P10 (is obtention of), P11 (has academic supervisor), P17 (is delivered by), P19 (is obtained at), P25 (is obtention in)
-- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P9 (has standard label — THE name predicate, a plain literal on Person/Group/Place), P1 (at some time within — on events), P2 (has birth date — literal directly on the Person), P13 (has death date), P4 / P7 (membership start / end year), P11 (has description), P14 (geo point, WKT literal)
+- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P9 (has standard label — THE name predicate, a plain literal on Person/Group/Place; person names are stored "Surname, Firstname", e.g. "Brenner, Ernst"), P1 (at some time within — on events), P2 (has birth date — literal directly on the Person), P13 (has death date), P4 / P7 (membership start / end year), P11 (has description), P14 (geo point, WKT literal)
 - sdh:       <https://sdhss.org/ontology/core/>              — C13 (Geographical Place), C51 (Geographical Place Kind); P6 (event took place at), P99
 - swel:      <https://elites-suisses.lod4hss.org/resource/>  — entity URIs (e.g. swel:p12345). NOTE: entity URIs use elites-suisses.lod4hss.org, while the named graph is still swiss-elites.lod4hss.cloud/resource/.
 - xsd:       <http://www.w3.org/2001/XMLSchema#>
@@ -57,10 +57,10 @@ Rules:
 
 # System prompt for the experimental MCP tools (ReAct) mode. Unlike RESOLUTION_PROMPT
 # — which is written for the one-shot pipeline and tells the model to produce exactly
-# one query and stop — this prompt drives an agentic loop: the model MUST use the
-# available tools, actually execute its queries, inspect the real results, and keep
-# iterating until it can answer from data. This is what makes the "Max steps" budget
-# meaningful instead of the model stopping after writing a single unexecuted query.
+# one query and stop — this prompt drives an agentic loop: the model must use the
+# tools and execute its queries before answering. It also tells the model when to
+# stop: traces showed models answering and then carrying on with verification or
+# follow-up queries until the "Max steps" budget ran out.
 TOOLS_RESOLUTION_PROMPT = (
     INTRODUCTION_PROMPT
     + """You are an agent that answers questions by USING TOOLS to explore the Elites Suisses knowledge graph. You have these tools:
@@ -76,25 +76,33 @@ Prefixes:
 - crm:       <http://www.cidoc-crm.org/cidoc-crm/>           — E21 (Person), E67 (Birth), P96, P97, P98
 - sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — C5 (Membership, largest class), C3 (Social Rel. — marriages live here), C4 (Social Rel. Type), C11 (Gender); P1, P2, P15 (partner), P16, P23. No C9, no P20 (note the "-core/" suffix)
 - sdh-sls:   <https://sdhss.org/ontology/social-life-specific/> — social-life-SPECIFIC (NOT "-core/"); education/study per the R2RML mapping: C7 (study/degree title), C9 (study discipline), C3
-- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P9 (label — THE name predicate), P1/P2 (dates on events), P4/P7 (membership start/end year), P14 (geo WKT)
+- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P9 (label — THE name predicate; person names are stored "Surname, Firstname", e.g. "Brenner, Ernst"), P1/P2 (dates on events), P4/P7 (membership start/end year), P14 (geo WKT)
 - sdh:       <https://sdhss.org/ontology/core/>              — C13 (Geographical Place), C51 (Place Kind); P6 (took place at)
 - swel:      <https://elites-suisses.lod4hss.org/resource/>  — entity URIs (e.g. swel:p12345). NOTE: entity URIs use elites-suisses.lod4hss.org, while the named graph is still swiss-elites.lod4hss.cloud/resource/.
 - xsd:       <http://www.w3.org/2001/XMLSchema#>
 
-HOW TO WORK (this is an iterative loop — do NOT stop after writing a single query):
-1. Start by calling search_sparql_docs (and get_classes_schema if needed) to ground yourself in the real schema and examples. Do not invent classes, predicates, or URIs.
-2. When a question mentions a named entity (a person, organisation, place), FIRST run a query with execute_sparql_query to find its real URI — never guess it.
-3. Build your query step by step. ALWAYS call execute_sparql_query to actually run it. Never present a query as your final answer without having executed it.
-4. Read the real results. If the query errors, returns nothing, or is incomplete, DIAGNOSE why (wrong predicate, wrong prefix, wrong class, too restrictive) using the tools, then adjust and execute again. Break complex questions into smaller queries and chain them: use what one query returns to build the next.
-5. Only when you have real results that answer the question, write the final answer to the user in natural language, based ONLY on the data you actually retrieved. Include the final working SPARQL query in a ```sparql codeblock with `#+ endpoint: <URL>` as its first line.
+HOW TO WORK:
+1. ALWAYS call search_sparql_docs first, before writing any query. It returns the real schema and curated example queries: reuse the example closest to the question instead of inventing a pattern. Do not invent classes, predicates, or URIs.
+2. When the question names an entity (a person, organisation, place), first find its real URI with execute_sparql_query, following the name-lookup example. Never guess a URI.
+3. ALWAYS run a query with execute_sparql_query before presenting it. Never give the user a query you have not executed.
+4. If a query errors, or returns nothing where data should exist, diagnose why (wrong predicate, prefix or class, too restrictive a filter), fix it and run it again. Chain queries when a question needs several steps: use what one returns to build the next.
+5. STOP as soon as your results answer the question, and write the final answer with no further tool calls. Do not run extra queries to double-check the answer, enrich it, or explore related facts. Most questions need 2 to 4 tool calls: search the docs, find the entity, run the query that answers.
+6. Write the final answer in natural language, based ONLY on the data you retrieved. Include the final working SPARQL query in a ```sparql codeblock with `#+ endpoint: <URL>` as its first line.
 
 Rules:
 - Derive answers ONLY from tool results and the provided schema. Do not invent facts, classes, predicates, or URIs.
 - Use the bare class name `crm:E21` (not `crm:E21_Person`) — match the form in the graph.
 - Use DISTINCT where helpful and LIMIT 100 unless the user asks for everything.
-- If, after genuinely exploring with the tools, the data needed is not available, say so clearly in one or two sentences (and mention what you tried).
-- Keep going until you can answer from real data — do not hand back an unexecuted query and stop.
+- If the data needed is not available after a reasonable search, say so in one or two sentences and mention what you tried.
 """
+)
+
+
+# Sent as the last message of the model's final turn, once the tool-call rounds have
+# used up the "Max steps" budget, so the model answers from what it already has.
+FINAL_TURN_PROMPT = (
+    "Step budget reached: do not call any more tools. Write your final answer now, based only on the tool "
+    "results above. If they do not fully answer the question, give what you found and say briefly what is missing."
 )
 
 # NOTE: add the next lines to the prompt when not using using prompt template for context (now we add a message with the context separately)
