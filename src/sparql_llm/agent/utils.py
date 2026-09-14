@@ -1,14 +1,37 @@
 """Utilities for the AI agent, e.g. load model."""
 
 import os
+from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage
+from langchain_core.outputs import ChatResult
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from sparql_llm.config import Configuration
+
+
+class GptOssChatOpenAI(ChatOpenAI):
+    """ChatOpenAI for gpt-oss on GPUStack, recovering answers filed as reasoning.
+
+    With tools bound and streaming off (see ``disable_streaming`` below), GPUStack
+    intermittently returns gpt-oss's final answer in ``reasoning_content`` and
+    leaves ``content`` empty. ChatOpenAI ignores ``reasoning_content``, so the
+    chat showed a blank reply. Replaying such requests showed the misfiled text is
+    the finished answer, while a correctly filed reply fills ``content`` and keeps
+    genuine reasoning in ``reasoning_content``. So a reply with neither content
+    nor tool calls gets its ``reasoning_content`` as content.
+    """
+
+    def _create_chat_result(self, response: Any, generation_info: dict | None = None) -> ChatResult:
+        response_dict = response if isinstance(response, dict) else response.model_dump()
+        for choice in response_dict.get("choices") or []:
+            message = choice.get("message") or {}
+            if not message.get("content") and not message.get("tool_calls") and message.get("reasoning_content"):
+                message["content"] = message["reasoning_content"]
+        return super()._create_chat_result(response_dict, generation_info)
 
 
 def load_chat_model(configuration: Configuration) -> BaseChatModel:
@@ -52,7 +75,8 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
         # like "the second question never returns". With them, a stuck call
         # raises after ~90s and the upstream code paths (including the
         # structured-extraction fallback) can recover.
-        return ChatOpenAI(
+        chat_class = GptOssChatOpenAI if "gpt-oss" in model_name else ChatOpenAI
+        return chat_class(
             base_url=os.getenv("OPENAI_BASE_URL", "https://gpustack.unibe.ch/v1"),
             model=model_name,
             temperature=configuration.temperature,
