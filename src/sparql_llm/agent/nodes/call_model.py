@@ -192,7 +192,9 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
         reasoning_steps.append(StepOutput(label="💭 Thought process", details=reasoning))
 
     # Check if the current response contains tool calls that should be processed
-    has_tool_calls = bool(getattr(response_msg, "tool_calls", None))
+    # Calls with unparseable arguments count too: the tools node answers them with
+    # the error so the model can retry.
+    has_tool_calls = bool(getattr(response_msg, "tool_calls", None) or getattr(response_msg, "invalid_tool_calls", None))
     if has_tool_calls and not state.is_last_step:
         return {"messages": [response_msg], "passed_validation": False}
 

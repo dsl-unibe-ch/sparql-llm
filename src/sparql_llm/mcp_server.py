@@ -42,6 +42,19 @@ the query is probably too restrictive: use a broader, case-insensitive string ma
 prefixes, or break the query into smaller parts."""
 
 
+def resolve_endpoint_url(endpoint_url: str) -> str:
+    """Return the endpoint a tool call meant, repairing a corrupted URL.
+
+    gpt-oss sometimes damages the endpoint_url argument (e.g. repeating part of
+    the host), which gets a 404 and costs the model a round. With a single
+    endpoint configured, an unknown URL can only mean that one.
+    """
+    known = [endpoint["endpoint_url"] for endpoint in settings.endpoints]
+    if endpoint_url in known or len(known) != 1:
+        return endpoint_url
+    return known[0]
+
+
 def get_mcp_app(enable_resources_info_tool: bool = True) -> FastMCP:
     """Get the MCP server instance."""
 
@@ -249,6 +262,7 @@ Returns:
         Returns:
             The query results in JSON format
         """
+        endpoint_url = resolve_endpoint_url(endpoint_url)
         resp_msg = ""
         # First check if query valid based on classes schema and known prefixes
         validation_output = validate_sparql(

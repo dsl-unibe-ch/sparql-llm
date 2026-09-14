@@ -23,9 +23,26 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list
     # Get the last message which should contain tool calls
     last_msg = state.messages[-1]
 
-    if not isinstance(last_msg, AIMessage) or not last_msg.tool_calls:
+    if not isinstance(last_msg, AIMessage) or not (last_msg.tool_calls or last_msg.invalid_tool_calls):
         # No tool calls to process
         return {"messages": []}
+
+    # A call whose arguments are not valid JSON (gpt-oss sometimes garbles them)
+    # is filed under invalid_tool_calls. Answer it with the error so the model can
+    # retry, rather than the run ending with its raw JSON shown as the answer.
+    tool_messages = [
+        ToolMessage(
+            content=(
+                f"Your call to {call.get('name') or 'the tool'} was not run: its arguments are not valid JSON "
+                f"({(call.get('error') or '')[:300]}). Call the tool again with valid JSON arguments."
+            ),
+            name=call.get("name") or "unknown_tool",
+            tool_call_id=call.get("id") or "",
+        )
+        for call in last_msg.invalid_tool_calls
+    ]
+    if not last_msg.tool_calls:
+        return {"messages": tool_messages}
 
     # Set up MCP client
     mcp_client = MultiServerMCPClient(
@@ -37,7 +54,6 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list
         }
     )
 
-    tool_messages = []
     async with mcp_client.session("expasy-mcp") as mcp_session:
         # Process each tool call
         for tool_call in last_msg.tool_calls:

@@ -73,7 +73,9 @@ def route_tools_output(state: State, config: RunnableConfig) -> Literal["__end__
     configuration = Configuration.from_runnable_config(config)
 
     last_msg = state.messages[-1]
-    if isinstance(last_msg, AIMessage) and last_msg.tool_calls:
+    # A call with unparseable arguments is still a call: the tools node answers it
+    # with the error so the model can retry, instead of the run ending here.
+    if isinstance(last_msg, AIMessage) and (last_msg.tool_calls or last_msg.invalid_tool_calls):
         # Tool-call rounds so far, including this one.
         if count_tool_rounds(state.messages) > configuration.max_tool_iterations:
             return "max_tries_reached"

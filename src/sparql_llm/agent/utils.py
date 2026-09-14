@@ -152,8 +152,12 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
 
 
 def count_tool_rounds(messages: list[AnyMessage]) -> int:
-    """Count tool-call rounds (exploration steps): one per AIMessage that requested tools."""
-    return sum(1 for m in messages if isinstance(m, AIMessage) and m.tool_calls)
+    """Count tool-call rounds (exploration steps): one per AIMessage that requested tools.
+
+    Calls whose arguments could not be parsed (``invalid_tool_calls``) count too,
+    or a model that keeps garbling its calls would never reach the budget.
+    """
+    return sum(1 for m in messages if isinstance(m, AIMessage) and (m.tool_calls or m.invalid_tool_calls))
 
 
 def get_msg_text(msg: AnyMessage) -> str:

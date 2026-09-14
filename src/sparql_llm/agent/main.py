@@ -638,8 +638,12 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
                 # guard that raw JSON would be streamed to the UI as garbage text
                 # before the real answer. The final, tool-call-free message still
                 # streams normally, so the actual answer is unaffected.
+                # A call whose arguments did not parse lands in invalid_tool_calls,
+                # with the same duplicated JSON in content, so it is hidden too.
                 has_tool_calls = bool(
-                    getattr(msg, "tool_calls", None) or getattr(msg, "tool_call_chunks", None)
+                    getattr(msg, "tool_calls", None)
+                    or getattr(msg, "tool_call_chunks", None)
+                    or getattr(msg, "invalid_tool_calls", None)
                 )
                 if has_tool_calls and getattr(msg, "type", "") != "tool":
                     continue
