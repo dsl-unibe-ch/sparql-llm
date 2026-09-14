@@ -29,9 +29,6 @@ nohup.out
 node_modules/
 
 # src/expasy-agent/src/expasy_agent/webapp
-tutorial/public/logo_*.png
-tutorial/.chainlit/translations/*
-!tutorial/.chainlit/translations/en-US.json
 
 .mcpregistry_*
 
