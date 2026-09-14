@@ -32,6 +32,18 @@ export const style = `chat-with-context {
 }
 .iconBtn {
   filter: invert(44%) sepia(22%) saturate(496%) hue-rotate(176deg) brightness(93%) contrast(79%);
+}
+/* Sidebar layout, in plain CSS on purpose. The Tailwind build scopes its rules as
+   ".chat-with-context .x", which never matches the root element itself, and emits the
+   responsive md: rules unscoped, so the scoped base rules (fixed, -translate-x-full)
+   outrank them and the sidebar stayed off-screen at desktop width. */
+.cwc-layout { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.cwc-sidebar { position: fixed; top: 0; bottom: 0; left: 0; z-index: 50; transform: translateX(-100%); transition: transform 0.15s; }
+.cwc-sidebar.is-open { transform: none; }
+.cwc-backdrop { position: fixed; inset: 0; z-index: 40; }
+@media (min-width: 768px) {
+  .cwc-sidebar { position: static; transform: none; z-index: auto; }
+  .cwc-backdrop, .cwc-drawer-toggle { display: none; }
 }`;
 
 // // A function to extract a SPARQL query from markdown text

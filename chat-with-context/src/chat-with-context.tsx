@@ -287,17 +287,17 @@ customElement(
     }
 
     return (
-      <div class="chat-with-context w-full h-full flex" style={{"min-height": "0"}}>
+      <div class="chat-with-context cwc-layout">
         <style>{style}</style>
 
         {/* Saved conversations: a left column, or a drawer at phone width */}
         <Show when={historyEndpoint()}>
           <Show when={sidebarOpen()}>
-            <div class="fixed inset-0 z-40 bg-slate-900/20 md:hidden" onClick={() => setSidebarOpen(false)} />
+            <div class="cwc-backdrop bg-slate-900/20" onClick={() => setSidebarOpen(false)} />
           </Show>
           <aside
-            class={`fixed inset-y-0 left-0 z-50 flex w-64 flex-shrink-0 flex-col border-r border-slate-200 bg-slate-50 transition-transform md:static md:z-auto md:translate-x-0 ${
-              sidebarOpen() ? "translate-x-0" : "-translate-x-full"
+            class={`cwc-sidebar flex w-64 flex-shrink-0 flex-col border-r border-slate-200 bg-slate-50 ${
+              sidebarOpen() ? "is-open" : ""
             }`}
             aria-label="Saved conversations"
           >
@@ -404,7 +404,7 @@ customElement(
         <Show when={historyEndpoint()}>
           <button
             type="button"
-            class="absolute left-2 top-2 z-10 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 md:hidden"
+            class="cwc-drawer-toggle absolute left-2 top-2 z-10 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100"
             onClick={() => setSidebarOpen(true)}
             aria-label="Show saved conversations"
           >
