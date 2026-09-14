@@ -3,8 +3,10 @@ from collections import defaultdict
 from typing import Any
 
 import curies
+from pyparsing import ParseBaseException
 from rdflib import Namespace, Variable
 from rdflib.paths import AlternativePath, MulPath, Path, SequencePath
+from rdflib.plugins.sparql import parser as sparql_parser
 from rdflib.plugins.sparql import prepareQuery
 from typing_extensions import TypedDict
 
@@ -139,6 +141,36 @@ def sparql_query_to_dict(sparql_query: str, sparql_endpoint: str) -> EndpointsSc
     return query_dict
 
 
+def describe_parse_error(query: str, error: Exception) -> str:
+    """Say where a SPARQL syntax error is, not where the parser gave up.
+
+    rdflib parses with pyparsing, which backs out of a failing nested block and
+    reports the error at the start of an enclosing one: a slip inside an OPTIONAL
+    came back as "Expected SelectQuery, found 'GRAPH'", lines before the mistake.
+    Parsing each ``{ … }`` block on its own and keeping the failure that got
+    furthest finds where the parser actually got stuck. When that is no further
+    than the parser's own position, its message is kept.
+    """
+    furthest: tuple[int, ParseBaseException] | None = None
+    for start, char in enumerate(query):
+        if char != "{":
+            continue
+        try:
+            sparql_parser.GroupGraphPattern.parse_string(query[start:])
+        except ParseBaseException as e:
+            if furthest is None or start + e.loc > furthest[0]:
+                furthest = (start + e.loc, e)
+    if furthest is None or furthest[0] <= getattr(error, "loc", -1):
+        return str(error)
+    loc, block_error = furthest
+    line_no = query.count("\n", 0, loc) + 1
+    column = loc - (query.rfind("\n", 0, loc) + 1) + 1
+    lines = query.splitlines()
+    line = lines[line_no - 1].strip() if line_no <= len(lines) else ""
+    upcoming = query[loc:].split("\n", 1)[0].strip() or "end of query"
+    return f"{block_error.msg} at line {line_no}, column {column}, before `{upcoming}`, in: `{line}`"
+
+
 def validate_sparql_with_void(
     query: str,
     endpoint_url: str,
@@ -251,7 +283,7 @@ def validate_sparql_with_void(
     try:
         query_dict = sparql_query_to_dict(query, endpoint_url)
     except Exception as e:
-        issues_msgs.add(f"Error parsing the SPARQL query: {e!s}")
+        issues_msgs.add(f"Error parsing the SPARQL query: {describe_parse_error(query, e)}")
         return issues_msgs
 
     # Go through the query BGPs and check if they match the VoID description
