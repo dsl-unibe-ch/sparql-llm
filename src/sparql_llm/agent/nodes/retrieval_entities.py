@@ -45,16 +45,8 @@ async def resolve_entities(state: State, config: RunnableConfig) -> dict[str, li
         return {}
 
     results_count = 5
-    # score_threshold = 0.8 # Does not work well with sparse embeddings
+    # No score threshold: it does not work well with sparse embeddings.
     entities_list = []
-
-    # Extract potential entities with sciSpaCy https://allenai.github.io/scispacy/
-    # A more expensive alternative could be to use the BioBERT model
-    # import spacy
-    # user_input = get_message_text(state.messages[-1])
-    # nlp: spacy.Language = spacy.load("en_core_sci_md")
-    # potential_entities = nlp(user_input).ents
-    # print(potential_entities)
 
     # Initialize embedding models
     sparse_embedding_model = SparseTextEmbedding(settings.sparse_embedding_model)

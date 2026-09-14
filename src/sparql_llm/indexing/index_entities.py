@@ -323,21 +323,6 @@ def generate_embeddings_for_entities(gpu: bool = False) -> None:
         f"Done generating and indexing embeddings in collection {settings.entities_collection_name} for {len(docs)} entities in {(time.time() - start_time) / 60:.2f} minutes"
     )
 
-    # Alternative: Use langchain-qdrant for indexing with hybrid retrieval
-    # from langchain_qdrant import FastEmbedSparse, QdrantVectorStore, RetrievalMode
-    # vectordb = QdrantVectorStore(
-    #     client=qdrant_client,
-    #     # url=settings.vectordb_url,
-    #     collection_name=settings.entities_collection_name,
-    #     embedding=make_dense_encoder(settings.embedding_model, gpu),
-    #     sparse_embedding=FastEmbedSparse(model_name=settings.sparse_embedding_model),
-    #     retrieval_mode=RetrievalMode.HYBRID,
-    # )
-    # vectordb.add_documents(docs, batch_size=64)
-    # TODO: Check how much times it takes with default batch size of 64
-    # vectordb.add_documents(docs, batch_size=256)
-    # Done generating and indexing embeddings in collection entities for 7 960 941 entities in 204.51 minutes
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

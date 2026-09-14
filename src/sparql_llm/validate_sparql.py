@@ -249,7 +249,6 @@ def validate_sparql_with_void(
                                     )
                         break
                     elif missing_pred is not None:
-                        # print(f"Subject {subj} {parent_type} {parent_pred} is not a valid {potential_types} !")
                         issues.add(
                             f"Subject {subj} in endpoint {endpoint} does not support the predicate `{prefix_converter.compress(missing_pred, passthrough=True)}`. Correct predicate might be one of the following: `{'`, `'.join(compress_list(prefix_converter, list(potential_preds)))}` (we inferred this variable might be of the type `{prefix_converter.compress(potential_type, passthrough=True)}`)"
                         )
@@ -258,24 +257,6 @@ def validate_sparql_with_void(
         # TODO: when no type and no parent but more than 1 predicate is used, we could try to infer the type from the predicates
         # If too many potential type we give up, otherwise we infer
         # If the no type match the 2 predicates then it's not right
-
-        # If no type and no parent type we just check if the predicates used can be found in the VoID description
-        # We only run this if no errors found yet to avoid creating too many duplicates
-        # TODO: we could improve this by generating a dict of errors, so we only push once the error for a subj/predicate
-        # TODO: right now commented because up:evidence is missing in the VoID description, leading to misleading errors
-        # elif len(error_msgs) == 0:
-        #     all_preds = set()
-        #     for pred in pred_dict:
-        #         valid_pred = False
-        #         for _subj_type, void_pred_dict in void_dict.items():
-        #             all_preds.update(void_pred_dict.keys())
-        #             if pred in void_pred_dict:
-        #                 valid_pred = True
-        #                 break
-        #         if not valid_pred:
-        #             error_msgs.add(
-        #                 f"Predicate {prefix_converter.compress_list([pred])[0]} used by subject {subj} in endpoint {endpoint} is not supported according to the VoID description. Here are the available predicates: {', '.join(prefix_converter.compress_list(list(all_preds)))}"
-        #             )
 
         return issues
 

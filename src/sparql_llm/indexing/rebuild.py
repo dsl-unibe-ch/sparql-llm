@@ -140,9 +140,8 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     examples_summary = format_report(examples_report)
     logger.info("Example sync: %s", examples_summary)
 
-    # Refresh the query validator's schema from the same VoID the index is built from.
-    # It is cached in data/endpoints_metadata.json, which used to be written only when
-    # missing: vm7 validated against a months-old schema and rejected correct queries.
+    # Refresh the query validator's schema (cached in data/endpoints_metadata.json) from
+    # the same VoID the index is built from, so it never validates against a stale copy.
     # A failure here keeps the previous schema and is reported with the result.
     schema_warning = ""
     try:

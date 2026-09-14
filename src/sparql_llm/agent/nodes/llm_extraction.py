@@ -51,15 +51,10 @@ async def extract_user_question(
     """
     configuration = Configuration.from_runnable_config(config)
 
-    # We parse the JSON ourselves rather than using with_structured_output(method="json_mode")
-    # because GPUStack-hosted models behave inconsistently:
-    # - gpt-oss-120b interleaves reasoning tokens into the JSON (token soup).
-    # - qwen3-vl-30b-a3b-instruct produces clean JSON.
-    # - minimax-m2.7 (and other reasoning models) wrap the JSON in a <think>…</think>
-    #   block — the actual JSON is at the end.
-    # langchain's JsonOutputParser blows up on the thinking block. By extracting
-    # the JSON manually we tolerate all three patterns. The fallback below
-    # catches anything truly unparseable.
+    # The JSON is extracted by hand rather than with with_structured_output(method="json_mode"):
+    # GPUStack models wrap it differently (gpt-oss mixes reasoning into it, minimax-m2.7
+    # puts it after a <think> block), which langchain's JsonOutputParser cannot parse.
+    # The fallback below catches anything unparseable.
     base_model = load_chat_model(configuration)
 
     prompt_template = ChatPromptTemplate.from_messages(
@@ -103,11 +98,8 @@ async def extract_user_question(
             extracted_entities=[],
             question_steps=[last_text] if last_text else [],
         )
-    # print(structured_question)
-    # NOTE: extracted_classes is the LLM's pre-retrieval *guess* and is unreliable
-    # (often collapses to crm:E21, sometimes hallucinates IRIs not in the data). It is
-    # only a secondary retrieval signal, so we no longer display it here — the classes
-    # actually retrieved are reported by the `retrieve` node's "documents used" step.
+    # extracted_classes is not shown: it is the model's pre-retrieval guess and often
+    # wrong. The `retrieve` node reports the classes actually retrieved.
     n_steps = len(structured_question.question_steps)
     label = f"⚗️ {n_steps} steps extracted" if n_steps > 0 else "⚗️ Question analyzed"
 

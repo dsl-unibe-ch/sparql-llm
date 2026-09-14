@@ -169,18 +169,7 @@ Returns:
                     for existing_doc in relevant_docs
                 }
             )
-        # await ctx.info(f"Using {len(relevant_docs)} documents to answer the question")
         return PROMPT_TOOL_SPARQL.format(docs_count=str(len(relevant_docs)), formatted_docs=format_docs(relevant_docs))
-
-    # PROMPT_TOOL_SPARQL = """Depending on the user request and provided context, you may provide general information about
-    # the resources available at the SIB, or help the user to formulate a query to run on a SPARQL endpoint.
-    # If answering with a SPARQL query, always add the URL of the endpoint on which the query should be
-    # executed in a comment at the start of the query inside the codeblocks starting with "#+ endpoint: " (always only 1
-    # endpoint). Derive your answer from the context provided in the prompt, do not try to create a query from nothing and do
-    # not provide a generic query.
-    # Here is a list of {docs_count} documents (reference questions and query answers, classes schema or general endpoints information)
-    # relevant to the user question that will help you answer the user question accurately:
-    # """
 
     @mcp.tool()
     async def get_classes_schema(classes: list[str]) -> str:
@@ -309,12 +298,6 @@ Returns:
     return mcp
 
 
-# @mcp.resource("schema://{endpoint}/cls/{uri}")
-# def get_class_schema(endpoint: str, uri: str) -> str:
-#     """Get the schema of a class given its URI."""
-#     return format_docs(retrieve_docs(uri))
-
-
 def format_docs(docs: list[ScoredPoint]) -> str:
     """Format a list of documents."""
     return "\n".join(_format_doc(doc) for doc in docs)
@@ -332,10 +315,6 @@ def _format_doc(doc: ScoredPoint) -> str:
         elif "schema" in doc_type:
             doc_lang = "shex"
         return f"{doc.payload['question']}:\n\n```{doc_lang}\n{doc.payload.get('answer')}\n```"
-    # Generic formatting:
-    # meta = "".join(f" {k}={v!r}" for k, v in doc.payload.items())
-    # if meta:
-    #     meta = f" {meta}"
     return "".join(f" {k}={v!r}" for k, v in doc.payload.items())
 
 

@@ -117,8 +117,6 @@ def load_schemaorg_description(endpoint: SparqlEndpointLinks) -> list[Document]:
 
             # Concat all schema:description of all classes in the graph
             descs = set()
-            # print(len(g))
-            # print(g.serialize(format="turtle"))
             for s, _p, _o in g.triples((None, RDF.type, None)):
                 for _sd, _pd, desc in g.triples((s, SCHEMA.description, None)):
                     descs.add(str(desc))
@@ -323,13 +321,7 @@ The UniProt consortium is headed by Alex Bateman, Alan Bridge and Cathy Wu, supp
         org_label=f"from the {settings.app_org}",
     ).load()
 
-    # Skip load_expasy_resources_infos() — that CSV is SIB's bioinformatics catalog
-    # and would pollute the Elites Suisses corpus. Re-enable only if you want to
-    # serve SIB content from this instance too.
-    # try:
-    #     docs += load_expasy_resources_infos()
-    # except Exception as _e:
-    #     print("Skipping loading Expasy resources metadata")
+    # SIB's Expasy resources catalogue is deliberately left out of this corpus.
 
     print(f"Generating embeddings for {len(docs)} documents")
     start_time = time.time()
@@ -366,57 +358,6 @@ The UniProt consortium is headed by Alex Bateman, Alan Bridge and Cathy Wu, supp
     )
     return total_docs
 
-    # Using langchain vectorstore wrapper
-    # from langchain_qdrant import QdrantVectorStore
-    # vectorstore = QdrantVectorStore(
-    #     client=qdrant_client,
-    #     collection_name=settings.docs_collection_name,
-    #     embedding=make_dense_encoder(settings.embedding_model),
-    #     # sparse_embedding=FastEmbedSparse(model_name=settings.sparse_embedding_model),
-    #     # retrieval_mode=RetrievalMode.HYBRID,
-    # )
-    # vectorstore.add_documents(docs)
-
 
 if __name__ == "__main__":
     init_vectordb()
-
-
-# # Not used anymore
-# from langchain.text_splitter import RecursiveCharacterTextSplitter
-# def load_ontology(endpoint: dict[str, str]) -> list[Document]:
-#     """Get documents from the OWL ontology URL given for each SPARQL endpoint."""
-#     if "ontology" not in endpoint:
-#         return []
-#     # g = Dataset(store="Oxigraph")
-#     g = Dataset()
-#     try:
-#         # Hackity hack to handle UniProt ontology in XML format but with .owl extension
-#         g.parse(endpoint["ontology"], format="ttl")
-#     except Exception:
-#         g.parse(endpoint["ontology"], format="xml")
-
-#     ontology_chunk_size = 3000
-#     ontology_chunk_overlap = 200
-
-#     # Chunking the ontology is done here
-#     text_splitter = RecursiveCharacterTextSplitter(
-#         chunk_size=ontology_chunk_size, chunk_overlap=ontology_chunk_overlap
-#     )
-#     splits = text_splitter.create_documents([g.serialize(format="ttl")])
-
-#     docs = [
-#         Document(
-#             page_content=split.page_content,
-#             metadata={
-#                 "question": split.page_content,
-#                 "answer": "",
-#                 "endpoint_url": endpoint["endpoint_url"],
-#                 "iri": endpoint["ontology"],
-#                 "doc_type": "ontology",
-#             },
-#         )
-#         for split in splits
-#     ]
-#     print(f"Extracted {len(docs)} chunks for {endpoint['label']} ontology")
-#     return docs

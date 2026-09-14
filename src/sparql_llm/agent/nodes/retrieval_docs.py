@@ -101,12 +101,9 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
                 not in {existing_doc.payload.get("answer") if existing_doc.payload else None for existing_doc in docs}
             )
 
-        # Get other relevant documentation (class schemas, general information).
-        # Drive this with the user's actual question + sub-steps, NOT only the
-        # LLM-extracted class IRIs: embedding a bare IRI like "crm:E21" retrieves
-        # poorly and the extraction step often collapses to a single class, so the
-        # relevant schema docs (e.g. crm:E67 Birth, with its date/parent properties)
-        # were never retrieved. Extracted classes are kept as an additional signal.
+        # Get other relevant documentation (class schemas, general information), driven by
+        # the user's question and sub-steps: a bare extracted IRI like "crm:E21" embeds
+        # poorly, so the extracted classes are only an additional signal.
         schema_queries: list[str] = [
             user_question,
             *state.structured_question.question_steps,

@@ -53,12 +53,9 @@ class Settings(BaseSettings):
     ]
 
     # Settings for the vector store and embeddings
-    # ⚠️ changing the embedding models require to reindex the data
-    # vectordb_url: str = "http://vectordb:6334/"
+    # ⚠️ changing the embedding model requires reindexing the data
     vectordb_url: str = "data/vectordb"
     # https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
-    # embedding_model: str = "BAAI/bge-small-en-v1.5"
-    # embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
     embedding_model: str = "intfloat/multilingual-e5-large"
 
     force_index: bool = False
@@ -67,7 +64,6 @@ class Settings(BaseSettings):
 
     # Sparse embeddings are only used for the entities resolution
     sparse_embedding_model: str = "Qdrant/bm25"
-    # sparse_embedding_model: str = "prithivida/Splade_PP_en_v1"
     docs_collection_name: str = "swiss-elites"
     entities_collection_name: str = "entities"
 
@@ -76,17 +72,14 @@ class Settings(BaseSettings):
     # set OPENAI_BASE_URL and OPENAI_API_KEY in .env.
     default_llm_model: str = "gpustack/gpt-oss-120b"
 
-    # Ordered list of model IDs (provider/model-name) available in the chat UI dropdown.
-    # Used as a fallback when the upstream /v1/models call fails.
+    # Model IDs (provider/model-name) offered in the chat UI's model picker, in order.
     available_llm_models: list[str] = []
 
-    # Models that must be blocked from the experimental MCP tools mode because the
-    # GPUStack deployment serves them without --enable-auto-tool-choice and they reject
-    # tool requests (e.g. the qwen3-vl vision models). This is a deny-list on purpose:
-    # every available model is assumed tool-capable unless listed here, so swapping in a
-    # new model never silently locks it out of tools mode. To check a model, POST to
-    # $OPENAI_BASE_URL/chat/completions with a "tools" array and confirm the reply has
-    # "tool_calls" (verified 2026-08-26 for qwen3.8-27b, minimax-m2.7, gpt-oss-120b).
+    # Models kept out of the MCP tools mode because GPUStack serves them without
+    # --enable-auto-tool-choice, so they reject tool requests (e.g. the qwen3-vl vision
+    # models). A deny-list, so a newly added model is never locked out of tools mode.
+    # To check a model, POST to $OPENAI_BASE_URL/chat/completions with a "tools" array
+    # and look for "tool_calls" in the reply.
     tool_incapable_models: list[str] = []
 
     default_number_of_retrieved_docs: int = 10
@@ -96,9 +89,7 @@ class Settings(BaseSettings):
     default_max_tokens: int = 16384
     default_seed: int = 42
 
-    # List of example questions to display in the chat UI.
-    # Chosen to return non-empty results against the current data coverage
-    # (persons + births + parent/child are populated; memberships/orgs are not yet).
+    # Example questions shown in the chat UI, chosen to return results on the current data.
     example_questions: list[str] = [
         "How many persons are in the database?",
         "List 20 persons with their names",
@@ -159,8 +150,6 @@ class Settings(BaseSettings):
             A string like 'http://127.0.0.1:8888'.
         """
         # Use 127.0.0.1 for connecting to the service (0.0.0.0 is only for binding)
-        # host = "127.0.0.1" if self.server_host == "0.0.0.0" else self.server_host
-        # return f"http://{host}:{self.server_port}"
         return "http://127.0.0.1:8000"
 
     @classmethod
@@ -179,7 +168,6 @@ class Settings(BaseSettings):
 
 settings_filepath = os.getenv("SETTINGS_FILEPATH")
 settings = Settings.from_file(settings_filepath) if settings_filepath else Settings()
-# logger.info(f"📂 Using SETTINGS file: {settings_filepath}")
 
 
 # Configuration defined at runtime

@@ -44,11 +44,10 @@ CURATOR_SOURCES: tuple[str, ...] = (
     "llm_documentation/SPARQL_queries_examples/query_obtaining_study_title.md",
 )
 
-#: The synced material is written here rather than into the curated file. That file is
-#: git-tracked, and rewriting it during a rebuild would leave the server's working tree
-#: dirty for the next `git pull` to conflict with. Nothing is lost by keeping it out of
-#: our history: the curators' own repository is the audit trail. `data/*` is gitignored
-#: with a short whitelist, so this path is ignored automatically.
+#: The synced material is written here rather than into the curated file, which is
+#: git-tracked: rewriting it during a rebuild would leave the server's working tree dirty
+#: for the next `git pull`. The curators' repository is the audit trail, and `data/*` is
+#: gitignored with a short whitelist, so this path is ignored automatically.
 SYNCED_SUFFIX = "-synced"
 
 _SECTION = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
