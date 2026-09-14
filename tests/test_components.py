@@ -69,7 +69,11 @@ WHERE {
 }"""
     issues = validate_sparql_with_void(sparql_query, "https://sparql.omabrowser.org/sparql/")
     print("\n".join(issues))
-    assert len(issues) == 3
+    # The query uses genex:expressedIn, which Bgee's schema does not define (it
+    # has genex:isExpressedIn). Assert on that rather than on a count: the count
+    # follows the live OMA and Bgee schemas, and went from 3 issues to 1 without
+    # any change on our side.
+    assert any("genex:expressedIn" in issue for issue in issues)
 
 
 # def test_sparql_examples_loader_error_nextprot():
