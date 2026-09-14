@@ -12,8 +12,10 @@
     }
   }
 
+  /* relative, not absolute: the spinning ring below only needs the button as its
+     anchor, and an absolute button left the toolbar and landed on the model picker. */
   .loading-spark {
-    position: absolute;
+    position: relative;
   }
 
   .loading-spark::before {
