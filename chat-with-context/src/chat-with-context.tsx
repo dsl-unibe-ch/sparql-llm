@@ -1,11 +1,11 @@
-import {createSignal, For, createEffect, Show} from "solid-js";
+import {createSignal, For, createEffect, onCleanup, onMount, Show} from "solid-js";
 import {customElement, noShadowDOM} from "solid-element";
 import {marked} from "marked";
 import DOMPurify from "dompurify";
 import hljs from "highlight.js/lib/core";
 import "highlight.js/styles/default.min.css";
 
-import {style} from "./utils";
+import {groupByRecency, style} from "./utils";
 import {hljsDefineSparql, hljsDefineTurtle} from "./highlight";
 import arrowUpIcon from "./assets/arrow-up.svg";
 import xIcon from "./assets/x.svg";
@@ -16,6 +16,9 @@ import thumbsUpIcon from "./assets/thumbs-up.svg";
 import "./style.css";
 import {streamResponse, ChatState} from "./providers";
 
+/** A saved conversation as the history endpoint lists it. */
+type ConversationSummary = {id: string; title: string; updated_at: string};
+
 // Get icons svg from https://feathericons.com/
 // SolidJS custom element: https://github.com/solidjs/solid/blob/main/src/solid-element/README.md
 
@@ -25,7 +28,8 @@ import {streamResponse, ChatState} from "./providers";
  */
 customElement(
   "chat-with-context",
-  {chatEndpoint: "", examples: "", apiKey: "", feedbackEndpoint: "", model: "", models: ""},
+  // historyEndpoint: where saved conversations live. Empty = no sidebar, nothing saved.
+  {chatEndpoint: "", examples: "", apiKey: "", feedbackEndpoint: "", model: "", models: "", historyEndpoint: ""},
   props => {
     noShadowDOM();
     hljs.registerLanguage("ttl", hljsDefineTurtle);
@@ -41,6 +45,12 @@ customElement(
     const [availableModels, setAvailableModels] = createSignal<string[]>([]);
     const [selectedModel, setSelectedModel] = createSignal("");
     const [naturalLanguageOnly, setNaturalLanguageOnly] = createSignal(false);
+    const [historyEndpoint, setHistoryEndpoint] = createSignal("");
+    const [conversations, setConversations] = createSignal<ConversationSummary[]>([]);
+    const [activeId, setActiveId] = createSignal("");
+    const [menuOpenId, setMenuOpenId] = createSignal("");
+    // Phone width only: the sidebar is a drawer, open or closed.
+    const [sidebarOpen, setSidebarOpen] = createSignal(false);
 
     const state = new ChatState({});
     let chatContainerEl!: HTMLDivElement;
@@ -56,6 +66,7 @@ customElement(
       state.onMessageUpdate = () => highlightAll();
       setExamples(props.examples.split(",").map(value => value.trim()));
       setFeedbackEndpoint(props.feedbackEndpoint);
+      setHistoryEndpoint(props.historyEndpoint);
       fixInputHeight();
 
       // Parse models prop (comma-separated: "gpustack/foo,gpustack/bar")
@@ -134,6 +145,8 @@ customElement(
         }
       }
       setLoading(false);
+      // Also after an error or a stop: whatever the turn left on screen is kept.
+      saveConversation();
       setFeedbackSent(false);
       highlightAll();
       state.scrollToInput();
@@ -144,22 +157,125 @@ customElement(
       fetch(feedbackEndpoint(), {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({
-          like: positive,
-          messages: state.messages().map(msg => ({
-            role: msg.role,
-            content: msg.content(),
-            steps: msg.steps().map(step => ({
-              label: step.label,
-              details: step.details,
-              node_id: step.node_id,
-              substeps: step.substeps,
-            })),
-          })),
-        }),
+        body: JSON.stringify({like: positive, messages: state.serialize()}),
       });
       setFeedbackSent(true);
     }
+
+    // ── Saved conversations (only when a history endpoint is configured) ──
+
+    const conversationUrl = (id: string, suffix = "") =>
+      `${historyEndpoint()}/${encodeURIComponent(id)}${suffix}`;
+
+    async function refreshConversations() {
+      try {
+        const response = await fetch(historyEndpoint());
+        if (response.ok) setConversations(await response.json());
+      } catch (error) {
+        console.warn("Could not load saved conversations:", error);
+      }
+    }
+
+    createEffect(() => {
+      if (historyEndpoint()) void refreshConversations();
+    });
+
+    let pendingSave: Promise<void> = Promise.resolve();
+
+    /** Save the chat as it is now.
+     *
+     * The snapshot is taken immediately, and saves run one after another, so a slow
+     * save can neither overwrite a newer one nor pick up another chat opened meanwhile.
+     */
+    function saveConversation() {
+      if (!historyEndpoint() || state.messages().length === 0) return;
+      const id = state.sessionId;
+      const body = JSON.stringify({messages: state.serialize()});
+      pendingSave = pendingSave.then(async () => {
+        try {
+          const response = await fetch(conversationUrl(id), {
+            method: "PUT",
+            headers: {"Content-Type": "application/json"},
+            body,
+          });
+          if (!response.ok) {
+            setWarningMsg(
+              response.status === 413
+                ? "This conversation is too long to be saved to your history."
+                : "This conversation could not be saved to your history.",
+            );
+            return;
+          }
+          if (state.sessionId === id) setActiveId(id);
+          await refreshConversations();
+        } catch (error) {
+          console.warn("Could not save the conversation:", error);
+          setWarningMsg("This conversation could not be saved to your history.");
+        }
+      });
+    }
+
+    function newChat() {
+      if (loading()) return;
+      state.resetSession();
+      setActiveId("");
+      setWarningMsg("");
+      setFeedbackSent(false);
+      setSidebarOpen(false);
+      inputTextEl.focus();
+    }
+
+    async function openConversation(id: string) {
+      setMenuOpenId("");
+      if (loading()) return;
+      setSidebarOpen(false);
+      if (id === state.sessionId && state.messages().length > 0) return;
+      const response = await fetch(conversationUrl(id));
+      if (!response.ok) {
+        setWarningMsg("This conversation could not be opened.");
+        await refreshConversations();
+        return;
+      }
+      const conversation = await response.json();
+      state.loadConversation(conversation.id, conversation.messages);
+      setActiveId(conversation.id);
+      setWarningMsg("");
+      setFeedbackSent(false);
+      setTimeout(() => highlightAll(), 0);
+    }
+
+    async function renameConversation(conversation: ConversationSummary) {
+      setMenuOpenId("");
+      const title = window.prompt("Rename conversation", conversation.title)?.trim();
+      if (!title || title === conversation.title) return;
+      await fetch(conversationUrl(conversation.id), {
+        method: "PATCH",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({title}),
+      });
+      await refreshConversations();
+    }
+
+    async function deleteConversation(conversation: ConversationSummary) {
+      setMenuOpenId("");
+      if (!window.confirm(`Delete “${conversation.title}”? This cannot be undone.`)) return;
+      const response = await fetch(conversationUrl(conversation.id), {method: "DELETE"});
+      if (!response.ok && response.status !== 404) {
+        setWarningMsg("The conversation could not be deleted.");
+        return;
+      }
+      if (conversation.id === state.sessionId) newChat();
+      await refreshConversations();
+    }
+
+    // Close an open conversation menu on any click outside it.
+    onMount(() => {
+      const closeMenu = (event: MouseEvent) => {
+        if (!(event.target as Element | null)?.closest?.("[data-history-menu]")) setMenuOpenId("");
+      };
+      document.addEventListener("click", closeMenu);
+      onCleanup(() => document.removeEventListener("click", closeMenu));
+    });
 
     function fixInputHeight() {
       const scrollX = window.scrollX || window.pageXOffset;
@@ -171,21 +287,140 @@ customElement(
     }
 
     return (
-      <div
-        class={`chat-with-context w-full h-full flex flex-col ${state.messages().length === 0 ? "justify-center" : ""}`}
-        style={{"min-height": "0"}}
-      >
+      <div class="chat-with-context w-full h-full flex" style={{"min-height": "0"}}>
         <style>{style}</style>
+
+        {/* Saved conversations: a left column, or a drawer at phone width */}
+        <Show when={historyEndpoint()}>
+          <Show when={sidebarOpen()}>
+            <div class="fixed inset-0 z-40 bg-slate-900/20 md:hidden" onClick={() => setSidebarOpen(false)} />
+          </Show>
+          <aside
+            class={`fixed inset-y-0 left-0 z-50 flex w-64 flex-shrink-0 flex-col border-r border-slate-200 bg-slate-50 transition-transform md:static md:z-auto md:translate-x-0 ${
+              sidebarOpen() ? "translate-x-0" : "-translate-x-full"
+            }`}
+            aria-label="Saved conversations"
+          >
+            <div class="flex-shrink-0 p-3">
+              <button
+                type="button"
+                class="flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                disabled={loading()}
+                onClick={() => newChat()}
+              >
+                <img src={editIcon} alt="" class="iconBtn h-4 w-4" />
+                New chat
+              </button>
+            </div>
+            <nav class="flex-1 overflow-y-auto px-2 pb-3">
+              <Show
+                when={conversations().length > 0}
+                fallback={<p class="px-3 py-2 text-xs text-slate-400">Your conversations will appear here.</p>}
+              >
+                <For each={groupByRecency(conversations())}>
+                  {group => (
+                    <div class="mb-3">
+                      <p class="px-3 py-1 text-xs font-medium uppercase tracking-wide text-slate-400">{group.label}</p>
+                      <For each={group.items}>
+                        {conversation => (
+                          <div
+                            class={`relative flex items-center rounded-lg ${
+                              conversation.id === activeId() ? "bg-slate-200" : "hover:bg-slate-100"
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              class="min-w-0 flex-1 truncate px-3 py-2 text-left text-sm text-slate-700 disabled:cursor-not-allowed"
+                              title={conversation.title}
+                              disabled={loading()}
+                              onClick={() => openConversation(conversation.id)}
+                            >
+                              {conversation.title}
+                            </button>
+                            <button
+                              type="button"
+                              data-history-menu
+                              class="mr-1 rounded-md px-1.5 py-1 text-slate-400 hover:bg-slate-200 hover:text-slate-700"
+                              title="Rename, export or delete"
+                              aria-label={`Options for ${conversation.title}`}
+                              onClick={() => setMenuOpenId(menuOpenId() === conversation.id ? "" : conversation.id)}
+                            >
+                              ⋯
+                            </button>
+                            <Show when={menuOpenId() === conversation.id}>
+                              <div
+                                data-history-menu
+                                class="absolute right-1 top-full z-10 mt-1 w-44 rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg"
+                              >
+                                <button
+                                  type="button"
+                                  class="block w-full px-3 py-1.5 text-left text-slate-700 hover:bg-slate-100"
+                                  onClick={() => renameConversation(conversation)}
+                                >
+                                  Rename
+                                </button>
+                                <a
+                                  class="block px-3 py-1.5 text-slate-700 no-underline hover:bg-slate-100"
+                                  href={conversationUrl(conversation.id, "/export?format=md")}
+                                  download
+                                  onClick={() => setMenuOpenId("")}
+                                >
+                                  Export Markdown
+                                </a>
+                                <a
+                                  class="block px-3 py-1.5 text-slate-700 no-underline hover:bg-slate-100"
+                                  href={conversationUrl(conversation.id, "/export?format=json")}
+                                  download
+                                  onClick={() => setMenuOpenId("")}
+                                >
+                                  Export JSON
+                                </a>
+                                <button
+                                  type="button"
+                                  class="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50 disabled:opacity-50"
+                                  disabled={loading() && conversation.id === state.sessionId}
+                                  onClick={() => deleteConversation(conversation)}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </Show>
+                          </div>
+                        )}
+                      </For>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </nav>
+          </aside>
+        </Show>
+
+        {/* The chat itself */}
+        <div
+          class={`relative flex h-full min-w-0 flex-1 flex-col ${state.messages().length === 0 ? "justify-center" : ""}`}
+          style={{"min-height": "0"}}
+        >
+        <Show when={historyEndpoint()}>
+          <button
+            type="button"
+            class="absolute left-2 top-2 z-10 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-100 md:hidden"
+            onClick={() => setSidebarOpen(true)}
+            aria-label="Show saved conversations"
+          >
+            ☰ Chats
+          </button>
+        </Show>
 
         {/* Messages area — flex-grow + min-height:0 so it scrolls within the flex parent */}
         <div
           ref={chatContainerEl}
-          class="overflow-y-auto flex-1 px-1"
+          class="overflow-y-auto flex-1 px-4 pt-3"
           style={{"min-height": "0"}}
         >
           <For each={state.messages()}>
             {(msg, iMsg) => (
-              <div class={`w-full flex ${msg.role === "user" ? "justify-end" : "justify-start"} mb-4`}>
+              <div class={`mx-auto flex w-full max-w-3xl ${msg.role === "user" ? "justify-end" : "justify-start"} mb-4`}>
                 <div
                   class={`max-w-3xl ${
                     msg.role === "user"
@@ -407,7 +642,7 @@ customElement(
                   <button
                     title="New conversation"
                     class="p-1.5 rounded-full text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                    onClick={() => state.resetSession()}
+                    onClick={() => newChat()}
                     type="button"
                     aria-label="Start a new conversation"
                   >
@@ -487,6 +722,7 @@ customElement(
             </div>
           </div>
         )}
+        </div>
       </div>
     );
   },

@@ -17,6 +17,47 @@ function assistantMessages(state: ChatState) {
   return state.messages().filter(m => m.role === "assistant");
 }
 
+describe("saved conversations", () => {
+  test("a serialized chat reopens with its answer, steps and links", () => {
+    const state = newTurn();
+    state.recordToolResult("📡 Execute sparql query", "rows");
+    state.appendAnswerChunk(ANSWER);
+    state.finishActivityStep();
+    state.lastMsg().setLinks([{url: "https://editor.example/?q=1", label: "Run", title: "Open"}]);
+    const saved = JSON.parse(JSON.stringify(state.serialize()));
+
+    const reopened = new ChatState({apiUrl: "http://localhost/chat"});
+    reopened.loadConversation("chat-1", saved);
+
+    expect(reopened.sessionId).toBe("chat-1");
+    expect(reopened.serialize()).toEqual(saved);
+    const answer = assistantMessages(reopened)[0];
+    expect(answer.content()).toBe(ANSWER);
+    expect(answer.steps()[0].isActivity).toBe(true);
+    expect(answer.steps()[0].details).toContain("rows");
+    expect(answer.links()[0].url).toBe("https://editor.example/?q=1");
+  });
+
+  test("a reopened chat continues: the next turn is appended to it", () => {
+    const state = newTurn();
+    state.appendAnswerChunk(ANSWER);
+    const reopened = new ChatState({apiUrl: "http://localhost/chat"});
+    reopened.loadConversation("chat-1", state.serialize());
+
+    reopened.appendMessage("And his children?", "user");
+    expect(reopened.messages().length).toBe(3);
+    expect(reopened.sessionId).toBe("chat-1");
+  });
+
+  test("a new chat gets a fresh id and no messages", () => {
+    const state = newTurn();
+    state.loadConversation("chat-1", state.serialize());
+    state.resetSession();
+    expect(state.sessionId).not.toBe("chat-1");
+    expect(state.messages().length).toBe(0);
+  });
+});
+
 describe("tool result rendering", () => {
   test("a tool result with its own code fences renders as one code block", () => {
     // Tool results already contain ``` fences (SPARQL results come back as a fenced

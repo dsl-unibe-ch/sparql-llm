@@ -161,6 +161,12 @@ if settings.auth_enabled:
         tags=["auth"],
     )
 
+    # Each user's saved chats, private to them.
+    from sparql_llm.agent.conversations import delete_conversations_of
+    from sparql_llm.agent.conversations import router as conversations_router
+
+    app.include_router(conversations_router)
+
     templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
 
     @app.post("/logout", include_in_schema=False)
@@ -419,6 +425,7 @@ if settings.auth_enabled:
                 if not can_delete(user, db_user):
                     return _flash("error", f"You cannot remove {db_user.email}.")
                 email = db_user.email
+                await delete_conversations_of(session, db_user.id)
                 await session.delete(db_user)
                 await session.commit()
             return _flash("success", f"User {email} removed.")
@@ -848,7 +855,7 @@ def log_msg(filename: str, messages: list[LogMessage]) -> None:
         "timestamp": timestamp,
         "messages": [message.model_dump() for message in messages],
     }
-    with open(filename, "a") as f:
+    with open(filename, "a", encoding="utf-8") as f:
         f.write(json.dumps(feedback_data) + "\n")
 
 
@@ -940,6 +947,8 @@ async def chat_ui(
             "api_key": settings.chat_api_key,
             "chat_endpoint": "/chat",
             "feedback_endpoint": "/feedback",
+            # Saved chats need a logged-in owner; without auth the sidebar stays hidden.
+            "history_endpoint": "/conversations" if settings.auth_enabled else "",
             "examples": ",".join(settings.example_questions),
             "auth_enabled": settings.auth_enabled,
             # Shows the header link to /admin — curators need it too.

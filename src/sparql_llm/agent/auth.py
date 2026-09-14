@@ -1,12 +1,16 @@
 """Authentication module using fastapi-users with SQLite backend and JWT cookies."""
 
+import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime
+from typing import Any
 
 from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, FastAPIUsers, UUIDIDMixin
 from fastapi_users.authentication import AuthenticationBackend, CookieTransport, JWTStrategy
 from fastapi_users.db import SQLAlchemyBaseUserTableUUID, SQLAlchemyUserDatabase
-from sqlalchemy import Boolean, false
+from fastapi_users_db_sqlalchemy.generics import GUID, TIMESTAMPAware, now_utc
+from sqlalchemy import JSON, Boolean, ForeignKey, Index, String, false
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -28,6 +32,26 @@ class Base(DeclarativeBase):
 class User(SQLAlchemyBaseUserTableUUID, Base):
     # Curator role (see sparql_llm.agent.roles). Admin stays fastapi-users' is_superuser.
     is_curator: Mapped[bool] = mapped_column(Boolean, default=False, server_default=false(), nullable=False)
+
+
+class Conversation(Base):
+    """One saved chat, private to its owner (see sparql_llm.agent.conversations).
+
+    The thread is stored whole, as the chat UI showed it — each message's text, steps
+    and links — because the client always rewrites all of it and nothing queries
+    inside it. Being a new table, ``create_all`` adds it to an existing database.
+    """
+
+    __tablename__ = "conversation"
+    __table_args__ = (Index("ix_conversation_user_updated", "user_id", "updated_at"),)
+
+    #: The chat UI's session id, which also groups the chat's traces in Langfuse.
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID, ForeignKey("user.id"), nullable=False)
+    title: Mapped[str] = mapped_column(String(120), default="", nullable=False)
+    messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
 
 
 async def create_db_and_tables() -> None:
@@ -105,6 +129,3 @@ async def require_authenticated(
 class _LoginRedirect(Exception):
     def __init__(self, next_path: str) -> None:
         self.next_path = next_path
-
-
-import uuid  # noqa: E402 (needed after forward reference above)

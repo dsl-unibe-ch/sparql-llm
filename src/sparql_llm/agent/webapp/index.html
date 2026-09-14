@@ -75,12 +75,14 @@
 
       /* ── Main layout: takes all remaining height ── */
       .main-layout { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-      .chat-wrapper { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0.75rem 1rem 0; max-width: 860px; width: 100%; margin: 0 auto; }
+      /* Full width: the saved-conversations sidebar sits at the left edge, and the
+         chat column centres its own messages and input. */
+      .chat-wrapper { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; }
       /* Custom element must fill and flex as a column */
       chat-with-context { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
     </style>
-    <script type="module" crossorigin src="/assets/index-8pm2LkTZ.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-VyFpU9zF.css">
+    <script type="module" crossorigin src="/assets/index-Bkkrrqh5.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DUo74rga.css">
   </head>
 
   <body>
@@ -156,6 +158,7 @@
           id="chat-element"
           chat-endpoint="{{ chat_endpoint }}"
           feedback-endpoint="{{ feedback_endpoint }}"
+          history-endpoint="{{ history_endpoint }}"
           api-key="{{ api_key }}"
           examples="{{ examples }}"
         >

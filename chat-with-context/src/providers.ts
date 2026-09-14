@@ -29,6 +29,22 @@ export type Message = {
   setLinks: Setter<Links[]>;
 };
 
+/** A message as plain data: what a saved conversation stores and feedback sends. */
+export type StoredMessage = {
+  role: "assistant" | "user";
+  content: string;
+  steps: Step[];
+  links: Links[];
+};
+
+function newMessage(role: "assistant" | "user", text = "", initialSteps: Step[] = [], initialLinks: Links[] = []) {
+  const [content, setContent] = createSignal(text);
+  const [steps, setSteps] = createSignal<Step[]>(initialSteps);
+  const [links, setLinks] = createSignal<Links[]>(initialLinks);
+  const msg: Message = {content, setContent, steps, setSteps, role, links, setLinks};
+  return msg;
+}
+
 export class ChatState {
   apiUrl: string;
   apiKey: string;
@@ -80,13 +96,18 @@ export class ChatState {
   scrollToInput = () => {};
 
   appendMessage = (msgContent: string, role: "assistant" | "user" = "assistant") => {
-    const [content, setContent] = createSignal(msgContent);
-    const [steps, setSteps] = createSignal<Step[]>([]);
-    const [links, setLinks] = createSignal<Links[]>([]);
-    const newMsg: Message = {content, setContent, steps, setSteps, role, links, setLinks};
-    // const query = extractSparqlQuery(msgContent);
-    // if (query) newMsg.setLinks([{url: query, ...queryLinkLabels}]);
-    this.setMessages(messages => [...messages, newMsg]);
+    this.setMessages(messages => [...messages, newMessage(role, msgContent)]);
+  };
+
+  /** The chat as plain data, as it is saved to the history and sent with feedback. */
+  serialize = (): StoredMessage[] =>
+    this.messages().map(msg => ({role: msg.role, content: msg.content(), steps: msg.steps(), links: msg.links()}));
+
+  /** Show a saved chat in place of the current one; it then continues under its own id. */
+  loadConversation = (id: string, messages: StoredMessage[]) => {
+    this.sessionId = id;
+    this.beginTurn();
+    this.setMessages(messages.map(msg => newMessage(msg.role, msg.content, msg.steps ?? [], msg.links ?? [])));
   };
 
   appendContentToLastMsg = (newContent: string, newline: boolean = false) => {
