@@ -53,10 +53,28 @@ class Settings(BaseSettings):
     ]
 
     # Settings for the vector store and embeddings
-    # ⚠️ changing the embedding model requires reindexing the data
+    # ⚠️ changing the embedding model or backend requires reindexing the data
     vectordb_url: str = "data/vectordb"
-    # https://qdrant.github.io/fastembed/examples/Supported_Models/#supported-text-embedding-models
-    embedding_model: str = "intfloat/multilingual-e5-large"
+
+    # Embedding backend: "openai" (remote, e.g. GPUStack) or "local" (fastembed/ONNX in-process).
+    # "openai" offloads inference to the GPU server, freeing ~1.5 GB RAM on the VM.
+    # "local" loads the ONNX model into process memory (no network dependency).
+    embedding_backend: str = "openai"
+
+    # Model identifier — meaning depends on the backend:
+    #   openai: the model name served by the API (e.g. "qwen3-embedding-0.6b")
+    #   local:  a HuggingFace/fastembed model id (e.g. "intfloat/multilingual-e5-large")
+    embedding_model: str = "qwen3-embedding-0.6b"
+
+    # Vector dimension. Must match the model output and the Qdrant collection.
+    # qwen3-embedding-0.6b and intfloat/multilingual-e5-large both produce 1024-d vectors.
+    # The openai backend uses this value; the local backend reads it from the model.
+    embedding_dimensions: int = 1024
+
+    # Optional overrides for the embedding API endpoint.  When empty, falls back
+    # to OPENAI_BASE_URL / OPENAI_API_KEY (same as the LLM client).
+    embedding_base_url: str = ""
+    embedding_api_key: str = ""
 
     force_index: bool = False
     # Automatically initialize the vector store client, should be False when deploying in prod with multiple workers

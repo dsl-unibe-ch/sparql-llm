@@ -3,7 +3,7 @@ import time
 import httpx
 import pandas as pd
 from bs4 import BeautifulSoup
-from fastembed import TextEmbedding
+from sparql_llm.embeddings import create_embedding_model
 from langchain_core.documents import Document
 from markdownify import markdownify
 from qdrant_client import QdrantClient, models
@@ -60,9 +60,12 @@ qdrant_client = (
     else QdrantClient(path=settings.vectordb_url)
 )
 
-embedding_model = TextEmbedding(
-    settings.embedding_model,
-    # providers=["CUDAExecutionProvider"], # Replace the fastembed dependency with fastembed-gpu to use your GPUs
+embedding_model = create_embedding_model(
+    backend=settings.embedding_backend,
+    model=settings.embedding_model,
+    dimensions=settings.embedding_dimensions,
+    api_key=settings.embedding_api_key or None,
+    base_url=settings.embedding_base_url or None,
 )
 
 
@@ -347,7 +350,7 @@ The UniProt consortium is headed by Alex Bateman, Alan Bridge and Cathy Wu, supp
             collection_name=target,
             points=models.Batch(
                 ids=list(range(batch_start + 1, batch_end + 1)),
-                vectors=[emb.tolist() for emb in embeddings],
+                vectors=[emb.tolist() if hasattr(emb, "tolist") else emb for emb in embeddings],
                 payloads=[doc.metadata for doc in batch_docs],
             ),
         )

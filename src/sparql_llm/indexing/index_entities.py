@@ -2,7 +2,7 @@ import argparse
 import time
 from typing import Any
 
-from fastembed import SparseTextEmbedding, TextEmbedding
+from fastembed import SparseTextEmbedding
 from langchain_core.documents import Document
 from qdrant_client import models
 
@@ -259,7 +259,21 @@ def generate_embeddings_for_entities(gpu: bool = False) -> None:
         qdrant_client.delete_collection(settings.entities_collection_name)
 
     # Process documents in batches to handle millions of entities efficiently
-    embedding_model = TextEmbedding(settings.embedding_model, providers=["CUDAExecutionProvider"] if gpu else None)
+    # Dense embeddings: use the configured backend (local fastembed or remote API).
+    # For the local backend with GPU support, pass providers via kwargs.
+    from sparql_llm.embeddings import create_embedding_model
+
+    if settings.embedding_backend == "local" and gpu:
+        from sparql_llm.embeddings import LocalEmbedding
+        embedding_model = LocalEmbedding(settings.embedding_model, providers=["CUDAExecutionProvider"])
+    else:
+        embedding_model = create_embedding_model(
+            backend=settings.embedding_backend,
+            model=settings.embedding_model,
+            dimensions=settings.embedding_dimensions,
+            api_key=settings.embedding_api_key or None,
+            base_url=settings.embedding_base_url or None,
+        )
     sparse_embedding_model = SparseTextEmbedding(settings.sparse_embedding_model)
 
     # Initialize collection in Qdrant vectordb with hybrid retrieval mode (dense and sparse vectors)
@@ -288,7 +302,7 @@ def generate_embeddings_for_entities(gpu: bool = False) -> None:
         sparse_embeddings = sparse_embedding_model.embed(batch_texts)
 
         # Prepare batch for upsert
-        batch_vectors = [emb.tolist() for emb in embeddings]
+        batch_vectors = [emb.tolist() if hasattr(emb, "tolist") else emb for emb in embeddings]
         batch_sparse_vectors = [
             models.SparseVector(indices=sparse_emb.indices.tolist(), values=sparse_emb.values.tolist())
             for sparse_emb in sparse_embeddings
