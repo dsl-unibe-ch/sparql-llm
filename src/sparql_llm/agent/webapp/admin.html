@@ -152,6 +152,35 @@
         </div>
       </div>
 
+      <!-- Retrieval settings -->
+      <div class="card">
+        <div class="card-header">Retrieval settings</div>
+        <div class="idx-body">
+          <p class="idx-note">
+            Controls how many documents the RAG pipeline retrieves per search.
+            This value is used as the <code>limit</code> per individual vector search —
+            the actual number of documents returned to the LLM is higher because
+            the system runs multiple searches per question (one per sub-step and
+            class), each retrieving up to this many results.
+          </p>
+          <div class="idx-row" style="align-items: center; gap: 1rem;">
+            <label for="topk-input" style="font-size: 0.85rem; font-weight: 600; white-space: nowrap;">
+              Top-K per search
+            </label>
+            <input type="range" id="topk-range" min="1" max="50" value="10"
+                   style="flex: 1; min-width: 120px; accent-color: #0f172a;"
+                   oninput="document.getElementById('topk-input').value = this.value" />
+            <input type="number" id="topk-input" min="1" max="100" value="10"
+                   style="width: 64px; padding: 0.4rem 0.5rem; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 0.85rem; text-align: center;"
+                   oninput="document.getElementById('topk-range').value = Math.min(this.value, 50)" />
+          </div>
+          <div class="idx-row" style="gap: 0.75rem; align-items: center;">
+            <button id="topk-save" class="btn-reindex" style="padding: 0.45rem 1rem;">Save</button>
+            <span id="topk-status" class="idx-status"></span>
+          </div>
+        </div>
+      </div>
+
       <!-- User list -->
       <div class="card">
         <div class="card-header">Users ({{ users | length }})</div>
@@ -339,6 +368,58 @@
         });
 
         refresh().then(function (running) { if (running) poll(); });
+      })();
+
+      /* ── Retrieval settings (top-k) ── */
+      (function () {
+        var rangeEl = document.getElementById('topk-range');
+        var inputEl = document.getElementById('topk-input');
+        var saveBtn = document.getElementById('topk-save');
+        var statusEl = document.getElementById('topk-status');
+
+        // Load current value from server
+        fetch('/admin/settings', { credentials: 'same-origin' })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (!d) return;
+            var k = d.default_number_of_retrieved_docs || 10;
+            rangeEl.value = Math.min(k, 50);
+            inputEl.value = k;
+          })
+          .catch(function () {});
+
+        saveBtn.addEventListener('click', function () {
+          var value = parseInt(inputEl.value, 10);
+          if (isNaN(value) || value < 1 || value > 100) {
+            statusEl.textContent = 'Value must be between 1 and 100.';
+            statusEl.style.color = '#dc2626';
+            return;
+          }
+          saveBtn.disabled = true;
+          statusEl.innerHTML = '<span class="spinner"></span>Saving...';
+          statusEl.style.color = '';
+          fetch('/admin/settings', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ default_number_of_retrieved_docs: value })
+          })
+            .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+            .then(function (res) {
+              if (res.ok) {
+                statusEl.textContent = 'Saved. Takes effect on the next query.';
+                statusEl.style.color = '#166534';
+              } else {
+                statusEl.textContent = res.data.error || 'Failed to save.';
+                statusEl.style.color = '#dc2626';
+              }
+            })
+            .catch(function () {
+              statusEl.textContent = 'Could not reach the server.';
+              statusEl.style.color = '#dc2626';
+            })
+            .finally(function () { saveBtn.disabled = false; });
+        });
       })();
     </script>
   </body>

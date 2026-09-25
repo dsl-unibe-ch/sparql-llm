@@ -32,5 +32,6 @@
   "embedding_model": "qwen3-embedding-0.6b",
   "embedding_dimensions": 1024,
   "force_index": false,
-  "auto_init": true
+  "auto_init": true,
+  "default_number_of_retrieved_docs": 20
 }
