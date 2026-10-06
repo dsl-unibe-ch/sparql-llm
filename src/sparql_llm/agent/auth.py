@@ -54,6 +54,23 @@ class Conversation(Base):
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
 
 
+class UserLLMConfig(Base):
+    """Per-user LLM provider configuration (provider type, encrypted API key, base URL).
+
+    Each user has at most one row.  When the user changes provider the row is
+    updated in place.  The API key is Fernet-encrypted at rest using
+    ``AUTH_SECRET`` (see ``sparql_llm.agent.crypto``).
+    """
+
+    __tablename__ = "user_llm_config"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(GUID, ForeignKey("user.id"), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(32), nullable=False, default="gpustack")
+    encrypted_api_key: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    base_url: Mapped[str] = mapped_column(String(256), nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
+
+
 async def create_db_and_tables() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

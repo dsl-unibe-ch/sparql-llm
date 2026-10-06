@@ -290,6 +290,20 @@ class Configuration:
         },
     )
 
+    # ── Per-user LLM credentials (injected at request time) ──────────────
+    llm_api_key: str = field(
+        default="",
+        metadata={"description": "Per-user LLM API key, injected at request time. Never persisted in state."},
+    )
+    llm_base_url: str = field(
+        default="",
+        metadata={"description": "Per-user LLM base URL, injected at request time."},
+    )
+    llm_provider: str = field(
+        default="gpustack",
+        metadata={"description": "LLM provider identifier (gpustack, openai, custom)."},
+    )
+
     @classmethod
     def from_runnable_config(cls: type[T], config: RunnableConfig | None = None) -> T:
         """Create an IndexConfiguration instance from a RunnableConfig object.

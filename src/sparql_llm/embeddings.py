@@ -45,9 +45,9 @@ class OpenAIEmbedding:
         self._dimensions = dimensions
         self._batch_size = batch_size
 
-        # Fall back to the same env vars the LLM client uses
-        self._api_key = api_key or os.getenv("OPENAI_API_KEY", "")
-        self._base_url = base_url or os.getenv("OPENAI_BASE_URL", "")
+        # Fall back to the old OPENAI_* vars for backwards compatibility
+        self._api_key = api_key or os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY", "")
+        self._base_url = base_url or os.getenv("EMBEDDING_BASE_URL") or os.getenv("OPENAI_BASE_URL", "")
 
         # Lazily import openai so the dependency is only required when this
         # backend is actually selected.
