@@ -329,7 +329,7 @@
           if (!data.models || data.models.length === 0) return;
           var banner = document.getElementById("setup-banner");
           if (banner) banner.style.display = "none";
-          chatEl.style.display = "block";
+          chatEl.style.display = "flex";
           
           chatEl.setAttribute("models", data.models.join(","));
           chatEl.setAttribute("model", data.default || data.models[0]);
