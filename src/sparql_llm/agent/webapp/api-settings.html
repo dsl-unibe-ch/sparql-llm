@@ -77,6 +77,18 @@
       }
       .input-with-button button:hover { background: #e2e8f0; }
       
+      /* ── Key handling notice ── */
+      .key-info { margin-top: 1.5rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; font-size: 0.875rem; line-height: 1.55; color: #334155; }
+      .key-info summary { cursor: pointer; padding: 0.875rem 1rem; font-weight: 600; color: #0f172a; list-style-position: inside; }
+      .key-info summary:hover { background: #f1f5f9; border-radius: 8px; }
+      .key-info-body { padding: 0 1rem 1rem; }
+      .key-info h3 { font-size: 0.875rem; margin: 1.25rem 0 0.5rem; color: #0f172a; }
+      .key-info ol, .key-info ul { margin: 0; padding-left: 1.25rem; }
+      .key-info li { margin-bottom: 0.4rem; }
+      .key-info code { font-size: 0.8125rem; background: #e2e8f0; padding: 0.05rem 0.3rem; border-radius: 4px; }
+      .key-info .tldr { margin: 0; padding: 0.75rem; background: white; border: 1px solid #e2e8f0; border-radius: 6px; }
+      .key-info .risks { border-left: 3px solid #f59e0b; padding-left: 0.75rem; }
+
       .back-link { display: inline-flex; align-items: center; gap: 0.25rem; color: #475569; text-decoration: none; margin-bottom: 1.5rem; font-size: 0.875rem; font-weight: 500; }
       .back-link:hover { color: #0f172a; }
     </style>
@@ -120,7 +132,7 @@
                 <input type="password" id="api-key" name="api_key" placeholder="sk-..." required />
                 <button type="button" id="toggle-key" title="Show/Hide">👁️</button>
               </div>
-              <div class="help-text">Your key is encrypted at rest and never shared.</div>
+              <div class="help-text">Encrypted before it is stored, and only sent to the provider above. See <a href="#key-info" id="key-info-link">what happens to your API key</a> below.</div>
             </div>
             
             <div class="actions">
@@ -129,6 +141,44 @@
               <button type="submit" id="btn-save" class="btn btn-primary">Save & Validate</button>
             </div>
           </form>
+
+          <details class="key-info" id="key-info">
+            <summary>🔒 What happens to your API key</summary>
+            <div class="key-info-body">
+              <p class="tldr">
+                <strong>In short:</strong> your key is encrypted before it is stored, it is only sent to the
+                provider you choose, and the full key is never shown again. However, this server has to be
+                able to decrypt your key in order to use it, so you are trusting this server and the people
+                who run it. The details and the risks are below.
+              </p>
+
+              <h3>Step by step</h3>
+              <ol>
+                <li><strong>Sending.</strong> Your browser sends the key to this server over an encrypted HTTPS connection.</li>
+                <li><strong>Checking.</strong> The server tests the key by asking your provider (at the Base URL above) for its list of models. If the test fails, nothing is saved.</li>
+                <li><strong>Storing.</strong> The key is encrypted (AES with an integrity check) and saved in the app's user database, linked only to your account. The unencrypted key is never written to disk or to the server logs.</li>
+                <li><strong>Using.</strong> When you chat, the server decrypts the key in memory and sends it only to your provider, together with your messages. To hide models that cannot be used here, the server also sends one tiny test request per model about every 6 hours. These use a few tokens on your account.</li>
+                <li><strong>Showing.</strong> This page only shows a masked version (for example <code>sk-p…****k29H</code>). The full key is never sent back to your browser. No page in the app, including the admin pages, shows the full key or lets other users use it.</li>
+                <li><strong>Removing.</strong> <em>Remove Key</em> deletes it from the database straight away.</li>
+              </ol>
+
+              <h3>Risks you should know about</h3>
+              <ul class="risks">
+                <li><strong>This is not end-to-end encryption.</strong> The secret that decrypts your key is kept on the same server as the database, because the server needs it to use your key. Someone with full access to this server (its administrators, or an attacker who breaks into it) could recover your key. The encryption mainly protects you if a copy of the database file leaks on its own.</li>
+                <li><strong>Your provider sees your chats.</strong> Your messages are sent to the provider you choose, and its own privacy and data-retention rules apply.</li>
+                <li><strong>Custom Base URL.</strong> With the custom provider, your key is sent to whatever address you enter. Only enter addresses you trust.</li>
+                <li><strong>Backups.</strong> If the server is backed up, an encrypted copy of your key may stay in older backups after you remove it.</li>
+                <li><strong>Costs.</strong> Everything this app does with your key is billed to your account with the provider.</li>
+              </ul>
+
+              <h3>How to protect yourself</h3>
+              <ul>
+                <li>Create a separate key just for this app instead of reusing one you use elsewhere.</li>
+                <li>If your provider allows it, give that key a spending limit or budget.</li>
+                <li>When you stop using this app, or if you think the key has been misused, <strong>revoke it at your provider</strong>. That is the only way to be sure the key can no longer be used anywhere, including here.</li>
+              </ul>
+            </div>
+          </details>
         </div>
       </div>
     </main>
@@ -163,6 +213,10 @@
       }
       
       providerSelect.addEventListener('change', updateProviderHelp);
+
+      document.getElementById('key-info-link').addEventListener('click', () => {
+        document.getElementById('key-info').open = true;
+      });
       
       btnToggleKey.addEventListener('click', () => {
         apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
@@ -191,6 +245,8 @@
             showStatus('✅ You have a configured API key.', 'success');
           } else {
             updateProviderHelp();
+            // First-time setup: show how the key is handled before it is entered.
+            document.getElementById('key-info').open = true;
             showStatus('Please configure an API key to start chatting.', 'info');
           }
         })
