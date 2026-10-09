@@ -42,6 +42,7 @@ dependencies = [
     "pandas >=2.2.3",
     "typing-extensions>=4.15.0",
     "fastapi>=0.131.0",
+    "rapidfuzz>=3.9.0",
 ]
 
 [project.optional-dependencies]
