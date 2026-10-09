@@ -14,8 +14,12 @@ Executing the queries needs the endpoint and is covered by scripts/check_example
 
 from pathlib import Path
 
+import httpx
+
 from sparql_llm.indexing.sync_examples import (
+    CURATOR_SOURCES,
     Example,
+    discover_sources,
     drop_already_curated,
     normalise_query,
     parse_examples,
@@ -164,3 +168,31 @@ def test_resyncing_does_not_drop_what_the_previous_sync_added():
     second, _ = drop_already_curated([_ex("Who founded the Rotary Club?")], CURATED)
     assert len(first) == 1
     assert len(second) == 1
+
+
+def _client(handler) -> httpx.Client:
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _entry(name: str, kind: str = "file") -> dict:
+    return {"name": name, "type": kind, "download_url": f"https://raw.example/{name}"}
+
+
+def test_every_markdown_file_in_their_folder_is_a_source_except_the_readme():
+    listing = [_entry("readme.md"), _entry("query_membership.md"), _entry("query_birth_death.md"),
+               _entry("notes.txt"), _entry("drafts", kind="dir")]
+    urls, note = discover_sources(_client(lambda request: httpx.Response(200, json=listing)))
+    assert urls == ("https://raw.example/query_birth_death.md", "https://raw.example/query_membership.md")
+    assert note == ""
+
+
+def test_a_failed_listing_falls_back_to_the_known_files_and_says_so():
+    urls, note = discover_sources(_client(lambda request: httpx.Response(403, json={"message": "rate limit"})))
+    assert urls == CURATOR_SOURCES
+    assert "known file list" in note
+
+
+def test_an_empty_listing_falls_back_to_the_known_files():
+    urls, note = discover_sources(_client(lambda request: httpx.Response(200, json=[_entry("readme.md")])))
+    assert urls == CURATOR_SOURCES
+    assert note

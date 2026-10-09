@@ -35,13 +35,29 @@ from sparql_llm.config import settings
 from sparql_llm.loaders.sparql_examples_md_loader import PREFIX_TYPO_FIXES
 from sparql_llm.utils import logger, query_sparql
 
-#: Raw URLs of the curators' example files. Their repository is public, so no token is
-#: needed; ``main`` rather than a pinned sha because the point is to pick up their edits.
-CURATOR_SOURCES: tuple[str, ...] = (
-    "https://raw.githubusercontent.com/lod4hss-projects/elites-suisses/main/"
-    "llm_documentation/SPARQL_queries_examples/query_examples.md",
-    "https://raw.githubusercontent.com/lod4hss-projects/elites-suisses/main/"
-    "llm_documentation/SPARQL_queries_examples/query_obtaining_study_title.md",
+#: The curators' examples folder. Every Markdown file in it except the readme is a source,
+#: so a file they add is picked up on the next rebuild without a change here. Their
+#: repository is public, so no token is needed; ``main`` rather than a pinned sha because
+#: the point is to pick up their edits.
+CURATOR_REPO = "lod4hss-projects/elites-suisses"
+CURATOR_FOLDER = "llm_documentation/SPARQL_queries_examples"
+CURATOR_LISTING_URL = f"https://api.github.com/repos/{CURATOR_REPO}/contents/{CURATOR_FOLDER}?ref=main"
+_RAW_BASE = f"https://raw.githubusercontent.com/{CURATOR_REPO}/main/{CURATOR_FOLDER}/"
+
+#: Used only when the folder cannot be listed (GitHub allows 60 unauthenticated API
+#: calls per hour per IP): the files known on 2026-10-09.
+CURATOR_SOURCES: tuple[str, ...] = tuple(
+    _RAW_BASE + name
+    for name in (
+        "query_birth_death.md",
+        "query_examples.md",
+        "query_family_light.md",
+        "query_gender_light.md",
+        "query_geocoordinates.md",
+        "query_geoplace_type.md",
+        "query_membership.md",
+        "query_obtaining_study_title.md",
+    )
 )
 
 #: The synced material is written here rather than into the curated file, which is
@@ -234,8 +250,39 @@ def fetch(url: str, client: httpx.Client | None = None) -> str:
             client.close()
 
 
+def discover_sources(client: httpx.Client | None = None) -> tuple[tuple[str, ...], str]:
+    """List the curators' example files. Returns (raw URLs, note).
+
+    Falls back to ``CURATOR_SOURCES`` when the listing fails, and says so in the note,
+    so a rate-limited rebuild still syncs the files we know about.
+    """
+    owned = client is None
+    client = client or httpx.Client(follow_redirects=True, timeout=30)
+    try:
+        response = client.get(CURATOR_LISTING_URL, headers={"Accept": "application/vnd.github+json"})
+        response.raise_for_status()
+        urls = tuple(
+            sorted(
+                entry["download_url"]
+                for entry in response.json()
+                if entry.get("type") == "file"
+                and entry["name"].lower().endswith(".md")
+                and entry["name"].lower() != "readme.md"
+            )
+        )
+        if not urls:
+            return CURATOR_SOURCES, "folder listing was empty; used the known file list"
+        return urls, ""
+    except Exception as exc:
+        logger.warning("Example sync: could not list %s (%s); using the known file list", CURATOR_FOLDER, exc)
+        return CURATOR_SOURCES, f"could not list the curators' folder ({type(exc).__name__}); used the known file list"
+    finally:
+        if owned:
+            client.close()
+
+
 def sync_curator_examples(
-    sources: tuple[str, ...] = CURATOR_SOURCES,
+    sources: tuple[str, ...] | None = None,
     target: str | Path | None = None,
     endpoint: str | None = None,
     dry_run: bool = False,
@@ -256,10 +303,13 @@ def sync_curator_examples(
         "sources": [],
         "written": False,
         "error": "",
+        "note": "",
     }
 
     parsed: list[Example] = []
     with httpx.Client(follow_redirects=True, timeout=30) as client:
+        if sources is None:
+            sources, report["note"] = discover_sources(client)
         for url in sources:
             try:
                 text = fetch(url, client)
@@ -324,6 +374,8 @@ def format_report(report: dict[str, Any]) -> str:
         bits.append(f"⚠ {len(report['rejected'])} rejected and NOT indexed: {titles}")
     if report["error"]:
         bits.append(f"⚠ {report['error']}")
+    if report.get("note"):
+        bits.append(report["note"])
     return "; ".join(bits)
 
 
@@ -337,6 +389,8 @@ def main() -> int:
     args = parser.parse_args()
 
     report = sync_curator_examples(dry_run=args.dry_run)
+    if report.get("note"):
+        print(f"  note: {report['note']}")
     for source in report["sources"]:
         print(f"  fetched {source['found']:>2} example(s) from {source['url'].rsplit('/', 1)[-1]}")
     print(f"\n  accepted: {report['accepted']}")
