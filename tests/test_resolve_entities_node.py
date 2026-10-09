@@ -105,3 +105,17 @@ def test_tools_prompt_resolves_names_first():
     from sparql_llm.agent.prompts import TOOLS_RESOLUTION_PROMPT
 
     assert "resolve_entity_uri" in TOOLS_RESOLUTION_PROMPT
+
+
+def test_query_turn_must_not_state_results_before_they_exist():
+    # The query-writing turn is streamed to the user before execution; with a resolved URI
+    # in hand the model filled in invented spouses ("Emma Bär") as if it had the results.
+    from sparql_llm.agent.prompts import RESOLUTION_PROMPT
+
+    assert "before you have received the results" in RESOLUTION_PROMPT
+
+
+def test_values_example_survives_markdown_rendering():
+    # The step card renders markdown: a bare <uri> is swallowed as an HTML tag.
+    content = run(_state("Ernst Brenner"), CONFIG)["messages"][0].content
+    assert "`VALUES ?person { <uri> }`" in content

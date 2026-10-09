@@ -13,7 +13,7 @@ ENTITIES_PREAMBLE = """--- ENTITIES FOUND ---
 Names from the question, matched against the labels in the knowledge graph. Each candidate says how it matched:
 "exact" (same words), "contains the name" (all its words, plus more such as a first name), "similar spelling",
 or "partial" (the label is only part of the name, e.g. the city "Bern" for "University of Bern" — usually a different entity).
-- Use the URI directly, e.g. VALUES ?person { <uri> }, instead of filtering on the label.
+- Use the URI directly, e.g. `VALUES ?person { <uri> }`, instead of filtering on the label.
 - If several candidates fit and the question does not say which one, do not guess: tell the user there are several and list them with their years.
 - If candidates share the same label and nothing tells them apart, use all of them in VALUES.
 - Ignore a candidate whose label does not denote the name in the question (a different person or place that merely looks similar).
