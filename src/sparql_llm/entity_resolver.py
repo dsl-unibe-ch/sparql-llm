@@ -80,12 +80,12 @@ class EntityResolver:
             return bool(self._rows)
         try:
             rows = json.loads(self.path.read_text(encoding="utf-8"))["entities"]
+            keys = [normalise(r["label"]) for r in rows]
         except Exception as exc:
             logger.warning("Entity resolution unavailable: cannot read %s (%s)", self.path, exc)
             self._rows, self._keys = [], []
         else:
-            self._rows = rows
-            self._keys = [normalise(r["label"]) for r in rows]
+            self._rows, self._keys = rows, keys
         self._mtime = mtime
         return bool(self._rows)
 
@@ -106,7 +106,14 @@ class EntityResolver:
         if any(kinds[idx] in _STRONG for _, _, idx in hits):
             hits = [h for h in hits if kinds[h[2]] in _STRONG]
         ranked = sorted(
-            hits, key=lambda h: (_KIND_ORDER[kinds[h[2]]], -fuzz.token_sort_ratio(query, h[0]), -h[1])
+            hits,
+            key=lambda h: (
+                _is_placeholder(self._rows[h[2]]),
+                _KIND_ORDER[kinds[h[2]]],
+                not (self._rows[h[2]].get("birth") or self._rows[h[2]].get("death")),
+                -fuzz.token_sort_ratio(query, h[0]),
+                -h[1],
+            ),
         )
         candidates = []
         for _, score, idx in ranked[:limit]:
@@ -122,6 +129,18 @@ class EntityResolver:
 
 _STRONG = {"exact", "contains the name"}
 _KIND_ORDER = {"exact": 0, "contains the name": 1, "similar spelling": 2, "partial": 3}
+
+
+def _is_placeholder(row: dict[str, str]) -> bool:
+    """A person known only by surname plus '??', nothing, or initials ("Weber, F", "Weber, J.").
+
+    Real but uninformative: ranked after named people so a bare surname does not open
+    with a list of placeholders.
+    """
+    if row.get("type") != "Person" or "," not in row["label"]:
+        return False
+    words = re.findall(r"[^\W\d_]+", row["label"].split(",", 1)[1])
+    return all(len(w) == 1 for w in words)
 
 
 def _match_kind(query: str, key: str) -> str:

@@ -119,3 +119,16 @@ def test_values_example_survives_markdown_rendering():
     # The step card renders markdown: a bare <uri> is swallowed as an HTML tag.
     content = run(_state("Ernst Brenner"), CONFIG)["messages"][0].content
     assert "`VALUES ?person { <uri> }`" in content
+
+
+def test_a_resolver_error_never_breaks_the_chat(monkeypatch):
+    class Broken:
+        available = True
+
+        def resolve(self, name):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(node_module, "get_resolver", lambda: Broken())
+    out = run(_state("Ernst Brenner"), CONFIG)
+    assert "messages" not in out
+    assert "unavailable" in out["steps"][0].label

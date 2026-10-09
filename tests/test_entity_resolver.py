@@ -158,3 +158,24 @@ def test_match_kinds_for_full_and_contained_names(resolver):
     assert resolver.resolve("Ernst Brenner").candidates[0].match == "exact"
     assert resolver.resolve("Ogi").candidates[0].match == "contains the name"
     assert resolver.resolve("Brener Ernst").candidates[0].match == "similar spelling"
+
+
+def test_a_row_without_a_label_makes_the_file_unavailable_not_a_crash(tmp_path):
+    path = tmp_path / "entity_names.json"
+    path.write_text(json.dumps({"entities": [{"uri": "u:x", "type": "Person"}]}), encoding="utf-8")
+    assert EntityResolver(path).resolve("Ernst Brenner") is None
+
+
+def test_real_people_rank_before_placeholder_labels(tmp_path):
+    path = tmp_path / "entity_names.json"
+    rows = [
+        {"uri": "u:q", "label": "Weber, ??", "type": "Person"},
+        {"uri": "u:f", "label": "Weber, F", "type": "Person"},
+        {"uri": "u:j", "label": "Weber, J.", "type": "Person"},
+        {"uri": "u:otto", "label": "Weber, Otto", "type": "Person"},
+        {"uri": "u:hans", "label": "Weber, Hans", "type": "Person", "birth": "1901"},
+    ]
+    path.write_text(json.dumps({"entities": rows}), encoding="utf-8")
+    ranked = [c.uri for c in EntityResolver(path).resolve("Weber").candidates]
+    assert ranked[:2] == ["u:hans", "u:otto"]
+    assert set(ranked[2:]) == {"u:q", "u:f", "u:j"}

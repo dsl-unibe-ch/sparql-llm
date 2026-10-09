@@ -8,6 +8,7 @@ from langchain_core.runnables import RunnableConfig
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration
 from sparql_llm.entity_resolver import Resolution, get_resolver
+from sparql_llm.utils import logger
 
 ENTITIES_PREAMBLE = """--- ENTITIES FOUND ---
 Names from the question, matched against the labels in the knowledge graph. Each candidate says how it matched:
@@ -44,7 +45,12 @@ async def resolve_entities(state: State, config: RunnableConfig) -> dict[str, An
     resolver = get_resolver()
     if not resolver.available:
         return {"steps": [StepOutput(label="🖇️ Entity index not built yet: names matched by label")]}
-    resolutions = [r for r in (resolver.resolve(n) for n in names) if r is not None]
+    try:
+        resolutions = [r for r in (resolver.resolve(n) for n in names) if r is not None]
+    except Exception as exc:
+        # Resolution is an aid: a failure here falls back to label filters, never fails the chat.
+        logger.warning("Entity resolution failed, falling back to label filters: %s", exc)
+        return {"steps": [StepOutput(label="🖇️ Entity resolution unavailable: names matched by label")]}
     if not resolutions:
         return {}
     content = format_entities_message(resolutions)

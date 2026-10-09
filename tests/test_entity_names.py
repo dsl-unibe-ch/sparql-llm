@@ -63,3 +63,21 @@ def test_an_empty_result_is_an_error_not_an_empty_file(tmp_path: Path):
     report = build_entity_names(target, EP, fetch=fake_fetch({}))
     assert report["error"]
     assert not target.exists()
+
+
+def test_a_much_smaller_list_does_not_replace_the_previous_one(tmp_path: Path):
+    target = tmp_path / "entity_names.json"
+    old = [{"uri": f"u{i}", "label": f"Old {i}", "type": "Person"} for i in range(10)]
+    target.write_text(json.dumps({"entities": old}), encoding="utf-8")
+    pages = {"Person": [_b(s=f"https://x/p{i}", l=f"New {i}") for i in range(5)]}
+    report = build_entity_names(target, EP, fetch=fake_fetch(pages))
+    assert report["entities"] == 0
+    assert "5" in report["error"] and "10" in report["error"]
+    assert len(json.loads(target.read_text(encoding="utf-8"))["entities"]) == 10
+
+
+def test_a_similar_sized_list_replaces_the_previous_one(tmp_path: Path):
+    target = tmp_path / "entity_names.json"
+    target.write_text(json.dumps({"entities": [{"uri": "u", "label": "Old", "type": "Person"}]}), encoding="utf-8")
+    report = build_entity_names(target, EP, fetch=fake_fetch({"Person": [_b(s="https://x/p", l="New")]}))
+    assert report["error"] == "" and report["entities"] == 1

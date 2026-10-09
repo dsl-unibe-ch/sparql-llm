@@ -26,6 +26,7 @@ LABEL = "https://sdhss.org/ontology/shortcuts/P9"
 BIRTH = "https://sdhss.org/ontology/shortcuts/P2"
 DEATH = "https://sdhss.org/ontology/shortcuts/P13"
 PAGE = 10000
+MIN_KEPT_FRACTION = 0.9
 
 ENTITY_TYPES: dict[str, str] = {
     "Person": "http://www.cidoc-crm.org/cidoc-crm/E21",
@@ -65,6 +66,14 @@ def fetch_entities(endpoint: str, fetch: Callable[..., Any] = query_sparql) -> l
     return rows
 
 
+def _previous_count(path: Path) -> int:
+    """Entities in the current file, or 0 if there is none or it cannot be read."""
+    try:
+        return len(json.loads(path.read_text(encoding="utf-8"))["entities"])
+    except Exception:
+        return 0
+
+
 def build_entity_names(
     path: Path = ENTITY_NAMES_FILE,
     endpoint: str | None = None,
@@ -77,6 +86,11 @@ def build_entity_names(
         rows = fetch_entities(endpoint, fetch)
         if not rows:
             raise ValueError("the endpoint returned no entities")
+        previous = _previous_count(path)
+        if previous and len(rows) < MIN_KEPT_FRACTION * previous:
+            # A short page is read as "done", so an endpoint row cap would truncate the list
+            # without an error. A large drop is far likelier to be that than real deletions.
+            raise ValueError(f"only {len(rows)} entities against {previous} in the previous list")
         payload = {"built_at": datetime.now(timezone.utc).isoformat(), "endpoint": endpoint, "entities": rows}
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
