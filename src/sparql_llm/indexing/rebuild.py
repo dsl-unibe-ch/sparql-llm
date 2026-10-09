@@ -29,6 +29,7 @@ from qdrant_client import models
 
 from sparql_llm.config import settings
 from sparql_llm.indexing.drift import save_fingerprint, take_fingerprint
+from sparql_llm.indexing.entity_names import build_entity_names
 from sparql_llm.indexing.index_resources import endpoints_metadata, init_vectordb, qdrant_client
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.utils import logger
@@ -140,6 +141,16 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     examples_summary = format_report(examples_report)
     logger.info("Example sync: %s", examples_summary)
 
+    # The name → URI list the entity resolver matches against. Never raises: on failure
+    # the previous list stays in use and the result message says so.
+    _set_job("running", f"{examples_summary}. Collecting entity names…", collection=target)
+    entities_report = build_entity_names()
+    entities_warning = (
+        f" ⚠ Entity names not rebuilt ({entities_report['error']}); the previous list is still in use."
+        if entities_report["error"]
+        else ""
+    )
+
     # Refresh the query validator's schema (cached in data/endpoints_metadata.json) from
     # the same VoID the index is built from, so it never validates against a stale copy.
     # A failure here keeps the previous schema and is reported with the result.
@@ -207,6 +218,7 @@ def rebuild_index_with_alias() -> dict[str, Any]:
         "triples": fingerprint.triples,
         "classes": len(fingerprint.classes),
         "examples_accepted": examples_report["accepted"],
+        "entities": entities_report["entities"],
         "examples_rejected": examples_report["rejected"],
     }
     # A rejected example is the one outcome an admin must not miss: the rebuild
@@ -218,7 +230,8 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     _set_job(
         "done",
         f"Index rebuilt: {doc_count} documents covering {len(fingerprint.classes)} classes "
-        f"({fingerprint.triples:,} triples).{warning}{schema_warning}",
+        f"({fingerprint.triples:,} triples), {entities_report['entities']:,} entity names."
+        f"{warning}{schema_warning}{entities_warning}",
         **result,
     )
     return result
