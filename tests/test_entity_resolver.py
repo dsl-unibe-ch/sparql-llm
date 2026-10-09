@@ -21,6 +21,10 @@ ROWS = [
     *[{"uri": f"u:wx{i}", "label": f"Weber, Name{i}", "type": "Person"} for i in range(5)],
     *[{"uri": f"u:geneva{i}", "label": "Geneva", "type": "Place"} for i in range(4)],
     {"uri": "u:cf", "label": "Conseil fédéral", "type": "Group"},
+    {"uri": "u:unibe", "label": "Universität Bern", "type": "Group"},
+    {"uri": "u:bergen", "label": "University of Bergen", "type": "Group"},
+    {"uri": "u:bern", "label": "Bern", "type": "Place"},
+    {"uri": "u:zurich", "label": "Zurich", "type": "Place"},
 ]
 
 
@@ -135,3 +139,22 @@ def test_tool_text_without_file_points_to_the_fallback(tmp_path):
 
     text = describe_for_tool(EntityResolver(tmp_path / "absent.json"), "Ernst Brenner")
     assert "not been built" in text and "Surname, Firstname" in text
+
+
+def test_a_label_that_is_only_part_of_the_name_does_not_hide_the_others(resolver):
+    res = resolver.resolve("University of Bern")
+    assert len(res.candidates) > 1
+    bern = next(c for c in res.candidates if c.uri == "u:bern")
+    assert bern.match == "partial"
+
+
+def test_only_partial_matches_are_marked_as_such(resolver):
+    res = resolver.resolve("ETH Zürich")
+    assert [c.uri for c in res.candidates] == ["u:zurich"]
+    assert res.candidates[0].match == "partial"
+
+
+def test_match_kinds_for_full_and_contained_names(resolver):
+    assert resolver.resolve("Ernst Brenner").candidates[0].match == "exact"
+    assert resolver.resolve("Ogi").candidates[0].match == "contains the name"
+    assert resolver.resolve("Brener Ernst").candidates[0].match == "similar spelling"

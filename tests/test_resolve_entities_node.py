@@ -53,6 +53,8 @@ def test_entities_message_contains_rules():
     assert "do not guess" in content.lower()
     assert "does not denote" in content.lower()
     assert "label filter" in content.lower()
+    assert "ignore every candidate" in content.lower()
+    assert "exact match" not in content.lower()
 
 
 def test_unmatched_name_tells_the_model_to_fall_back():
