@@ -4269,6 +4269,7 @@ dependencies = [
 [package.optional-dependencies]
 agent = [
     { name = "aiosqlite" },
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "fastapi-users", extra = ["sqlalchemy"] },
     { name = "jinja2" },
@@ -4305,6 +4306,7 @@ dev = [
 requires-dist = [
     { name = "aiosqlite", marker = "extra == 'agent'", specifier = ">=0.20.0" },
     { name = "beautifulsoup4", specifier = ">=4.13.0" },
+    { name = "cryptography", marker = "extra == 'agent'", specifier = ">=43.0.0" },
     { name = "curies", specifier = ">=0.11.0" },
     { name = "fastapi", specifier = ">=0.131.0" },
     { name = "fastapi", marker = "extra == 'agent'", specifier = ">=0.123.0" },

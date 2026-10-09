@@ -34,16 +34,43 @@ class GptOssChatOpenAI(ChatOpenAI):
 
 
 def load_chat_model(configuration: Configuration) -> BaseChatModel:
-    """Load the chat model named by ``configuration.model``, in the format 'provider/model'."""
+    """Load the chat model named by ``configuration.model``, in the format 'provider/model'.
+
+    Per-user credentials (``llm_api_key``, ``llm_base_url``) are read from
+    *configuration*, which is populated from the ``RunnableConfig`` at request
+    time.  Falls back to environment variables for backwards compatibility
+    (e.g. CLI usage, tests).
+    """
     provider, model_name = configuration.model.split("/", maxsplit=1)
+
+    # Per-user credentials injected via RunnableConfig → Configuration
+    api_key = configuration.llm_api_key or os.getenv("OPENAI_API_KEY") or ""
+    base_url = configuration.llm_base_url or os.getenv("OPENAI_BASE_URL", "")
+
+    # Some reasoning models (e.g., minimax, deepseek-r1, o1, o3) strictly reject temperature 
+    # parameters or require them to be exactly 1.0. To avoid BadRequestErrors, we omit it 
+    # (pass None) for these models so the provider uses its default.
+    reasoning_prefixes = ("o1", "o3", "minimax", "deepseek", "reasoning")
+    safe_temperature = None if any(rm in model_name.lower() for rm in reasoning_prefixes) else configuration.temperature
+
     if provider == "openrouter":
         # https://openrouter.ai/docs/community/lang-chain
         return ChatOpenAI(
             base_url="https://openrouter.ai/api/v1",
             model=model_name,
-            temperature=configuration.temperature,
+            temperature=safe_temperature,
             api_key=SecretStr(os.getenv("OPENROUTER_API_KEY") or ""),
             seed=configuration.seed,
+        )
+    if provider == "openai":
+        return ChatOpenAI(
+            base_url=base_url or "https://api.openai.com/v1",
+            model=model_name,
+            temperature=safe_temperature,
+            api_key=SecretStr(api_key),
+            seed=configuration.seed,
+            timeout=120.0,
+            max_retries=1,
         )
     if provider == "gpustack":
         # With tools bound, gpt-oss on GPUStack/vLLM often returns an empty completion
@@ -55,14 +82,25 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
         # instead, so the callers' fallbacks can recover.
         chat_class = GptOssChatOpenAI if "gpt-oss" in model_name else ChatOpenAI
         return chat_class(
-            base_url=os.getenv("OPENAI_BASE_URL", "https://gpustack.unibe.ch/v1"),
+            base_url=base_url or "https://gpustack.unibe.ch/v1",
             model=model_name,
-            temperature=configuration.temperature,
-            api_key=SecretStr(os.getenv("OPENAI_API_KEY") or ""),
+            temperature=safe_temperature,
+            api_key=SecretStr(api_key),
             seed=configuration.seed,
             timeout=90.0,
             max_retries=1,
             disable_streaming=disable_streaming,
+        )
+    if provider == "custom":
+        # Generic OpenAI-compatible endpoint (e.g. Ollama, LM Studio, Together AI)
+        return ChatOpenAI(
+            base_url=base_url,
+            model=model_name,
+            temperature=safe_temperature,
+            api_key=SecretStr(api_key),
+            seed=configuration.seed,
+            timeout=120.0,
+            max_retries=1,
         )
     return init_chat_model(
         model_name,

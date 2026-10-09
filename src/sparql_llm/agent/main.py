@@ -36,7 +36,7 @@ from sparql_llm.agent.roles import (
     role_flags,
     role_of,
 )
-from sparql_llm.config import settings
+from sparql_llm.config import settings, settings_filepath
 from sparql_llm.mcp_server import get_mcp_app
 from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
 
@@ -65,6 +65,7 @@ if settings.auth_enabled:
 
     from sparql_llm.agent.auth import (
         User,
+        UserLLMConfig,
         UserManager,
         async_session_maker,
         auth_backend,
@@ -72,10 +73,13 @@ if settings.auth_enabled:
         create_db_and_tables,
         current_active_user,
         fastapi_users,
+        get_async_session,
         get_jwt_strategy,
     )
     from sparql_llm.agent.conversations import delete_conversations_of
     from sparql_llm.agent.conversations import router as conversations_router
+    from sparql_llm.agent.crypto import decrypt_api_key, encrypt_api_key, mask_key
+    from sparql_llm.agent.providers import PROVIDERS, validate_and_list_models
     from sparql_llm.indexing.drift import check_drift
     from sparql_llm.indexing.rebuild import read_job, start_rebuild
 
@@ -327,6 +331,78 @@ if settings.auth_enabled:
             )
         return JSONResponse(result)
 
+    @app.get("/admin/settings", include_in_schema=False)
+    async def admin_get_settings(
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """Return the mutable runtime settings that admins and curators can change.
+
+        Currently exposes:
+        - ``default_number_of_retrieved_docs`` (top-k for RAG retrieval)
+
+        Returns:
+            JSON object with the current values.
+        """
+        if not can_manage(user):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        return JSONResponse({
+            "default_number_of_retrieved_docs": settings.default_number_of_retrieved_docs,
+        })
+
+    class _SettingsUpdate(BaseModel):
+        """Payload accepted by ``POST /admin/settings``."""
+        default_number_of_retrieved_docs: int | None = None
+
+    @app.post("/admin/settings", include_in_schema=False)
+    async def admin_update_settings(
+        body: _SettingsUpdate,
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """Update mutable runtime settings and persist them to disk.
+
+        Changes take effect immediately (no restart required) because the
+        in-memory ``settings`` singleton is mutated directly. The value is
+        also written to the settings JSON file so it survives restarts.
+
+        Args:
+            body: JSON object with the fields to update.
+
+        Returns:
+            JSON object echoing the new values.
+        """
+        if not can_manage(user):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+
+        # Validate and apply
+        if body.default_number_of_retrieved_docs is not None:
+            value = body.default_number_of_retrieved_docs
+            if not 1 <= value <= 100:
+                return JSONResponse(
+                    {"error": "default_number_of_retrieved_docs must be between 1 and 100."},
+                    status_code=422,
+                )
+            settings.default_number_of_retrieved_docs = value
+
+        # Persist to the settings JSON file so the value survives restarts
+        settings_path = settings_filepath or ""
+        if settings_path:
+            try:
+                path = pathlib.Path(settings_path)
+                data: dict[str, Any] = {}
+                if path.exists():
+                    with path.open("r") as f:
+                        data = json.load(f)
+                data["default_number_of_retrieved_docs"] = settings.default_number_of_retrieved_docs
+                with path.open("w") as f:
+                    json.dump(data, f, indent=2, ensure_ascii=False)
+                    f.write("\n")
+            except Exception as exc:
+                logger.warning(f"Could not persist settings to {settings_path}: {exc}")
+
+        return JSONResponse({
+            "default_number_of_retrieved_docs": settings.default_number_of_retrieved_docs,
+        })
+
     def _flash(kind: str, message: str) -> RedirectResponse:
         """Back to the admin page with a message. Quoted, so any text survives the URL."""
         return RedirectResponse(f"/admin?flash_{kind}={quote_plus(message)}", status_code=302)
@@ -421,6 +497,157 @@ if settings.auth_enabled:
         if request.method != "GET" or "application/json" in accept:
             return JSONResponse(status_code=401, content={"detail": "Not authenticated"})
         return RedirectResponse(url=f"/login?next={request.url.path}", status_code=302)
+
+    # ── BYOK: per-user LLM provider configuration ─────────────────────────
+
+    class LLMConfigRequest(BaseModel):
+        """Payload for ``PUT /llm-config``."""
+        provider: str            # "gpustack" | "openai" | "custom"
+        api_key: str             # plain text — encrypted before storage
+        base_url: str = ""       # empty → use provider default
+
+    class LLMConfigResponse(BaseModel):
+        provider: str
+        base_url: str
+        has_key: bool
+        masked_key: str          # "sk-…****1234" or ""
+
+    @app.get("/llm-config", response_model=LLMConfigResponse)
+    async def get_llm_config(
+        user: "User" = Depends(current_active_user),
+        session: "AsyncSession" = Depends(get_async_session),
+    ) -> JSONResponse:
+        """Return the current user's LLM provider config (key masked)."""
+        from sqlalchemy.ext.asyncio import AsyncSession as _AS  # noqa: F811
+
+        cfg = await session.get(UserLLMConfig, user.id)
+        if cfg is None:
+            return JSONResponse(content={
+                "provider": "",
+                "base_url": "",
+                "has_key": False,
+                "masked_key": "",
+                "providers": {k: {"label": v.label, "default_base_url": v.default_base_url, "help_text": v.help_text} for k, v in PROVIDERS.items()},
+            })
+        try:
+            plain_key = decrypt_api_key(cfg.encrypted_api_key, settings.auth_secret)
+            masked = mask_key(plain_key)
+        except Exception:
+            masked = "(decryption error)"
+        return JSONResponse(content={
+            "provider": cfg.provider,
+            "base_url": cfg.base_url,
+            "has_key": True,
+            "masked_key": masked,
+            "providers": {k: {"label": v.label, "default_base_url": v.default_base_url, "help_text": v.help_text} for k, v in PROVIDERS.items()},
+        })
+
+    @app.put("/llm-config")
+    async def set_llm_config(
+        body: LLMConfigRequest,
+        user: "User" = Depends(current_active_user),
+        session: "AsyncSession" = Depends(get_async_session),
+    ) -> JSONResponse:
+        """Set or update the user's LLM provider credentials.
+
+        Validates the key by calling ``GET /v1/models`` on the provider before
+        storing it.  Returns the list of available models on success.
+        """
+        from fastapi_users_db_sqlalchemy.generics import now_utc as _now_utc
+        from sqlalchemy.ext.asyncio import AsyncSession as _AS  # noqa: F811
+
+        if body.provider not in PROVIDERS:
+            return JSONResponse(
+                status_code=422,
+                content={"error": f"Unknown provider '{body.provider}'. Choose from: {', '.join(PROVIDERS)}."},
+            )
+        if not body.api_key.strip():
+            return JSONResponse(status_code=422, content={"error": "API key must not be empty."})
+
+        provider_info = PROVIDERS[body.provider]
+        effective_url = body.base_url.strip() or provider_info.default_base_url
+        if not effective_url:
+            return JSONResponse(
+                status_code=422,
+                content={"error": "Base URL is required for the 'custom' provider."},
+            )
+
+        # Validate the key by fetching models
+        try:
+            models = await validate_and_list_models(effective_url, body.api_key, body.provider)
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            return JSONResponse(
+                status_code=401,
+                content={"error": f"Could not validate API key against {effective_url}. {reason}"},
+            )
+
+        # Encrypt and store
+        encrypted = encrypt_api_key(body.api_key, settings.auth_secret)
+        cfg = await session.get(UserLLMConfig, user.id)
+        if cfg is None:
+            cfg = UserLLMConfig(user_id=user.id)
+            session.add(cfg)
+        cfg.provider = body.provider
+        cfg.encrypted_api_key = encrypted
+        cfg.base_url = effective_url
+        cfg.updated_at = _now_utc()
+        await session.commit()
+
+        return JSONResponse(content={
+            "provider": body.provider,
+            "base_url": effective_url,
+            "has_key": True,
+            "masked_key": mask_key(body.api_key),
+            "models": models,
+        })
+
+    @app.delete("/llm-config", status_code=204)
+    async def delete_llm_config(
+        user: "User" = Depends(current_active_user),
+        session: "AsyncSession" = Depends(get_async_session),
+    ) -> JSONResponse:
+        """Remove the user's stored LLM credentials."""
+        from sqlalchemy.ext.asyncio import AsyncSession as _AS  # noqa: F811
+
+        cfg = await session.get(UserLLMConfig, user.id)
+        if cfg is not None:
+            await session.delete(cfg)
+            await session.commit()
+        return JSONResponse(status_code=200, content={"status": "deleted"})
+
+    @app.get("/llm-config/models")
+    async def get_llm_models(
+        user: "User" = Depends(current_active_user),
+        session: "AsyncSession" = Depends(get_async_session),
+    ) -> JSONResponse:
+        """Fetch the model list from the user's configured provider."""
+        from sqlalchemy.ext.asyncio import AsyncSession as _AS  # noqa: F811
+
+        cfg = await session.get(UserLLMConfig, user.id)
+        if cfg is None or not cfg.encrypted_api_key:
+            return JSONResponse(content={"models": [], "needs_setup": True})
+        try:
+            plain_key = decrypt_api_key(cfg.encrypted_api_key, settings.auth_secret)
+            models = await validate_and_list_models(cfg.base_url, plain_key, cfg.provider)
+        except Exception as exc:
+            return JSONResponse(
+                status_code=401,
+                content={"error": f"Failed to fetch models: {type(exc).__name__}: {exc}", "needs_setup": True},
+            )
+        return JSONResponse(content={"models": models, "provider": cfg.provider, "needs_setup": False})
+
+    @app.get("/api-settings", response_class=HTMLResponse, include_in_schema=False)
+    async def api_settings_page(
+        request: Request,
+        user: "User" = Depends(current_active_user),
+    ) -> HTMLResponse:
+        """Render the API settings page."""
+        return templates.TemplateResponse(
+            request,
+            "api-settings.html",
+            {"current_user": user},
+        )
 
 # Create logs file if it doesn't exist
 question_logger = logging.getLogger("question_logger")
@@ -638,14 +865,9 @@ def tool_capable_models() -> list[str]:
 async def chat(
     request: Request,
     _user: Any = Depends(require_user),
+    session: "AsyncSession" = Depends(get_async_session),
 ) -> StreamingResponse | JSONResponse:
     """Chat with the assistant main endpoint."""
-    auth_header = request.headers.get("Authorization", "")
-    if settings.chat_api_key and (not auth_header or not auth_header.startswith("Bearer ")):
-        raise ValueError("Missing or invalid Authorization header")
-    if settings.chat_api_key and auth_header.split(" ")[1] != settings.chat_api_key:
-        raise ValueError("Invalid API key")
-
     chat_request = ChatCompletionRequest(**await request.json())
 
     # Natural-language mode runs on the MCP tools agent.
@@ -659,13 +881,11 @@ async def chat(
 
     # MCP tools mode needs tool calling, which some GPUStack deployments (e.g. qwen3-vl)
     # reject. Say so up front rather than failing mid-stream.
-    tool_capable = tool_capable_models()
     if chat_request.use_tools and chat_request.model in settings.tool_incapable_models:
-        capable_names = ", ".join(m.split("/", 1)[-1] for m in tool_capable) or "(none configured)"
         selected_name = chat_request.model.split("/", 1)[-1]
         msg = (
             f"⚠️ The model **{selected_name}** does not support tool calling, so it can't be used in "
-            f"**MCP tools** mode.\n\nEither turn MCP tools off, or pick a tool-capable model: {capable_names}."
+            f"**MCP tools** mode.\n\nEither turn MCP tools off, or pick a different tool-capable model."
         )
 
         async def _reject() -> AsyncGenerator[str, Any]:
@@ -694,9 +914,27 @@ async def chat(
     # whichever mode runs, never below LangGraph's default of 25.
     recursion_limit = max(25, 2 * max_try + 10, 2 * max_tool_iterations + 10)
 
+    # ── Fetch user's LLM credentials ──
+    llm_api_key = ""
+    llm_base_url = ""
+    llm_provider = "gpustack"
+    
+    if settings.auth_enabled and _user:
+        user_llm = await session.get(UserLLMConfig, _user.id)
+        if user_llm:
+            try:
+                llm_api_key = decrypt_api_key(user_llm.encrypted_api_key, settings.auth_secret)
+                llm_base_url = user_llm.base_url
+                llm_provider = user_llm.provider
+            except Exception as exc:
+                logger.error("Failed to decrypt API key for user %s: %s", _user.id, exc)
+
     config = RunnableConfig(
         configurable={
             "model": chat_request.model,
+            "llm_api_key": llm_api_key,
+            "llm_base_url": llm_base_url,
+            "llm_provider": llm_provider,
             "temperature": chat_request.temperature,
             "max_tokens": chat_request.max_tokens,
             "validate_output": chat_request.validate_output,
@@ -770,29 +1008,45 @@ async def post_feedback(
 async def get_models(
     request: Request,
     _user: Any = Depends(require_user),
+    session: "AsyncSession" = Depends(get_async_session),
 ) -> JSONResponse:
     """Return the models offered in the chat UI's picker.
 
-    That is ``settings.available_llm_models``, or ``[settings.default_llm_model]`` when
-    it is empty. The provider is never asked, so GPUStack's embedding and other non-chat
-    models stay hidden.
+    Queries the user's configured provider for available models. If no key
+    is configured, returns `needs_setup: True`.
     """
-    if settings.chat_api_key:
-        auth_header = request.headers.get("Authorization", "")
-        token = auth_header.split(" ", 1)[1] if auth_header.startswith("Bearer ") else ""
-        if token != settings.chat_api_key:
-            return JSONResponse(status_code=401, content={"error": "Unauthorized"})
-
-    models = settings.available_llm_models or [settings.default_llm_model]
-    # Expose which models can be used in MCP tools mode so the UI can guide the user.
-    tool_capable = tool_capable_models()
-    return JSONResponse(
-        content={
+    if not settings.auth_enabled:
+        models = settings.available_llm_models or [settings.default_llm_model]
+        return JSONResponse(content={
             "models": models,
             "default": settings.default_llm_model,
-            "tool_capable_models": tool_capable,
-        }
-    )
+            "tool_capable_models": [m for m in models if m not in settings.tool_incapable_models],
+        })
+
+    cfg = await session.get(UserLLMConfig, _user.id)
+    if cfg is None or not cfg.encrypted_api_key:
+        return JSONResponse(content={"models": [], "needs_setup": True})
+
+    try:
+        plain_key = decrypt_api_key(cfg.encrypted_api_key, settings.auth_secret)
+        models = await validate_and_list_models(cfg.base_url, plain_key, cfg.provider)
+    except Exception as exc:
+        logger.error("Failed to fetch models for user %s: %s", _user.id, exc)
+        return JSONResponse(
+            status_code=401,
+            content={"error": "Failed to fetch models. Your API key might be invalid.", "needs_setup": True},
+        )
+
+    # All models fetched from a chat model endpoint are considered tool-capable for now,
+    # except those explicitly blacklisted in settings.
+    tool_capable = [m for m in models if m not in settings.tool_incapable_models]
+    
+    return JSONResponse(content={
+        "models": models,
+        "default": models[0] if models else settings.default_llm_model,
+        "tool_capable_models": tool_capable,
+        "needs_setup": False,
+    })
 
 
 class LogsRequest(BaseModel):

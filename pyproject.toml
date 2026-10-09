@@ -69,6 +69,7 @@ agent = [
     "sentry-sdk[fastapi] >=2.27.0", # Error reporting at the SIB
     "fastapi-users[sqlalchemy] >=13.0.0",
     "aiosqlite >=0.20.0",
+    "cryptography >=43.0.0",
     "python-multipart >=0.0.9",
     # Extract potential entities from text without LLM
     # "scispacy >=0.5.5",

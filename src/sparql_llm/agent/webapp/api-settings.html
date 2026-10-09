@@ -1,0 +1,319 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Swiss Elites Chat — API Settings</title>
+    <link rel="icon" type="image/png" href="/assets/sib-logo--jUM9mer.png" />
+    <style>
+      *, *::before, *::after { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        background: #f8fafc; color: #1e293b;
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+
+      /* ── Header ── */
+      .site-header {
+        flex-shrink: 0;
+        background: rgba(255,255,255,0.9);
+        backdrop-filter: blur(12px);
+        border-bottom: 1px solid #e2e8f0;
+        padding: 0 1.25rem;
+        display: flex; align-items: center; justify-content: space-between;
+        height: 56px; z-index: 100;
+      }
+      .brand { display: flex; align-items: center; gap: 0.75rem; text-decoration: none; color: inherit; }
+      .brand-logo { height: 28px; width: auto; }
+      .brand-text { font-weight: 600; font-size: 1.125rem; letter-spacing: -0.01em; }
+
+      /* ── Main Layout ── */
+      .main-layout { flex: 1; overflow-y: auto; display: flex; justify-content: center; padding: 2rem 1rem; }
+      .settings-container { width: 100%; max-width: 600px; }
+      
+      .card {
+        background: white; border-radius: 12px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+        padding: 2rem; border: 1px solid #e2e8f0;
+      }
+      
+      h1 { margin-top: 0; font-size: 1.5rem; margin-bottom: 1.5rem; display: flex; align-items: center; gap: 0.5rem; }
+      
+      .form-group { margin-bottom: 1.5rem; }
+      .form-group label { display: block; font-weight: 500; margin-bottom: 0.5rem; font-size: 0.875rem; color: #475569; }
+      
+      select, input[type="text"], input[type="password"] {
+        width: 100%; padding: 0.75rem; border: 1px solid #cbd5e1; border-radius: 6px;
+        font-size: 1rem; font-family: inherit; transition: border-color 0.15s;
+      }
+      select:focus, input:focus { outline: none; border-color: #3b82f6; box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
+      
+      .help-text { font-size: 0.875rem; color: #64748b; margin-top: 0.5rem; }
+      
+      .actions { display: flex; justify-content: space-between; align-items: center; margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #e2e8f0; }
+      
+      .btn {
+        padding: 0.75rem 1.5rem; border-radius: 6px; font-weight: 500; font-size: 0.875rem;
+        cursor: pointer; border: none; transition: background-color 0.15s; text-decoration: none; display: inline-flex; align-items: center; justify-content: center;
+      }
+      .btn-primary { background: #0f172a; color: white; }
+      .btn-primary:hover { background: #1e293b; }
+      .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
+      
+      .btn-danger { background: transparent; color: #ef4444; border: 1px solid #ef4444; }
+      .btn-danger:hover { background: #fef2f2; }
+      
+      .status-box {
+        margin-top: 1.5rem; padding: 1rem; border-radius: 6px; font-size: 0.875rem; display: none;
+      }
+      .status-box.error { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; display: block; }
+      .status-box.success { background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; display: block; }
+      .status-box.info { background: #eff6ff; color: #1d4ed8; border: 1px solid #bfdbfe; display: block; }
+
+      .input-with-button { display: flex; gap: 0.5rem; }
+      .input-with-button input { flex: 1; }
+      .input-with-button button { 
+        padding: 0 1rem; border: 1px solid #cbd5e1; background: #f8fafc; border-radius: 6px; cursor: pointer;
+      }
+      .input-with-button button:hover { background: #e2e8f0; }
+      
+      /* ── Key handling notice ── */
+      .key-info { margin-top: 1.5rem; border: 1px solid #e2e8f0; border-radius: 8px; background: #f8fafc; font-size: 0.875rem; line-height: 1.55; color: #334155; }
+      .key-info summary { cursor: pointer; padding: 0.875rem 1rem; font-weight: 600; color: #0f172a; list-style-position: inside; }
+      .key-info summary:hover { background: #f1f5f9; border-radius: 8px; }
+      .key-info-body { padding: 0 1rem 1rem; }
+      .key-info h3 { font-size: 0.875rem; margin: 1.25rem 0 0.5rem; color: #0f172a; }
+      .key-info ol, .key-info ul { margin: 0; padding-left: 1.25rem; }
+      .key-info li { margin-bottom: 0.4rem; }
+      .key-info code { font-size: 0.8125rem; background: #e2e8f0; padding: 0.05rem 0.3rem; border-radius: 4px; }
+      .key-info .tldr { margin: 0; padding: 0.75rem; background: white; border: 1px solid #e2e8f0; border-radius: 6px; }
+      .key-info .risks { border-left: 3px solid #f59e0b; padding-left: 0.75rem; }
+
+      .back-link { display: inline-flex; align-items: center; gap: 0.25rem; color: #475569; text-decoration: none; margin-bottom: 1.5rem; font-size: 0.875rem; font-weight: 500; }
+      .back-link:hover { color: #0f172a; }
+    </style>
+  </head>
+  <body>
+    <header class="site-header">
+      <a href="/" class="brand">
+        <img src="/assets/sib-logo--jUM9mer.png" alt="SIB Logo" class="brand-logo" />
+        <span class="brand-text">Swiss Elites Chat</span>
+      </a>
+      <div style="font-size: 0.875rem; color: #64748b;">
+        {{ current_user.email }}
+      </div>
+    </header>
+
+    <main class="main-layout">
+      <div class="settings-container">
+        <a href="/" class="back-link">← Back to Chat</a>
+        
+        <div class="card">
+          <h1>⚙️ API Settings</h1>
+          <p style="color: #475569; margin-bottom: 2rem;">Configure the Large Language Model provider to use for your chats.</p>
+          
+          <div id="status-message" class="status-box">Loading...</div>
+          
+          <form id="settings-form" style="margin-top: 1.5rem;">
+            <div class="form-group">
+              <label for="provider">Provider</label>
+              <select id="provider" name="provider" required></select>
+            </div>
+            
+            <div class="form-group">
+              <label for="base-url">Base URL</label>
+              <input type="text" id="base-url" name="base_url" placeholder="https://api.openai.com/v1" />
+              <div class="help-text" id="provider-help"></div>
+            </div>
+            
+            <div class="form-group">
+              <label for="api-key">API Key</label>
+              <div class="input-with-button">
+                <input type="password" id="api-key" name="api_key" placeholder="sk-..." required />
+                <button type="button" id="toggle-key" title="Show/Hide">👁️</button>
+              </div>
+              <div class="help-text">Encrypted before it is stored, and only sent to the provider above. See <a href="#key-info" id="key-info-link">what happens to your API key</a> below.</div>
+            </div>
+            
+            <div class="actions">
+              <button type="button" id="btn-delete" class="btn btn-danger" style="display: none;">Remove Key</button>
+              <div style="flex:1"></div>
+              <button type="submit" id="btn-save" class="btn btn-primary">Save & Validate</button>
+            </div>
+          </form>
+
+          <details class="key-info" id="key-info">
+            <summary>🔒 What happens to your API key</summary>
+            <div class="key-info-body">
+              <p class="tldr">
+                <strong>In short:</strong> your key is encrypted before it is stored, it is only sent to the
+                provider you choose, and the full key is never shown again. However, this server has to be
+                able to decrypt your key in order to use it, so you are trusting this server and the people
+                who run it. The details and the risks are below.
+              </p>
+
+              <h3>Step by step</h3>
+              <ol>
+                <li><strong>Sending.</strong> Your browser sends the key to this server over an encrypted HTTPS connection.</li>
+                <li><strong>Checking.</strong> The server tests the key by asking your provider (at the Base URL above) for its list of models. If the test fails, nothing is saved.</li>
+                <li><strong>Storing.</strong> The key is encrypted (AES with an integrity check) and saved in the app's user database, linked only to your account. The unencrypted key is never written to disk or to the server logs.</li>
+                <li><strong>Using.</strong> When you chat, the server decrypts the key in memory and sends it only to your provider, together with your messages. To hide models that cannot be used here, the server also sends one tiny test request per model about every 6 hours. These use a few tokens on your account.</li>
+                <li><strong>Showing.</strong> This page only shows a masked version (for example <code>sk-p…****k29H</code>). The full key is never sent back to your browser. No page in the app, including the admin pages, shows the full key or lets other users use it.</li>
+                <li><strong>Removing.</strong> <em>Remove Key</em> deletes it from the database straight away.</li>
+              </ol>
+
+              <h3>Risks you should know about</h3>
+              <ul class="risks">
+                <li><strong>This is not end-to-end encryption.</strong> The secret that decrypts your key is kept on the same server as the database, because the server needs it to use your key. Someone with full access to this server (its administrators, or an attacker who breaks into it) could recover your key. The encryption mainly protects you if a copy of the database file leaks on its own.</li>
+                <li><strong>Your provider sees your chats.</strong> Your messages are sent to the provider you choose, and its own privacy and data-retention rules apply.</li>
+                <li><strong>Custom Base URL.</strong> With the custom provider, your key is sent to whatever address you enter. Only enter addresses you trust.</li>
+                <li><strong>Backups.</strong> If the server is backed up, an encrypted copy of your key may stay in older backups after you remove it.</li>
+                <li><strong>Costs.</strong> Everything this app does with your key is billed to your account with the provider.</li>
+              </ul>
+
+              <h3>How to protect yourself</h3>
+              <ul>
+                <li>Create a separate key just for this app instead of reusing one you use elsewhere.</li>
+                <li>If your provider allows it, give that key a spending limit or budget.</li>
+                <li>When you stop using this app, or if you think the key has been misused, <strong>revoke it at your provider</strong>. That is the only way to be sure the key can no longer be used anywhere, including here.</li>
+              </ul>
+            </div>
+          </details>
+        </div>
+      </div>
+    </main>
+
+    <script>
+      let providersMap = {};
+      
+      const form = document.getElementById('settings-form');
+      const providerSelect = document.getElementById('provider');
+      const baseUrlInput = document.getElementById('base-url');
+      const apiKeyInput = document.getElementById('api-key');
+      const statusBox = document.getElementById('status-message');
+      const helpText = document.getElementById('provider-help');
+      const btnSave = document.getElementById('btn-save');
+      const btnDelete = document.getElementById('btn-delete');
+      const btnToggleKey = document.getElementById('toggle-key');
+      
+      function showStatus(message, type) {
+        statusBox.textContent = message;
+        statusBox.className = 'status-box ' + type;
+      }
+      
+      function updateProviderHelp() {
+        const p = providersMap[providerSelect.value];
+        if (!p) return;
+        helpText.textContent = p.help_text;
+        
+        // If the user hasn't typed a custom URL, update it to the default
+        if (!baseUrlInput.value || Object.values(providersMap).some(pv => pv.default_base_url === baseUrlInput.value)) {
+           baseUrlInput.value = p.default_base_url;
+        }
+      }
+      
+      providerSelect.addEventListener('change', updateProviderHelp);
+
+      document.getElementById('key-info-link').addEventListener('click', () => {
+        document.getElementById('key-info').open = true;
+      });
+      
+      btnToggleKey.addEventListener('click', () => {
+        apiKeyInput.type = apiKeyInput.type === 'password' ? 'text' : 'password';
+      });
+      
+      // Load current settings
+      fetch('/llm-config')
+        .then(r => r.json())
+        .then(data => {
+          providersMap = data.providers;
+          
+          // Populate select
+          Object.entries(providersMap).forEach(([key, info]) => {
+            const opt = document.createElement('option');
+            opt.value = key;
+            opt.textContent = info.label;
+            providerSelect.appendChild(opt);
+          });
+          
+          if (data.has_key) {
+            providerSelect.value = data.provider;
+            baseUrlInput.value = data.base_url;
+            apiKeyInput.placeholder = data.masked_key;
+            apiKeyInput.required = false; // Because they don't have to re-enter it
+            btnDelete.style.display = 'inline-flex';
+            showStatus('✅ You have a configured API key.', 'success');
+          } else {
+            updateProviderHelp();
+            // First-time setup: show how the key is handled before it is entered.
+            document.getElementById('key-info').open = true;
+            showStatus('Please configure an API key to start chatting.', 'info');
+          }
+        })
+        .catch(err => showStatus('Failed to load settings.', 'error'));
+        
+      // Save settings
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        
+        const payload = {
+          provider: providerSelect.value,
+          base_url: baseUrlInput.value,
+          api_key: apiKeyInput.value
+        };
+        
+        if (!payload.api_key && !apiKeyInput.required) {
+          // They didn't change the key, so we don't send it. But our API requires it.
+          // In a real app, we'd allow updating just the base URL, but here we require re-entering the key.
+          showStatus('Please re-enter your API key to save changes.', 'error');
+          apiKeyInput.required = true;
+          apiKeyInput.focus();
+          return;
+        }
+        
+        btnSave.disabled = true;
+        btnSave.textContent = 'Validating...';
+        showStatus('Testing connection...', 'info');
+        
+        fetch('/llm-config', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        })
+        .then(r => r.json().then(data => ({ status: r.status, data })))
+        .then(({ status, data }) => {
+          if (status !== 200) {
+            throw new Error(data.error || 'Failed to save');
+          }
+          showStatus(`✅ Key validated successfully! Found ${data.models.length} models.`, 'success');
+          apiKeyInput.value = '';
+          apiKeyInput.placeholder = data.masked_key;
+          apiKeyInput.required = false;
+          btnDelete.style.display = 'inline-flex';
+        })
+        .catch(err => {
+          showStatus('❌ ' + err.message, 'error');
+        })
+        .finally(() => {
+          btnSave.disabled = false;
+          btnSave.textContent = 'Save & Validate';
+        });
+      });
+      
+      // Delete settings
+      btnDelete.addEventListener('click', () => {
+        if (!confirm('Are you sure you want to remove your API key? You will not be able to chat until you add one.')) return;
+        
+        btnDelete.disabled = true;
+        fetch('/llm-config', { method: 'DELETE' })
+          .then(() => {
+            window.location.reload();
+          })
+          .catch(() => {
+            showStatus('Failed to remove key.', 'error');
+            btnDelete.disabled = false;
+          });
+      });
+    </script>
+  </body>
+</html>
