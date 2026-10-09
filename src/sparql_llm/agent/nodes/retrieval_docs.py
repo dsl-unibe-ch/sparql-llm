@@ -5,7 +5,7 @@ from langchain_core.runnables import RunnableConfig
 from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
 
 from sparql_llm.agent.state import State, StepOutput
-from sparql_llm.agent.utils import get_msg_text
+from sparql_llm.agent.utils import latest_user_question
 from sparql_llm.config import Configuration, settings
 from sparql_llm.indexing.index_resources import embedding_model, qdrant_client
 
@@ -29,7 +29,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
         containing a list of retrieved ScoredPoint objects.
     """
     configuration = Configuration.from_runnable_config(config)
-    user_question = get_msg_text(state.messages[-1])
+    user_question = latest_user_question(state.messages)
     docs: list[ScoredPoint] = []
 
     # Prepare all search queries

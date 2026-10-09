@@ -194,7 +194,7 @@ class Configuration:
     """The configuration for the agent that can be changed at runtime when calling the agent."""
 
     enable_entities_resolution: bool = field(
-        default=False,
+        default=True,
         metadata={
             "description": "Wherever to enable trying to resolve entities to their URIs in the SPARQL endpoints."
         },

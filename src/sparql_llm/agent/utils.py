@@ -2,6 +2,7 @@
 
 import os
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from langchain.chat_models import init_chat_model
@@ -142,3 +143,11 @@ def get_msg_text(msg: AnyMessage) -> str:
     else:
         txts = [c if isinstance(c, str) else (c.get("text") or "") for c in content]
         return "".join(txts).strip()
+
+
+def latest_user_question(messages: Sequence[AnyMessage]) -> str:
+    """Text of the user's latest message, skipping messages the graph's nodes added (they carry a name)."""
+    for msg in reversed(messages):
+        if msg.type == "human" and not getattr(msg, "name", None):
+            return get_msg_text(msg)
+    return get_msg_text(messages[-1]) if messages else ""

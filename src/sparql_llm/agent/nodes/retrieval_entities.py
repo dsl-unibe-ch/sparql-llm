@@ -1,116 +1,53 @@
-"""Extract potential entities from the user question (experimental)."""
+"""Resolve the entity names in a question to URIs, for the model to use instead of label filters."""
 
 from typing import Any
 
-from fastembed import SparseTextEmbedding
+from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
-from qdrant_client import models
 
 from sparql_llm.agent.state import State, StepOutput
-from sparql_llm.config import Configuration, settings
-from sparql_llm.indexing.index_resources import embedding_model, qdrant_client
+from sparql_llm.config import Configuration
+from sparql_llm.entity_resolver import Resolution, get_resolver
 
-# NOTE: experimental, not used in production
-
-
-def format_extracted_entities(entities_list: list[Any]) -> str:
-    if len(entities_list) == 0:
-        return "No entities found in the user question that matches entities in the endpoints. "
-    prompt = "\nHere are entities extracted from the user question that could be find in the endpoints. If the user is asking for a named entity, and this entity cannot be found in the endpoint, warn them about the fact we could not find it in the endpoints.\n\n"
-    for entity in entities_list:
-        prompt += f'\n\nEntities found in the user question for "{entity["text"]}":\n\n'
-        for scored_point in entity["matchs"]:
-            payload = scored_point.payload or {}
-            prompt += f"- `{scored_point.score or 0:.2f}` {payload.get('label', '')} with IRI <{payload.get('uri', '')}> in endpoint {payload.get('endpoint_url', '')}\n\n"
-        # prompt += "\nIf the user is asking for a named entity, and this entity cannot be found in the endpoint, warn them about the fact we could not find it in the endpoints.\n\n"
-    return prompt
+ENTITIES_PREAMBLE = """--- ENTITIES FOUND ---
+Names from the question, matched against the labels in the knowledge graph (score 100 = exact match).
+- Use the URI directly, e.g. VALUES ?person { <uri> }, instead of filtering on the label.
+- If several candidates fit and the question does not say which one, do not guess: tell the user there are several and list them with their years.
+- If candidates share the same label and nothing tells them apart, use all of them in VALUES.
+- Ignore a candidate whose label does not denote the name in the question (a different person or place that merely looks similar).
+- If a name has no match, fall back to a label filter on sdh-short:P9 and tell the user the name was not found exactly.
+"""
 
 
-async def resolve_entities(state: State, config: RunnableConfig) -> dict[str, list[Any]]:
-    """Resolve potential entities from the latest message in the state.
+def format_entities_message(resolutions: list[Resolution]) -> str:
+    parts = [ENTITIES_PREAMBLE]
+    for res in resolutions:
+        if not res.candidates:
+            parts.append(f'\n"{res.name}": no match.')
+            continue
+        shown = f"{len(res.candidates)} of {res.total}" if res.total > len(res.candidates) else str(res.total)
+        parts.append(f'\n"{res.name}": {shown} candidate(s)')
+        for c in res.candidates:
+            years = f", {c.years}" if c.years else ""
+            parts.append(f"- <{c.uri}> {c.label} ({c.type}{years}) score {c.score:.0f}")
+    return "\n".join(parts)
 
-    This function takes the current state and configuration, uses the latest query
-    from the state to resolve relevant entities and link them to URIs from the endpoints.
 
-    Args:
-        state (State): The current state containing queries and the retriever.
-        config (RunnableConfig | None, optional): Configuration for the retrieval process.
-
-    Returns:
-        dict[str, list[Document]]: A dictionary with a single key "retrieved_docs"
-        containing a list of retrieved Document objects.
-    """
+async def resolve_entities(state: State, config: RunnableConfig) -> dict[str, Any]:
+    """Look up each extracted entity name; add the candidates as a message ahead of retrieval."""
     configuration = Configuration.from_runnable_config(config)
-    if configuration.enable_entities_resolution is False:
+    names = state.structured_question.extracted_entities
+    if not configuration.enable_entities_resolution or not names:
         return {}
-
-    results_count = 5
-    # No score threshold: it does not work well with sparse embeddings.
-    entities_list = []
-
-    # Initialize embedding models
-    sparse_embedding_model = SparseTextEmbedding(settings.sparse_embedding_model)
-
-    # Generate embeddings for all entities in batch for better performance
-    potential_entities = state.structured_question.extracted_entities
-    dense_embeddings = list(embedding_model.embed(potential_entities))
-    sparse_embeddings = list(sparse_embedding_model.embed(potential_entities))
-
-    # Search for matches in the indexed entities
-    for idx, potential_entity in enumerate(potential_entities):
-        query_dense_embedding = dense_embeddings[idx].tolist()
-        query_sparse_embedding_raw = sparse_embeddings[idx]
-
-        # Convert sparse embedding to SparseVector format
-        query_sparse_embedding = models.SparseVector(
-            indices=query_sparse_embedding_raw.indices.tolist(),
-            values=query_sparse_embedding_raw.values.tolist(),
-        )
-
-        # Perform hybrid search using query_points with RRF fusion
-        results = qdrant_client.query_points(
-            collection_name=settings.entities_collection_name,
-            prefetch=[
-                models.Prefetch(
-                    using="",
-                    query=query_dense_embedding,
-                    limit=results_count,
-                ),
-                models.Prefetch(
-                    using="sparse",
-                    query=query_sparse_embedding,
-                    limit=results_count,
-                ),
-            ],
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
-            limit=results_count,
-        ).points
-
-        matchs: list[models.ScoredPoint] = []
-        for scored_point in results:
-            payload = scored_point.payload or {}
-            # Check if this URI + endpoint combination already exists in matches
-            is_duplicate = any(
-                (m.payload or {}).get("uri") == payload.get("uri")
-                and (m.payload or {}).get("endpoint_url") == payload.get("endpoint_url")
-                for m in matchs
-            )
-            if not is_duplicate:
-                matchs.append(scored_point)
-        entities_list.append(
-            {
-                "matchs": matchs,
-                "text": potential_entity,
-                # "start_index": None,
-                # "end_index": None,
-            }
-        )
+    resolver = get_resolver()
+    if not resolver.available:
+        return {"steps": [StepOutput(label="🖇️ Entity index not built yet: names matched by label")]}
+    resolutions = [r for r in (resolver.resolve(n) for n in names) if r is not None]
+    if not resolutions:
+        return {}
+    content = format_entities_message(resolutions)
+    found = sum(1 for r in resolutions if r.candidates)
     return {
-        "extracted_entities": entities_list,
-        "steps": [
-            StepOutput(
-                label=f"🖇️ Linked {len(entities_list)} potential entities",
-                details=format_extracted_entities(entities_list),
-            )
-        ],
+        "messages": [HumanMessage(content=content, name="resolve_entities")],
+        "steps": [StepOutput(label=f"🖇️ Linked {found} of {len(resolutions)} entities", details=content)],
     }

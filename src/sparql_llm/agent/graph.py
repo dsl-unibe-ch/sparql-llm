@@ -10,6 +10,7 @@ from sparql_llm.agent.nodes.call_model import call_model
 from sparql_llm.agent.nodes.llm_extraction import extract_user_question
 from sparql_llm.agent.nodes.mcp_tools import mcp_tools_node
 from sparql_llm.agent.nodes.retrieval_docs import retrieve
+from sparql_llm.agent.nodes.retrieval_entities import resolve_entities
 from sparql_llm.agent.nodes.validation import validate_output
 from sparql_llm.agent.state import InputState, State
 from sparql_llm.agent.utils import count_tool_rounds
@@ -106,18 +107,20 @@ def max_tries_reached(state: State, config: RunnableConfig) -> dict[str, list[AI
 
 
 def _build_pipeline_graph() -> Any:
-    """Default agent: extract → retrieve → call_model → validate (with retry loop)."""
+    """Default agent: extract → resolve_entities → retrieve → call_model → validate (with retry loop)."""
     builder: StateGraph[State, Configuration, InputState, State] = StateGraph(
         State, context_schema=Configuration, input_schema=InputState
     )
     builder.add_node(extract_user_question)
+    builder.add_node(resolve_entities)
     builder.add_node(retrieve)
     builder.add_node(call_model)
     builder.add_node(validate_output)
     builder.add_node(max_tries_reached)
 
     builder.add_edge("__start__", "extract_user_question")
-    builder.add_edge("extract_user_question", "retrieve")
+    builder.add_edge("extract_user_question", "resolve_entities")
+    builder.add_edge("resolve_entities", "retrieve")
     builder.add_edge("retrieve", "call_model")
     builder.add_edge("call_model", "validate_output")
     # Conditional edge to determine the next step after `validate_output`
