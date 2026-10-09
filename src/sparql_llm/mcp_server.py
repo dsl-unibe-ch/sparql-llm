@@ -6,6 +6,7 @@ from mcp.server.transport_security import TransportSecuritySettings
 from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
 
 from sparql_llm.config import settings
+from sparql_llm.entity_resolver import describe_for_tool, get_resolver
 from sparql_llm.indexing.index_resources import embedding_model, endpoints_metadata, init_vectordb, qdrant_client
 from sparql_llm.utils import compress_list, get_prefix_converter, logger, query_sparql
 from sparql_llm.validate_sparql import validate_sparql
@@ -430,86 +431,25 @@ Returns:
 
         Users refer to entities by everyday names (e.g. "Albert Einstein",
         "University of Bern"), but SPARQL queries require their exact URIs.
-        This tool searches the pre-built entity index and returns the best
-        matching candidates.
+        This tool matches the name against every label in the knowledge graph
+        (tolerating word order, accents and typos) and returns the best
+        candidates, with birth and death years for persons.
 
         Args:
             entity_name: The human-readable name or label to search for
-                (e.g. "Max Frisch", "ETH Zürich").
-            entity_type: Optional type/class filter to narrow results
-                (e.g. "Person", "Organisation").  Leave empty to search
-                across all types.
-            endpoint_url: Optional endpoint URL to restrict the search to a
-                specific data source.  Leave empty to search all endpoints.
+                (e.g. "Ernst Brenner", "Universität Bern").
+            entity_type: Optional type filter: "Person", "Group", "Place",
+                "Discipline" or "Study title".  Leave empty to search all types.
+            endpoint_url: Ignored (there is a single endpoint); kept for
+                compatibility.
             limit: Maximum number of candidate URIs to return (default 5).
 
         Returns:
             A list of matching entities with their URI, label, type, and
             source endpoint — or a message if no entity index is available.
         """
-        collection_name = settings.entities_collection_name
-        if not qdrant_client.collection_exists(collection_name):
-            return (
-                "The entity index has not been built yet. "
-                "Entity URI resolution is unavailable.  Try constructing "
-                "the query with a string-matching filter (e.g. FILTER "
-                "CONTAINS or REGEX) on the entity's label instead."
-            )
-
-        collection_info = qdrant_client.get_collection(collection_name)
-        if not collection_info.points_count:
-            return (
-                "The entity index exists but is empty. "
-                "Entity URI resolution is unavailable.  Use a string-"
-                "matching FILTER on the label as a fallback."
-            )
-
-        # Build optional filters
-        filter_conditions: list[FieldCondition] = []
-        if entity_type:
-            filter_conditions.append(
-                FieldCondition(
-                    key="entity_type",
-                    match=MatchValue(value=entity_type),
-                )
-            )
-        if endpoint_url:
-            filter_conditions.append(
-                FieldCondition(
-                    key="endpoint_url",
-                    match=MatchValue(value=endpoint_url),
-                )
-            )
-        query_filter = Filter(must=filter_conditions) if filter_conditions else None
-
-        search_embedding = next(iter(embedding_model.embed([entity_name])))
-        results = qdrant_client.query_points(
-            query=search_embedding,
-            collection_name=collection_name,
-            limit=limit,
-            query_filter=query_filter,
-        ).points
-
-        if not results:
-            return (
-                f"No entities matching '{entity_name}' were found in the "
-                "index.  Try using a FILTER with REGEX or CONTAINS in "
-                "your SPARQL query to match by label instead."
-            )
-
-        parts: list[str] = [
-            f"Found {len(results)} candidate(s) for '{entity_name}':\n",
-        ]
-        for idx, point in enumerate(results, start=1):
-            payload = point.payload or {}
-            parts.append(
-                f"{idx}. **{payload.get('label', 'N/A')}**\n"
-                f"   - URI: `{payload.get('iri', 'N/A')}`\n"
-                f"   - Type: `{payload.get('entity_type', 'N/A')}`\n"
-                f"   - Endpoint: `{payload.get('endpoint_url', 'N/A')}`\n"
-                f"   - Score: {point.score:.4f}"
-            )
-        return "\n".join(parts)
+        # One endpoint, so endpoint_url is accepted for compatibility and ignored.
+        return describe_for_tool(get_resolver(), entity_name, entity_type, limit)
 
     @mcp.tool()
     def explain_query_results(

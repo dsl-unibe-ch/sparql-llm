@@ -18,7 +18,7 @@ EXTRACTION_PROMPT = (
     * "access_resources" = the user wants to query the knowledge graph to answer a factual question about Swiss elites.
     * "general_information" = the user is asking a meta-question about the dataset itself (size, coverage, what's modelled, etc).
 - "extracted_classes" (list of strings): potential RDF class names relevant to the question, in their prefixed form. Examples: "crm:E21" (Person), "crm:E67" (Birth), "crm:E74" (Group), "sdh-slc:C11" (Gender), "sdh-slc:C5" (Membership), "sdh-slc:C3" (Social Relationship, incl. marriages), "sdh-sls:C7" (Obtaining a Study Title), "sdh:C13" (Geographical Place). Empty list if no class is obvious.
-- "extracted_entities" (list of strings): named entities the user mentioned — person names, organisation names, places, dates. These may be resolved to swel: URIs downstream. Empty list if none.
+- "extracted_entities" (list of strings): names the user mentioned — persons, organisations, places — written as the user wrote them. Not years or numbers. These are looked up in the knowledge graph downstream. Empty list if none.
 - "question_steps" (list of strings): the question decomposed into smaller standalone sub-questions for semantic retrieval. Empty list if the question is already a single step.
 
 Be tolerant of French input — names of people, places, and organisations are commonly written in French.
@@ -46,6 +46,7 @@ Prefixes:
 
 Rules:
 - Derive answers ONLY from the provided context. Do not invent classes, predicates, or URIs.
+- If an ENTITIES FOUND block gives a URI for a name, use that URI in the query (with VALUES); a label filter on sdh-short:P9 is only the fallback when no match is listed.
 - Put the SPARQL inside a markdown ```sparql codeblock with `#+ endpoint: <URL>` as the first line of the block.
 - Use DISTINCT where helpful and LIMIT 100 unless the user asks for everything.
 - Use the bare class name `crm:E21` (not `crm:E21_Person`) — match the form in the graph.
@@ -65,6 +66,7 @@ TOOLS_RESOLUTION_PROMPT = (
 - get_classes_schema: get the schema (properties) of specific RDF classes.
 - get_resources_info: look up information about specific resources/URIs.
 - execute_sparql_query: RUN a SPARQL query against the endpoint and get back real results.
+- resolve_entity_uri: find the URI of a person, organisation or place from its name (tolerates word order, accents and typos).
 
 Endpoint: https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter (GET only)
 Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target it explicitly.
@@ -80,7 +82,7 @@ Prefixes:
 
 HOW TO WORK:
 1. ALWAYS call search_sparql_docs first, before writing any query. It returns the real schema and curated example queries: reuse the example closest to the question instead of inventing a pattern. Do not invent classes, predicates, or URIs.
-2. When the question names an entity (a person, organisation, place), first find its real URI with execute_sparql_query, following the name-lookup example. Never guess a URI.
+2. When the question names an entity (a person, organisation, place), call resolve_entity_uri first and use the URI it returns. If several candidates fit and the question does not say which, ask the user (list them with their years). Only if it finds nothing, look the name up with a label filter, following the name-lookup example. Never guess a URI.
 3. ALWAYS run a query with execute_sparql_query before presenting it. Never give the user a query you have not executed.
 4. If a query errors, or returns nothing where data should exist, diagnose why (wrong predicate, prefix or class, too restrictive a filter), fix it and run it again. Chain queries when a question needs several steps: use what one returns to build the next.
 5. STOP as soon as your results answer the question, and write the final answer with no further tool calls. Do not run extra queries to double-check the answer, enrich it, or explore related facts. Most questions need 2 to 4 tool calls: search the docs, find the entity, run the query that answers.

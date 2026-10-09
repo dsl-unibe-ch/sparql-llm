@@ -446,18 +446,18 @@ Alternative question: What is the URI of Ernst Brenner?
 Alternative question: Trouvez la personne nommée Ernst Brenner.
 
 ```sparql
-PREFIX crm: <http://www.cidoc-crm.org/cidoc-crm/>
 PREFIX sdh-short: <https://sdhss.org/ontology/shortcuts/>
 
-SELECT ?person ?name
+SELECT ?person ?name ?birth ?death
 WHERE {
   GRAPH <https://swiss-elites.lod4hss.cloud/resource/> {
-    ?person a crm:E21 ;
-            sdh-short:P9 ?name .
-    # Names are stored "Surname, Firstname" ("Brenner, Ernst"), so the full name as
-    # typed matches nothing: match each part of the name separately.
-    FILTER(CONTAINS(LCASE(STR(?name)), "brenner") && CONTAINS(LCASE(STR(?name)), "ernst"))
+    # Use the URI given in ENTITIES FOUND. Only if the name was not found there, match the
+    # label instead: names are stored "Surname, Firstname" ("Brenner, Ernst"), so match each
+    # part separately: FILTER(CONTAINS(LCASE(STR(?name)), "brenner") && CONTAINS(LCASE(STR(?name)), "ernst"))
+    VALUES ?person { <https://elites-suisses.lod4hss.org/resource/p50001> }
+    ?person sdh-short:P9 ?name .
+    OPTIONAL { ?person sdh-short:P2 ?birth }
+    OPTIONAL { ?person sdh-short:P13 ?death }
   }
 }
-LIMIT 50
 ```

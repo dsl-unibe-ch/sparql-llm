@@ -83,3 +83,23 @@ def test_retrieve_question_ignores_node_messages():
         HumanMessage(content="--- ENTITIES FOUND ---", name="resolve_entities"),
     ]
     assert latest_user_question(messages) == "Who was Ernst Brenner married to?"
+
+
+def test_extraction_no_longer_asks_for_dates():
+    from sparql_llm.agent.prompts import EXTRACTION_PROMPT
+
+    line = next(l for l in EXTRACTION_PROMPT.splitlines() if '"extracted_entities"' in l)
+    assert "dates" not in line
+
+
+def test_pipeline_prompt_prefers_resolved_uris():
+    from sparql_llm.agent.prompts import RESOLUTION_PROMPT
+
+    assert "ENTITIES FOUND" in RESOLUTION_PROMPT
+    assert "Surname, Firstname" in RESOLUTION_PROMPT
+
+
+def test_tools_prompt_resolves_names_first():
+    from sparql_llm.agent.prompts import TOOLS_RESOLUTION_PROMPT
+
+    assert "resolve_entity_uri" in TOOLS_RESOLUTION_PROMPT

@@ -108,6 +108,31 @@ class EntityResolver:
         return Resolution(name, candidates, len(hits))
 
 
+def describe_for_tool(resolver: EntityResolver, name: str, entity_type: str = "", limit: int = 5) -> str:
+    """The answer of the MCP resolve_entity_uri tool: candidates, or how to fall back."""
+    if not resolver.available:
+        return (
+            "The entity index has not been built yet (admin → Rebuild index). Use a label filter on "
+            'sdh-short:P9 instead; person names are stored "Surname, Firstname".'
+        )
+    resolution = resolver.resolve(name, limit=max(limit, 1) * 4)
+    candidates = [
+        c for c in (resolution.candidates if resolution else []) if not entity_type or c.type.lower() == entity_type.lower()
+    ][:limit]
+    if not candidates:
+        return (
+            f"No entity matching '{name}' was found. Fall back to a label filter on sdh-short:P9 "
+            "and tell the user the name was not found exactly."
+        )
+    lines = [f"Found {len(candidates)} candidate(s) for '{name}' (score 100 = exact):"]
+    for c in candidates:
+        years = f", {c.years}" if c.years else ""
+        lines.append(f"- <{c.uri}> {c.label} ({c.type}{years}) score {c.score:.0f}")
+    if len(candidates) > 1:
+        lines.append("If several fit and the question does not say which, ask the user instead of guessing.")
+    return "\n".join(lines)
+
+
 _resolver: EntityResolver | None = None
 
 

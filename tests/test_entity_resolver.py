@@ -112,3 +112,26 @@ def test_reloads_when_file_changes(resolver, tmp_path):
     os.utime(path, (later, later))
     assert uris(resolver.resolve("Anna Neu")) == ["u:new"]
     assert resolver.resolve("Ernst Brenner").candidates == []
+
+
+def test_tool_text_lists_candidates_with_years(resolver):
+    from sparql_llm.entity_resolver import describe_for_tool
+
+    text = describe_for_tool(resolver, "Heinrich Weber", limit=3)
+    assert text.count("<u:weber") == 3
+    assert "b. 18" in text
+    assert "ask the user" in text
+
+
+def test_tool_text_filters_by_type(resolver):
+    from sparql_llm.entity_resolver import describe_for_tool
+
+    text = describe_for_tool(resolver, "Geneva", entity_type="person")
+    assert "No entity matching 'Geneva'" in text
+
+
+def test_tool_text_without_file_points_to_the_fallback(tmp_path):
+    from sparql_llm.entity_resolver import describe_for_tool
+
+    text = describe_for_tool(EntityResolver(tmp_path / "absent.json"), "Ernst Brenner")
+    assert "not been built" in text and "Surname, Firstname" in text
