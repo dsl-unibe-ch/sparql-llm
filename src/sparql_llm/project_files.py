@@ -34,9 +34,27 @@ def _project_dir(project_id: str) -> Path:
 
 
 def _served(project_id: str) -> bool:
-    from sparql_llm.config import settings
+    from sparql_llm.datasets import list_dataset_ids
 
-    return project_id in settings.projects
+    return project_id in list_dataset_ids()
+
+
+def _endpoint_owner(project_id: str, endpoint_url: str) -> str | None:
+    """Another dataset whose live or uploaded project.json uses this endpoint, if any."""
+    from sparql_llm.datasets import list_dataset_ids
+
+    wanted = endpoint_url.rstrip("/")
+    for other in list_dataset_ids():
+        if other == project_id:
+            continue
+        for path in (_project_dir(other) / "project.json", _project_dir(other) / UPLOADED_DIR / "project.json"):
+            try:
+                url = json.loads(path.read_text(encoding="utf-8")).get("endpoint_url", "")
+            except Exception:
+                continue
+            if isinstance(url, str) and url.rstrip("/") == wanted:
+                return other
+    return None
 
 
 def _field_reason(error: dict[str, Any]) -> str:
@@ -69,6 +87,9 @@ def _project_errors(project_id: str, text: str) -> list[str]:
         ]
     if project.id != project_id:
         return [f"id: is '{project.id}', but this is the file of project '{project_id}'. The id must stay '{project_id}'."]
+    owner = _endpoint_owner(project_id, project.endpoint_url)
+    if owner:
+        return [f"endpoint_url: is already used by dataset '{owner}'. Each dataset needs its own endpoint."]
     return []
 
 

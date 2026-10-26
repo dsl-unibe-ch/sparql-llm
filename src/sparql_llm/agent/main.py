@@ -42,6 +42,7 @@ from sparql_llm.agent.roles import (
 from markupsafe import Markup
 
 from sparql_llm.config import settings, settings_filepath
+from sparql_llm.datasets import list_dataset_ids
 from sparql_llm.indexing.drift import load_fingerprint
 from sparql_llm.mcp_server import get_mcp_app
 from sparql_llm.migration import migrate_configured
@@ -406,7 +407,7 @@ if settings.auth_enabled:
         """The curator files of each project of this instance, for the Project files card."""
         if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        return JSONResponse({"projects": {pid: list_files(pid) for pid in settings.projects}})
+        return JSONResponse({"projects": {pid: list_files(pid) for pid in list_dataset_ids()}})
 
     @app.get("/admin/project-files/{project_id}/{name}", include_in_schema=False, response_model=None)
     async def admin_download_project_file(

@@ -101,6 +101,9 @@ def _use_projects(monkeypatch: pytest.MonkeyPatch, data_dir: Path, project_ids: 
 
     monkeypatch.setattr(settings, "data_dir", str(data_dir))
     monkeypatch.setattr(settings, "projects", project_ids)
+    (data_dir / "datasets.json").write_text(
+        json.dumps([{"id": pid, "published": True} for pid in project_ids]), encoding="utf-8"
+    )
     return reload_projects()
 
 

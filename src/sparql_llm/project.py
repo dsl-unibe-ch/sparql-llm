@@ -1,7 +1,7 @@
 """One SPARQL endpoint per project: its settings live in ``<data_dir>/<id>/project.json``.
 
-The install settings list the project ids this instance serves (``settings.projects``).
-Every module asks this registry for the endpoint entries instead of hard-coding a dataset.
+The dataset list in the data folder (``sparql_llm.datasets``) names the projects this
+instance serves; the install settings' ``projects`` only seed it on upgrade. Every module asks this registry for the endpoint entries instead of hard-coding a dataset.
 
 Three states of a project's files, so nothing unchecked is ever served:
 - live, in ``<data_dir>/<id>/``: what the instance serves, also after a restart;
@@ -247,7 +247,7 @@ _problems: dict[str, str] = {}
 
 
 def read_projects(candidates: bool = False) -> tuple[list[Project], dict[str, str]]:
-    """Read every project listed in the install settings from disk, without serving them.
+    """Read every project in the dataset list from disk, without serving them.
 
     Returns the valid projects and, per project id, why its file could not be used. A
     missing or broken project file must not stop the instance: its admin page is where
@@ -255,10 +255,11 @@ def read_projects(candidates: bool = False) -> tuple[list[Project], dict[str, st
     as Check and Rebuild do.
     """
     from sparql_llm.config import settings
+    from sparql_llm.datasets import list_dataset_ids
 
     projects: list[Project] = []
     problems: dict[str, str] = {}
-    for pid in settings.projects:
+    for pid in list_dataset_ids():
         try:
             projects.append(load_project(Path(settings.data_dir), pid, candidate=candidates))
         except ProjectError as e:

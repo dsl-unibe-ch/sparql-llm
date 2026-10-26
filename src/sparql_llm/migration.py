@@ -58,10 +58,13 @@ def seed_projects(data_dir: Path, project_ids: list[str], seeds_dir: Path = SEED
 
 
 def migrate_configured() -> list[str]:
-    """Seed missing projects, then move the flat legacy files into the first project."""
+    """Seed the dataset list and missing projects, then move the flat legacy files into the first project."""
     from sparql_llm.config import settings
+    from sparql_llm.datasets import list_dataset_ids, seed_dataset_list
 
-    if not settings.projects:
+    seed_dataset_list(Path(settings.data_dir), settings.projects)
+    project_ids = list_dataset_ids()
+    if not project_ids:
         return []
-    seed_projects(Path(settings.data_dir), settings.projects)
-    return migrate_legacy_data(Path(settings.data_dir), settings.projects[0])
+    seed_projects(Path(settings.data_dir), project_ids)
+    return migrate_legacy_data(Path(settings.data_dir), project_ids[0])
