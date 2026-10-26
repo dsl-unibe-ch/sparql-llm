@@ -5,10 +5,11 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
+from sparql_llm.agent.request_project import project_of
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration
 from sparql_llm.entity_resolver import Resolution, get_resolver
-from sparql_llm.project import label_property_names
+from sparql_llm.project import Project, label_property_names
 from sparql_llm.utils import logger
 
 _ENTITIES_PREAMBLE = """--- ENTITIES FOUND ---
@@ -23,12 +24,12 @@ or "partial" (the label is only part of the name, e.g. the city "Bern" for "Univ
 """
 
 
-def entities_preamble() -> str:
-    return _ENTITIES_PREAMBLE.replace("{label}", label_property_names())
+def entities_preamble(project: Project) -> str:
+    return _ENTITIES_PREAMBLE.replace("{label}", label_property_names([project]))
 
 
-def format_entities_message(resolutions: list[Resolution]) -> str:
-    parts = [entities_preamble()]
+def format_entities_message(resolutions: list[Resolution], project: Project) -> str:
+    parts = [entities_preamble(project)]
     for res in resolutions:
         if not res.candidates:
             parts.append(f'\n"{res.name}": no match.')
@@ -47,7 +48,8 @@ async def resolve_entities(state: State, config: RunnableConfig) -> dict[str, An
     names = state.structured_question.extracted_entities
     if not configuration.enable_entities_resolution or not names:
         return {}
-    resolver = get_resolver()
+    project = project_of(configuration)
+    resolver = get_resolver(project)
     if not resolver.available:
         return {"steps": [StepOutput(label="🖇️ Entity index not built yet: names matched by label")]}
     try:
@@ -58,7 +60,7 @@ async def resolve_entities(state: State, config: RunnableConfig) -> dict[str, An
         return {"steps": [StepOutput(label="🖇️ Entity resolution unavailable: names matched by label")]}
     if not resolutions:
         return {}
-    content = format_entities_message(resolutions)
+    content = format_entities_message(resolutions, project)
     found = sum(1 for r in resolutions if r.candidates)
     return {
         "messages": [HumanMessage(content=content, name="resolve_entities")],

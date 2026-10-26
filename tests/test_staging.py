@@ -29,7 +29,7 @@ def test_an_upload_is_not_served_after_a_restart(norssit_project):
 
 def test_an_uploaded_dataset_md_does_not_reach_the_prompt(norssit_project):
     save_upload("norssit", "dataset.md", b"## Uploaded\n\nNOT YET CHECKED\n", "s@x")
-    assert "NOT YET CHECKED" not in resolution_prompt()
+    assert "NOT YET CHECKED" not in resolution_prompt(norssit_project)
 
 
 def test_undo_discards_a_pending_upload(norssit_project):

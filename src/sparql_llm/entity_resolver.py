@@ -16,7 +16,7 @@ from pathlib import Path
 
 from rapidfuzz import fuzz, process
 
-from sparql_llm.project import get_projects, label_property_names
+from sparql_llm.project import Project, label_property_names
 from sparql_llm.utils import logger
 
 SCORE_CUTOFF = 86
@@ -157,12 +157,15 @@ def _match_kind(query: str, key: str) -> str:
     return "similar spelling"
 
 
-def describe_for_tool(resolver: EntityResolver, name: str, entity_type: str = "", limit: int = 5) -> str:
+def describe_for_tool(
+    resolver: EntityResolver, name: str, project: Project, entity_type: str = "", limit: int = 5
+) -> str:
     """The answer of the MCP resolve_entity_uri tool: candidates, or how to fall back."""
+    label = label_property_names([project])
     if not resolver.available:
         return (
             "The entity index has not been built yet (admin → Rebuild index). Use a label filter on "
-            f"{label_property_names()} instead."
+            f"{label} instead."
         )
     resolution = resolver.resolve(name, limit=max(limit, 1) * 4)
     candidates = [
@@ -170,7 +173,7 @@ def describe_for_tool(resolver: EntityResolver, name: str, entity_type: str = ""
     ][:limit]
     if not candidates:
         return (
-            f"No entity matching '{name}' was found. Fall back to a label filter on {label_property_names()} "
+            f"No entity matching '{name}' was found. Fall back to a label filter on {label} "
             "and tell the user the name was not found exactly."
         )
     lines = [f"Found {len(candidates)} candidate(s) for '{name}' (a \"partial\" one is only part of the name):"]
@@ -182,14 +185,14 @@ def describe_for_tool(resolver: EntityResolver, name: str, entity_type: str = ""
     return "\n".join(lines)
 
 
-_resolver: EntityResolver | None = None
+_resolvers: dict[str, EntityResolver] = {}
 
 
-def get_resolver() -> EntityResolver:
-    """The resolver over every project's entity names; rebuilt when the projects change."""
-    global _resolver
+def get_resolver(project: Project) -> EntityResolver:
+    """The resolver over this project's entity names only; rebuilt when its file location changes."""
     # A project without an entities block has no names to resolve, whatever is left on disk.
-    paths = [p.entity_names_path for p in get_projects() if p.entities]
-    if _resolver is None or _resolver.paths != paths:
-        _resolver = EntityResolver(paths)
-    return _resolver
+    paths = [project.entity_names_path] if project.entities else []
+    resolver = _resolvers.get(project.id)
+    if resolver is None or resolver.paths != paths:
+        resolver = _resolvers[project.id] = EntityResolver(paths)
+    return resolver

@@ -3,7 +3,7 @@
 gpt-oss sometimes damages the endpoint_url argument of execute_sparql_query
 (traced: ".../default_wiss4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter"),
 which gets a 404 and sends the model round the loop again. With a single
-endpoint configured, an unknown URL can only mean that endpoint.
+an unknown URL can only mean the dataset's own endpoint.
 """
 
 import pytest
@@ -34,9 +34,8 @@ def test_configured_url_is_kept(one_endpoint):
     assert resolve_endpoint_url(ENDPOINT) == (ENDPOINT, "")
 
 
-def test_unknown_url_is_refused_when_several_endpoints_are_configured(use_projects):
-    # With more than one endpoint there is no safe guess, and queries only run on configured ones.
-    use_projects({"id": "a", "label": "A", "endpoint_url": ENDPOINT}, {"id": "b", "label": "B", "endpoint_url": OTHER})
-    url, error = resolve_endpoint_url("https://example.org/sparql")
-    assert url is None
-    assert ENDPOINT in error and OTHER in error
+def test_unknown_url_runs_on_the_datasets_endpoint_when_several_are_configured(use_projects):
+    # The dataset is the request's, never a guess from the URL.
+    a, b = use_projects({"id": "a", "label": "A", "endpoint_url": ENDPOINT}, {"id": "b", "label": "B", "endpoint_url": OTHER})
+    assert resolve_endpoint_url("https://example.org/sparql", b)[0] == OTHER
+    assert resolve_endpoint_url("https://example.org/sparql", a)[0] == ENDPOINT

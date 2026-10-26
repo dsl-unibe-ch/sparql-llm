@@ -7,6 +7,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
 from sparql_llm.agent.prompts import FIX_QUERY_PROMPT
+from sparql_llm.agent.request_project import project_of
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration
 from sparql_llm.indexing.index_resources import endpoints_metadata
@@ -31,9 +32,13 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
     last_msg = strip_think_blocks(str(state.messages[-1].content))
     validation_target = getattr(state, "latest_model_output", last_msg) if configuration.natural_language_only else last_msg
 
+    project = project_of(configuration)
+
     validation_steps: list[StepOutput] = []
     recall_messages: list[HumanMessage] = []
-    validation_outputs = validate_sparql_in_msg(validation_target, endpoints_metadata.prefixes_map, endpoints_metadata.void_dict)
+    validation_outputs = validate_sparql_in_msg(
+        validation_target, endpoints_metadata.prefixes_for(project), endpoints_metadata.schema_for(project)
+    )
     for validation_output in validation_outputs:
         if validation_output["fixed_query"]:
             logger.debug("Auto-fixed prefixes in generated SPARQL query")
@@ -86,22 +91,11 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
             extracted["sparql_query"] = validation_outputs[-1]["fixed_query"]
         else:
             extracted["sparql_query"] = validation_outputs[-1]["original_query"]
-        # Queries only ever run on a configured endpoint (F2): a single one replaces an
-        # unknown or missing URL; with several, the model is sent back to pick one.
-        endpoint_url, endpoint_note = allowed_endpoint(validation_outputs[-1]["endpoint_url"])
-        if endpoint_url:
-            extracted["sparql_endpoint_url"] = endpoint_url
+        # Queries only ever run on the selected dataset's endpoint (F2), whatever URL the
+        # model wrote, another dataset's included.
+        endpoint_url, endpoint_note = allowed_endpoint(validation_outputs[-1]["endpoint_url"], project)
+        extracted["sparql_endpoint_url"] = endpoint_url
         response["structured_output"] = extracted
-        if endpoint_url is None:
-            recall_messages.append(HumanMessage(content=f"{endpoint_note} Fix the `#+ endpoint:` line of the query."))
-            validation_steps.append(StepOutput(type="recall", label="🔄 Refining query…", details=endpoint_note))
-            response.update(
-                messages=recall_messages,
-                passed_validation=False,
-                try_count=state.try_count + 1,
-                steps=validation_steps,
-            )
-            return response
 
         # Automatically execute the SPARQL query
         if configuration.enable_sparql_execution and not configuration.use_tools:
@@ -115,7 +109,7 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
                         endpoint_url,
                         timeout=10,
                         check_service_desc=False,
-                        post=post_for(endpoint_url),
+                        post=post_for(project),
                     )
                     res_bindings = res.get("results", {}).get("bindings", [])
                     if len(res_bindings) == 0:

@@ -12,6 +12,7 @@ from sparql_llm.agent.nodes.retrieval_entities import resolve_entities
 from sparql_llm.agent.state import State, StructuredQuestion
 from sparql_llm.agent.utils import latest_user_question
 from sparql_llm.entity_resolver import EntityResolver
+from sparql_llm.project import get_projects
 
 ROWS = [
     {"uri": "https://e/p1", "label": "Brenner, Ernst", "type": "Person", "birth": "1856", "death": "1911"},
@@ -29,7 +30,7 @@ def run(state, config):
 def fixture_resolver(tmp_path: Path, monkeypatch):
     path = tmp_path / "entity_names.json"
     path.write_text(json.dumps({"entities": ROWS}), encoding="utf-8")
-    monkeypatch.setattr(node_module, "get_resolver", lambda: EntityResolver(path))
+    monkeypatch.setattr(node_module, "get_resolver", lambda project: EntityResolver(path))
 
 
 def _state(*entities: str) -> State:
@@ -71,7 +72,7 @@ def test_disabled_flag_adds_nothing():
 
 
 def test_missing_entity_file_adds_only_a_step(tmp_path, monkeypatch):
-    monkeypatch.setattr(node_module, "get_resolver", lambda: EntityResolver(tmp_path / "absent.json"))
+    monkeypatch.setattr(node_module, "get_resolver", lambda project: EntityResolver(tmp_path / "absent.json"))
     out = run(_state("Ernst Brenner"), CONFIG)
     assert "messages" not in out
     assert "not built" in out["steps"][0].label
@@ -90,21 +91,21 @@ def test_retrieve_question_ignores_node_messages():
 def test_extraction_no_longer_asks_for_dates():
     from sparql_llm.agent.prompts import extraction_prompt
 
-    line = next(l for l in extraction_prompt().splitlines() if '"extracted_entities"' in l)
+    line = next(l for l in extraction_prompt(get_projects()[0]).splitlines() if '"extracted_entities"' in l)
     assert "dates" not in line
 
 
 def test_pipeline_prompt_prefers_resolved_uris(swiss_project):
     from sparql_llm.agent.prompts import resolution_prompt
 
-    assert "ENTITIES FOUND" in resolution_prompt()
-    assert "Surname, Firstname" in resolution_prompt()  # from the Swiss dataset.md
+    assert "ENTITIES FOUND" in resolution_prompt(get_projects()[0])
+    assert "Surname, Firstname" in resolution_prompt(get_projects()[0])  # from the Swiss dataset.md
 
 
 def test_tools_prompt_resolves_names_first():
     from sparql_llm.agent.prompts import tools_resolution_prompt
 
-    assert "resolve_entity_uri" in tools_resolution_prompt()
+    assert "resolve_entity_uri" in tools_resolution_prompt(get_projects()[0])
 
 
 def test_query_turn_must_not_state_results_before_they_exist():
@@ -112,7 +113,7 @@ def test_query_turn_must_not_state_results_before_they_exist():
     # in hand the model filled in invented spouses ("Emma Bär") as if it had the results.
     from sparql_llm.agent.prompts import resolution_prompt
 
-    assert "before you have received the results" in resolution_prompt()
+    assert "before you have received the results" in resolution_prompt(get_projects()[0])
 
 
 def test_values_example_survives_markdown_rendering():
@@ -128,7 +129,7 @@ def test_a_resolver_error_never_breaks_the_chat(monkeypatch):
         def resolve(self, name):
             raise RuntimeError("boom")
 
-    monkeypatch.setattr(node_module, "get_resolver", lambda: Broken())
+    monkeypatch.setattr(node_module, "get_resolver", lambda project: Broken())
     out = run(_state("Ernst Brenner"), CONFIG)
     assert "messages" not in out
     assert "unavailable" in out["steps"][0].label

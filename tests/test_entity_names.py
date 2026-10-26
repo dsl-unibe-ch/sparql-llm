@@ -171,4 +171,4 @@ def test_resolver_ignores_projects_without_entities(use_projects):
     project.entity_names_path.write_text(
         json.dumps({"entities": [{"uri": "https://x/1", "label": "Stale, Name", "type": "Person"}]}), encoding="utf-8"
     )
-    assert get_resolver().resolve("Name Stale") is None
+    assert get_resolver(project).resolve("Name Stale") is None

@@ -31,8 +31,8 @@ def _recorder(calls):
 
 
 def test_post_for_follows_the_project(post_only):
-    assert post_for(URL) is True
-    assert post_for("https://unknown.example/sparql") is False
+    assert post_for(post_only) is True
+    assert post_for(post_only.model_copy(update={"method": "GET"})) is False
 
 
 def test_pipeline_execution_uses_the_project_method(post_only, monkeypatch: pytest.MonkeyPatch):

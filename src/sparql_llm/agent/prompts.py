@@ -1,14 +1,15 @@
 """Prompts used by the agent.
 
 The rules are generic and live here. Everything about a dataset (its endpoint, graphs,
-prefixes, quirks and dataset-specific rules) comes from the settings and from each
-project's dataset.md, assembled at call time so a reloaded project takes effect at once.
+prefixes, topics, quirks and dataset-specific rules) comes from the one project a request
+is answered from and its dataset.md, assembled at call time so a reloaded project takes
+effect at once.
 Every prompt goes through ChatPromptTemplate, so user-written text is brace-escaped.
 """
 
 from __future__ import annotations
 
-from sparql_llm.project import Project, get_projects, label_property_names, shorten
+from sparql_llm.project import Project, label_property_names, shorten
 
 FIX_QUERY_PROMPT = """Please fix the query, and try again.
 We suggest you to make the query less restricted, e.g. use a broader regex for string matching instead of exact match, ignore case, make sure you are not overriding an existing variable with BIND.
@@ -18,10 +19,6 @@ or break down your query in smaller parts and check them one by one."""
 def escape_braces(text: str) -> str:
     """Make text safe to embed in a ChatPromptTemplate: literal braces are doubled."""
     return text.replace("{", "{{").replace("}", "}}")
-
-
-def _labels(projects: list[Project]) -> str:
-    return " and ".join(p.label for p in projects) or "this"
 
 
 def dataset_section(projects: list[Project]) -> str:
@@ -44,13 +41,10 @@ def dataset_section(projects: list[Project]) -> str:
     return "\n\n".join(parts)
 
 
-def introduction_prompt() -> str:
-    from sparql_llm.config import settings
-
-    projects = get_projects()
-    topics = f" ({escape_braces(settings.app_topics)})" if settings.app_topics else ""
+def introduction_prompt(project: Project) -> str:
+    topics = f" ({escape_braces(project.topics)})" if project.topics else ""
     return (
-        f"You are an assistant for the {escape_braces(_labels(projects))} knowledge graph{topics}.\n\n"
+        f"You are an assistant for the {escape_braces(project.label)} knowledge graph{topics}.\n\n"
         "Do not answer general knowledge or personal questions; only help with questions that can be answered "
         "against this knowledge graph.\n\n"
     )
@@ -66,17 +60,16 @@ def _example_classes(projects: list[Project]) -> str:
     return f" Examples: {', '.join(examples)}." if examples else ""
 
 
-def extraction_prompt() -> str:
-    projects = get_projects()
+def extraction_prompt(project: Project) -> str:
     return (
-        introduction_prompt()
+        introduction_prompt(project)
         + """Extract the user's question into a JSON object with EXACTLY these fields (use these field names verbatim, do not paraphrase):
 
 - "intent" (string): one of "access_resources" or "general_information".
     * "access_resources" = the user wants to query the knowledge graph to answer a factual question about its data. This includes every count or statistic over the data ("how many persons", "how many marriages", "persons per place"): those are answered by a query.
     * "general_information" = the user is asking about the project or the service itself, answerable without a query (who made it, which sources and ontologies it uses, what it can do).
 - "extracted_classes" (list of strings): potential RDF class names relevant to the question, in their prefixed form."""
-        + _example_classes(projects)
+        + _example_classes([project])
         + """ Empty list if no class is obvious.
 - "extracted_entities" (list of strings): names the user mentioned — persons, organisations, places — written as the user wrote them. Not years or numbers. These are looked up in the knowledge graph downstream. Empty list if none.
 - "question_steps" (list of strings): the question decomposed into smaller standalone sub-questions for semantic retrieval. Empty list if the question is already a single step.
@@ -97,10 +90,10 @@ def _entities_rule(projects: list[Project]) -> str:
     )
 
 
-def resolution_prompt() -> str:
-    projects = get_projects()
+def resolution_prompt(project: Project) -> str:
+    projects = [project]
     return (
-        introduction_prompt()
+        introduction_prompt(project)
         + "Answer the user's question. If a SPARQL query is needed, produce one — exactly one — and explain it briefly.\n\n"
         + dataset_section(projects)
         + """
@@ -121,11 +114,11 @@ Rules:
 # written for the one-shot pipeline, it drives an agentic loop: the model must use the
 # tools and run its queries before answering, and stop as soon as it has the answer
 # rather than verifying or exploring until the "Max steps" budget runs out.
-def tools_resolution_prompt() -> str:
-    projects = get_projects()
+def tools_resolution_prompt(project: Project) -> str:
+    projects = [project]
     return (
-        introduction_prompt()
-        + f"""You are an agent that answers questions by USING TOOLS to explore the {escape_braces(_labels(projects))} knowledge graph. You have these tools:
+        introduction_prompt(project)
+        + f"""You are an agent that answers questions by USING TOOLS to explore the {escape_braces(project.label)} knowledge graph. You have these tools:
 - search_sparql_docs: retrieve relevant SPARQL query examples and class schemas for a question.
 - get_classes_schema: get the schema (properties) of specific RDF classes.
 - get_resources_info: look up information about specific resources/URIs.

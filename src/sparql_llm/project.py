@@ -330,25 +330,22 @@ def get_projects() -> list[Project]:
     return _projects
 
 
-def allowed_endpoint(url: str | None) -> tuple[str | None, str]:
+def allowed_endpoint(url: str | None, project: Project) -> tuple[str, str]:
     """The endpoint a query may run on, and a note when it is not the one asked for.
 
-    Queries only ever run on configured endpoints. With one project an unknown or missing
-    URL can only mean that endpoint; with several there is no safe guess.
+    A query only ever runs on the endpoint of the dataset the request is answered from,
+    whatever URL the model wrote, including another configured dataset's.
     """
-    urls = [p.endpoint_url for p in get_projects()]
-    if url and url in urls:
+    if url == project.endpoint_url:
         return url, ""
-    if len(urls) == 1:
-        return urls[0], f"Ran on {urls[0]}, the configured endpoint, instead of {url or 'no endpoint'}."
-    if not urls:
-        return None, "No endpoint is configured for this instance."
-    return None, f"Unknown endpoint {url}. Use one of: {', '.join(urls)}."
+    return project.endpoint_url, (
+        f"Ran on {project.endpoint_url}, the endpoint of {project.label}, instead of {url or 'no endpoint'}."
+    )
 
 
-def post_for(endpoint_url: str | None) -> bool:
-    """Whether queries to this endpoint go by POST, as its project says (GET when unknown)."""
-    return any(p.endpoint_url == endpoint_url and p.method == "POST" for p in get_projects())
+def post_for(project: Project) -> bool:
+    """Whether queries to this project's endpoint go by POST."""
+    return project.method == "POST"
 
 
 def get_project(project_id: str) -> Project:

@@ -8,7 +8,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
 from sparql_llm.config import settings
 from sparql_llm.entity_resolver import describe_for_tool, get_resolver
 from sparql_llm.indexing.index_resources import embedding_model, endpoints_metadata, init_vectordb, qdrant_client
-from sparql_llm.project import allowed_endpoint, post_for
+from sparql_llm.project import Project, allowed_endpoint, get_projects, post_for
 from sparql_llm.utils import compress_list, get_prefix_converter, logger, query_sparql
 from sparql_llm.validate_sparql import validate_sparql
 
@@ -44,15 +44,17 @@ the query is probably too restrictive: use a broader, case-insensitive string ma
 prefixes, or break the query into smaller parts."""
 
 
-def resolve_endpoint_url(endpoint_url: str) -> tuple[str | None, str]:
-    """Return the endpoint a tool call meant, or None and the error text for the tool.
+def _first_project() -> Project:
+    return get_projects()[0]
+
+
+def resolve_endpoint_url(endpoint_url: str, project: Project | None = None) -> tuple[str, str]:
+    """The endpoint a tool call runs on: always its dataset's, whatever URL the model passed.
 
     gpt-oss sometimes damages the endpoint_url argument (e.g. repeating part of
-    the host), which gets a 404 and costs the model a round. With a single
-    endpoint configured, an unknown URL can only mean that one. With several,
-    an unknown URL is refused: queries only run on configured endpoints.
+    the host); another dataset's URL must not move the query there either.
     """
-    return allowed_endpoint(endpoint_url)
+    return allowed_endpoint(endpoint_url, project or _first_project())
 
 
 def get_mcp_app(enable_resources_info_tool: bool = True) -> FastMCP:
@@ -251,13 +253,12 @@ Returns:
         Returns:
             The query results in JSON format
         """
-        endpoint_url, error = resolve_endpoint_url(endpoint_url)
-        if endpoint_url is None:
-            return error
+        project = _first_project()
+        endpoint_url, _ = resolve_endpoint_url(endpoint_url, project)
         resp_msg = ""
         # First check if query valid based on classes schema and known prefixes
         validation_output = validate_sparql(
-            sparql_query, endpoint_url, endpoints_metadata.prefixes_map, endpoints_metadata.void_dict
+            sparql_query, endpoint_url, endpoints_metadata.prefixes_for(project), endpoints_metadata.schema_for(project)
         )
         if validation_output["fixed_query"]:
             # Pass the fixed query to the client
@@ -275,7 +276,7 @@ Returns:
             return resp_msg
         # Execute the SPARQL query
         try:
-            res = query_sparql(sparql_query, endpoint_url, timeout=10, post=post_for(endpoint_url))
+            res = query_sparql(sparql_query, endpoint_url, timeout=10, post=post_for(project))
             bindings = res.get("results", {}).get("bindings")
             if not bindings:
                 # If no results, return a message to ask fix the query
@@ -318,14 +319,13 @@ Returns:
             hints on how to fix it, and includes the auto-fixed query when
             prefix corrections were applied.
         """
-        endpoint_url, error = resolve_endpoint_url(endpoint_url)
-        if endpoint_url is None:
-            return error
+        project = _first_project()
+        endpoint_url, _ = resolve_endpoint_url(endpoint_url, project)
         validation_output = validate_sparql(
             sparql_query,
             endpoint_url,
-            endpoints_metadata.prefixes_map,
-            endpoints_metadata.void_dict,
+            endpoints_metadata.prefixes_for(project),
+            endpoints_metadata.schema_for(project),
         )
 
         parts: list[str] = []
@@ -400,10 +400,9 @@ Returns:
             A numbered list of all class names (in compact prefix:LocalName
             form) together with the predicates each class supports.
         """
-        endpoint_url, error = resolve_endpoint_url(endpoint_url)
-        if endpoint_url is None:
-            return error
-        void_dict = endpoints_metadata.void_dict.get(endpoint_url, {})
+        project = _first_project()
+        endpoint_url, _ = resolve_endpoint_url(endpoint_url, project)
+        void_dict = endpoints_metadata.schema_for(project).get(endpoint_url, {})
 
         if not void_dict:
             return (
@@ -412,7 +411,7 @@ Returns:
                 "been indexed yet."
             )
 
-        converter = get_prefix_converter(endpoints_metadata.prefixes_map)
+        converter = get_prefix_converter(endpoints_metadata.prefixes_for(project))
         parts: list[str] = [
             f"Classes available in `{endpoint_url}` ({len(void_dict)} classes):\n",
         ]
@@ -454,7 +453,8 @@ Returns:
             source endpoint — or a message if no entity index is available.
         """
         # One endpoint, so endpoint_url is accepted for compatibility and ignored.
-        return describe_for_tool(get_resolver(), entity_name, entity_type, limit)
+        project = _first_project()
+        return describe_for_tool(get_resolver(project), entity_name, project, entity_type, limit)
 
     @mcp.tool()
     def explain_query_results(

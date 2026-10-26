@@ -27,6 +27,7 @@ from sparql_llm.agent.graph import route_tools_output  # noqa: E402
 from sparql_llm.agent.nodes import call_model as call_model_module  # noqa: E402
 from sparql_llm.agent.state import State  # noqa: E402
 from sparql_llm.agent.utils import count_tool_rounds  # noqa: E402
+from sparql_llm.project import get_projects
 
 
 def _history(rounds: int) -> list[Any]:
@@ -130,4 +131,4 @@ def test_natural_language_mode_does_not_ask_for_think_blocks(fake_model: _FakeMo
 def test_tools_prompt_renders_as_a_template():
     # The system prompt goes through ChatPromptTemplate, so a stray brace in the
     # prompt text would be read as a template variable and fail every request.
-    ChatPromptTemplate.from_messages([("system", prompts.tools_resolution_prompt())]).invoke({})
+    ChatPromptTemplate.from_messages([("system", prompts.tools_resolution_prompt(get_projects()[0]))]).invoke({})

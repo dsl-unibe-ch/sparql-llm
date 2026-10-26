@@ -374,6 +374,7 @@ class EndpointsMetadataManager:
         self._fixed_projects = projects
         self._prefixes_map: dict[str, str] = {}
         self._void_dict: EndpointsSchemaDict = {}
+        self._per_project: dict[str, tuple[tuple[str, float], dict[str, Any]]] = {}
         self._initialized = False
         if auto_init:
             logger.info("Auto-initializing endpoints metadata...")
@@ -412,6 +413,7 @@ class EndpointsMetadataManager:
     def reload(self) -> None:
         """Read the cached metadata files again on next use, e.g. after a rebuild promoted them."""
         self._initialized = False
+        self._per_project.clear()
 
     def refresh(self) -> None:
         """Rebuild the metadata from its sources, replacing the cached file.
@@ -461,6 +463,36 @@ class EndpointsMetadataManager:
             void_dict.update(project_schema)
         self._prefixes_map, self._void_dict = prefixes_map, void_dict
         self._initialized = True
+
+    def _project_metadata(self, project: Project) -> dict[str, Any]:
+        """One project's cached metadata, re-read when its file changes; never fetched at request time."""
+        path = project.prefixes_path
+        try:
+            key = (str(path), path.stat().st_mtime)
+        except OSError:
+            # Not rebuilt yet: the prefixes its project file declares, and no classes schema.
+            return {"prefixes_map": dict(project.prefixes), "classes_schema": {}}
+        cached = self._per_project.get(project.id)
+        if cached is None or cached[0] != key:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except Exception as e:
+                logger.warning(f"Cannot read {path}: {e}")
+                data = {}
+            data = {
+                "prefixes_map": data.get("prefixes_map") or dict(project.prefixes),
+                "classes_schema": data.get("classes_schema") or {},
+            }
+            cached = self._per_project[project.id] = (key, data)
+        return cached[1]
+
+    def prefixes_for(self, project: Project) -> dict[str, str]:
+        """This project's prefixes only: two datasets may bind the same prefix to different namespaces."""
+        return self._project_metadata(project)["prefixes_map"]
+
+    def schema_for(self, project: Project) -> "EndpointsSchemaDict":
+        """This project's classes schema only, keyed by its endpoint URL."""
+        return self._project_metadata(project)["classes_schema"]
 
     @property
     def prefixes_map(self) -> dict[str, str]:
