@@ -111,3 +111,20 @@ def test_opening_a_saved_chat_switches_to_its_dataset(datasets):
 
     assert _selected(response.text) == "norssit"
     assert "last_dataset=norssit" in response.headers["set-cookie"]
+
+
+def test_a_user_with_no_dataset_sees_no_unpublished_one(datasets, tmp_path: Path):
+    """Final review: with nothing published, the page fell back to every served dataset's endpoint."""
+    (tmp_path / "datasets.json").write_text(
+        json.dumps([{"id": "swiss", "published": False}, {"id": "norssit", "published": False}]), encoding="utf-8"
+    )
+    page = _client_as(USER).get("/").text
+
+    assert "https://s.example/sparql" not in page and "https://ldf.fi/norssit/sparql" not in page
+    assert "Ask about **Swiss**" not in page and "<strong>Swiss</strong>" not in page
+
+
+def test_api_description_names_no_dataset(datasets):
+    """Final review: /docs named every served dataset (unpublished ones too) and the Swiss topics."""
+    description = main._api_description()
+    assert "s.example" not in description and "ldf.fi" not in description and "Norssit" not in description

@@ -90,11 +90,13 @@ def migrate_configured() -> list[str]:
     from sparql_llm.config import settings
     from sparql_llm.datasets import list_dataset_ids, seed_dataset_list
 
-    seed_dataset_list(Path(settings.data_dir), settings.projects)
+    upgrading = seed_dataset_list(Path(settings.data_dir), settings.projects)
     project_ids = list_dataset_ids()
     if not project_ids:
         return []
     seed_projects(Path(settings.data_dir), project_ids)
-    # The install's texts described the one dataset there was: the first.
-    fill_project_texts(Path(settings.data_dir) / project_ids[0], settings)
+    if upgrading:
+        # Only at the upgrade, when the list is first written: the install's texts described
+        # the one dataset there was. Later runs (every rebuild of any dataset) never touch it.
+        fill_project_texts(Path(settings.data_dir) / project_ids[0], settings)
     return migrate_legacy_data(Path(settings.data_dir), project_ids[0])

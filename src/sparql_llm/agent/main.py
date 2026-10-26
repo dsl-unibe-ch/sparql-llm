@@ -162,10 +162,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def _api_description() -> str:
-    """The OpenAPI description, from the settings and the projects served (F18)."""
-    endpoints = ", ".join(f"{e.get('label')} ({e['endpoint_url']})" for e in settings.endpoints)
-    text = f"Natural-language interface to {endpoints or 'SPARQL endpoints'}."
-    return f"{text} {settings.app_topics}".strip()
+    """The OpenAPI description (F18). It names no dataset: /docs is public, unpublished datasets are not."""
+    return f"{settings.app_name}: a natural-language interface to SPARQL endpoints. Pick a dataset with the `project` field of /chat."
 
 
 app = FastAPI(
@@ -214,9 +212,13 @@ def site_context(request: Request) -> dict[str, Any]:
     another dataset's intro, endpoint or counts must never appear beside it.
     """
     dataset: Project | None = getattr(request.state, "dataset", None)
-    intro = dataset.intro if dataset is not None else settings.app_intro
+    # The chat page with no dataset the user may use shows none: never the served ones.
+    chat_page = getattr(request.state, "chat_page", False)
+    intro = dataset.intro if dataset is not None else ("" if chat_page else settings.app_intro)
     if dataset is not None:
         endpoints = [{"label": dataset.label, "endpoint_url": dataset.endpoint_url}]
+    elif chat_page:
+        endpoints = []
     else:
         endpoints = [{"label": e.get("label"), "endpoint_url": e["endpoint_url"]} for e in settings.endpoints]
     return {
@@ -226,7 +228,7 @@ def site_context(request: Request) -> dict[str, Any]:
         or f"Natural-language interface to {settings.app_name}.",
         "app_homepage_url": (dataset.homepage_url if dataset is not None else None) or settings.app_homepage_url,
         "endpoints": endpoints,
-        "stats": project_stats([dataset] if dataset is not None else None),
+        "stats": project_stats([dataset] if dataset is not None else ([] if chat_page else None)),
     }
 
 
@@ -1372,6 +1374,7 @@ async def chat_ui(
             wanted.insert(0, conversation.project)
     selected = next((by_id[w] for w in wanted if w in by_id), allowed[0] if allowed else None)
     request.state.dataset = selected
+    request.state.chat_page = True
     response = templates.TemplateResponse(
         request,
         "index.html",

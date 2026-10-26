@@ -384,23 +384,22 @@ Returns:
 
     @mcp.tool()
     def list_available_endpoints() -> str:
-        """List all SPARQL endpoints indexed by this MCP server.
+        """List the SPARQL endpoint this MCP server answers from.
 
         Call this tool when the user asks what databases or data sources are
         available, or when you need to discover which endpoint to target.
         No arguments are required.
 
         Returns:
-            A formatted list of endpoints, each with its label, URL,
-            description, and homepage link (when available).
+            The endpoint with its label, URL, description, and homepage link
+            (when available).
         """
-        if not settings.endpoints:
-            return "No SPARQL endpoints are currently configured."
-
+        # This address serves one dataset: never name another, published or not.
+        endpoints = [_project().as_endpoint_links()]
         parts: list[str] = [
-            f"There are {len(settings.endpoints)} SPARQL endpoint(s) available:\n",
+            f"There are {len(endpoints)} SPARQL endpoint(s) available:\n",
         ]
-        for idx, ep in enumerate(settings.endpoints, start=1):
+        for idx, ep in enumerate(endpoints, start=1):
             label = ep.get("label", "Unnamed")
             url = ep["endpoint_url"]
             desc = ep.get("description", "No description provided.")

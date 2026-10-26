@@ -183,3 +183,11 @@ def test_tool_calls_run_on_the_selected_datasets_address(two, monkeypatch: pytes
     connection = next(iter(seen[0].values()))
     assert connection["url"].endswith("/mcp/b")
     assert connection["headers"]["X-Internal-Token"] == mcp_server.INTERNAL_TOKEN
+
+
+def test_endpoint_list_tool_shows_only_its_own_dataset(two):
+    """Final review: the tool listed every served dataset, unpublished ones too, on every address."""
+    for project_id, own, other in (("a", A, B), ("b", B, A)):
+        listing = _tools(project_id)["list_available_endpoints"].fn()
+        assert own["endpoint_url"] in listing and own["label"] in listing
+        assert other["endpoint_url"] not in listing and other["label"] not in listing

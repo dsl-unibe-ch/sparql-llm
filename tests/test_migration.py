@@ -95,3 +95,22 @@ def test_upgrade_fills_texts_once(tmp_path: Path):
     (tmp_path / "project.json").write_text(json.dumps(content), encoding="utf-8")
     assert fill_project_texts(tmp_path, install) is False
     assert json.loads((tmp_path / "project.json").read_text(encoding="utf-8"))["intro"] == "Edited by a curator."
+
+
+def test_a_rebuild_never_rewrites_the_first_datasets_texts(tmp_path: Path, monkeypatch):
+    """Final review: every migrate_configured() (each rebuild of any dataset) refilled the first dataset's texts."""
+    import json
+
+    from sparql_llm.config import settings
+    from sparql_llm.migration import migrate_configured
+
+    (tmp_path / "swiss-elites").mkdir()
+    live = tmp_path / "swiss-elites" / "project.json"
+    live.write_text(json.dumps({"id": "swiss-elites", "label": "S", "endpoint_url": "https://x/sparql"}), encoding="utf-8")
+    (tmp_path / "datasets.json").write_text(json.dumps([{"id": "swiss-elites", "published": True}]), encoding="utf-8")
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "projects", ["swiss-elites"])
+
+    migrate_configured()
+
+    assert "intro" not in json.loads(live.read_text(encoding="utf-8"))
