@@ -1,0 +1,51 @@
+{
+  "id": "swiss-elites",
+  "label": "Swiss Elites",
+  "endpoint_url": "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter",
+  "method": "GET",
+  "description": "The Swiss Elites knowledge graph contains prosopographical data about Swiss political, economic, military, cultural and academic elites from the 19th and 20th centuries, modelled using WissKI and Linked Open Data principles. Ontologies: CIDOC CRM and SDHSS (social-life-core, shortcuts).",
+  "homepage_url": "https://elites-suisses.lod4hss.org/",
+  "graphs": ["https://swiss-elites.lod4hss.cloud/resource/"],
+  "prefixes": {
+    "crm": "http://www.cidoc-crm.org/cidoc-crm/",
+    "sdh-slc": "https://sdhss.org/ontology/social-life-core/",
+    "sdh-sls": "https://sdhss.org/ontology/social-life-specific/",
+    "sdh-short": "https://sdhss.org/ontology/shortcuts/",
+    "sdh": "https://sdhss.org/ontology/core/",
+    "crm-sup": "https://sdhss.org/ontology/crm-supplement/",
+    "swel": "https://elites-suisses.lod4hss.org/resource/",
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "void": "http://rdfs.org/ns/void#",
+    "dct": "http://purl.org/dc/terms/"
+  },
+  "dataset_description_file": "dataset.md",
+  "examples_file": "examples.md",
+  "entities": {
+    "label_property": "https://sdhss.org/ontology/shortcuts/P9",
+    "types": {
+      "Person": {
+        "class": "http://www.cidoc-crm.org/cidoc-crm/E21",
+        "birth_property": "https://sdhss.org/ontology/shortcuts/P2",
+        "death_property": "https://sdhss.org/ontology/shortcuts/P13"
+      },
+      "Group": {"class": "http://www.cidoc-crm.org/cidoc-crm/E74"},
+      "Place": {"class": "https://sdhss.org/ontology/core/C13"},
+      "Discipline": {"class": "https://sdhss.org/ontology/social-life-specific/C9"},
+      "Study title": {"class": "https://sdhss.org/ontology/social-life-specific/C8"}
+    }
+  },
+  "schema_classes": {"min_instances": 1, "exclude": []},
+  "curator_examples": {
+    "github_repo": "lod4hss-projects/elites-suisses",
+    "folder": "llm_documentation/SPARQL_queries_examples",
+    "branch": "main"
+  },
+  "prefix_repairs": {
+    "sdh-so:": "sdh-short:",
+    "https://sdhss.org/ontology/social-life/": "https://sdhss.org/ontology/social-life-core/"
+  },
+  "ontology_from_endpoint": true
+}

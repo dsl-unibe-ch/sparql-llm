@@ -38,6 +38,7 @@ from sparql_llm.agent.roles import (
 )
 from sparql_llm.config import settings, settings_filepath
 from sparql_llm.mcp_server import get_mcp_app
+from sparql_llm.migration import migrate_configured
 from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
 
 if settings.sentry_url:
@@ -97,6 +98,7 @@ def is_valid_login_redirect(value: str):
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan that initializes the MCP session manager and auth DB."""
+    migrate_configured()
     if settings.auth_enabled:
         pathlib.Path(settings.auth_db_path).parent.mkdir(parents=True, exist_ok=True)
         await create_db_and_tables()

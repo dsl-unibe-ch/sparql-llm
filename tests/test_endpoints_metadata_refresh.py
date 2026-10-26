@@ -8,6 +8,7 @@ agent concluded Ernst Brenner had no spouse. The admin rebuild now refreshes it.
 """
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -15,7 +16,7 @@ from sparql_llm import utils
 from sparql_llm.utils import EndpointsMetadataManager
 
 ENDPOINT = "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter"
-VOID_FILE = "data/elites-suisses-void.ttl"
+VOID_FILE = str(Path(__file__).parent / "fixtures" / "swiss-elites" / "void.ttl")
 C3 = "https://sdhss.org/ontology/social-life-core/C3"
 C9 = "https://sdhss.org/ontology/social-life-core/C9"
 

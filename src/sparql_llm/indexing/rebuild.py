@@ -32,6 +32,7 @@ from sparql_llm.indexing.drift import save_fingerprint, take_fingerprint
 from sparql_llm.indexing.entity_names import build_entity_names
 from sparql_llm.indexing.index_resources import endpoints_metadata, init_vectordb, qdrant_client
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
+from sparql_llm.migration import migrate_configured
 from sparql_llm.utils import logger
 
 #: Job status, shared across workers. Written atomically; safe to read at any moment.
@@ -127,6 +128,7 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     original same-named collection. That is the one moment of downtime, and it lasts a
     single Qdrant call rather than the length of a rebuild.
     """
+    migrate_configured()
     alias = _live_alias()
     version = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     target = f"{alias}-{version}"
