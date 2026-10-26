@@ -70,6 +70,13 @@
       .btn-reindex:hover:not(:disabled) { background: #1e293b; }
       .btn-reindex:disabled { opacity: 0.55; cursor: not-allowed; }
       .idx-status { font-size: 0.82rem; color: #475569; }
+      .btn-check { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
+      .btn-check:hover:not(:disabled) { background: #f1f5f9; }
+      .idx-checks { list-style: none; margin: 0; padding: 0; font-size: 0.85rem; line-height: 1.5; }
+      .idx-checks li { padding: 0.3rem 0; border-bottom: 1px solid #f1f5f9; }
+      .idx-checks .ck-ok { color: #166534; }
+      .idx-checks .ck-warning { color: #92400e; }
+      .idx-checks .ck-error { color: #991b1b; }
       .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid #cbd5e1; border-top-color: #0f172a; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: -2px; margin-right: 6px; }
       @keyframes spin { to { transform: rotate(360deg); } }
       @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
@@ -146,9 +153,11 @@
           </p>
           <div id="idx-banner" class="idx-banner idx-current">Checking the index&hellip;</div>
           <div class="idx-row">
+            <button id="idx-check" class="btn-reindex btn-check">Check configuration</button>
             <button id="idx-rebuild" class="btn-reindex" disabled>Rebuild index</button>
             <span id="idx-status" class="idx-status"></span>
           </div>
+          <ul id="idx-checks" class="idx-checks" hidden></ul>
         </div>
       </div>
 
@@ -315,6 +324,34 @@
           }
         }
 
+        var checkBtn = document.getElementById('idx-check');
+        var checkList = document.getElementById('idx-checks');
+        var MARKS = { ok: '✓', warning: '⚠', error: '✗' };
+
+        function renderChecks(projects) {
+          var items = [];
+          Object.keys(projects || {}).forEach(function (pid) {
+            (projects[pid] || []).forEach(function (c) {
+              items.push('<li class="ck-' + esc(c.status) + '">' + (MARKS[c.status] || '') + ' ' + esc(c.message) + '</li>');
+            });
+          });
+          checkList.innerHTML = items.join('');
+          checkList.hidden = items.length === 0;
+        }
+
+        checkBtn.addEventListener('click', function () {
+          checkBtn.disabled = true;
+          status.innerHTML = '<span class="spinner"></span>Checking the configuration…';
+          fetch('/admin/check', { method: 'POST', credentials: 'same-origin' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              status.textContent = d.error ? d.error : '';
+              if (d.projects) renderChecks(d.projects);
+            })
+            .catch(function () { status.textContent = 'Could not run the checks.'; })
+            .finally(function () { checkBtn.disabled = false; });
+        });
+
         function renderJob(job) {
           if (!job) return false;
           var running = (job.state === 'running' || job.state === 'swapping');
@@ -327,6 +364,9 @@
             banner.innerHTML = esc(job.message || 'The rebuild failed.');
           } else if (job.state === 'done') {
             status.textContent = job.message || 'Done.';
+            var checks = {};
+            Object.keys(job.projects || {}).forEach(function (pid) { checks[pid] = job.projects[pid].checks || []; });
+            renderChecks(checks);
           } else {
             status.textContent = '';
           }
@@ -339,7 +379,8 @@
             .then(function (d) {
               if (!d) return false;
               var running = renderJob(d.job);
-              if (!running) renderDrift(d.drift);
+              // A failed rebuild's message stays in the banner rather than the drift report.
+              if (!running && !(d.job && d.job.state === 'failed')) renderDrift(d.drift);
               return running;
             })
             .catch(function () { return false; });

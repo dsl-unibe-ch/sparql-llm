@@ -82,7 +82,8 @@ if settings.auth_enabled:
     from sparql_llm.agent.crypto import decrypt_api_key, encrypt_api_key, mask_key
     from sparql_llm.agent.providers import PROVIDERS, validate_and_list_models
     from sparql_llm.indexing.drift import check_drift
-    from sparql_llm.indexing.rebuild import read_job, start_rebuild
+    from sparql_llm.indexing.preflight import run_checks
+    from sparql_llm.indexing.rebuild import lock_file, read_job, start_rebuild
 
 
 def is_valid_login_redirect(value: str):
@@ -332,6 +333,17 @@ if settings.auth_enabled:
                 {"error": "A rebuild is already running.", **result}, status_code=409
             )
         return JSONResponse(result)
+
+    @app.post("/admin/check", include_in_schema=False)
+    async def admin_check(
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """Run the preflight checks of every project, without rebuilding anything."""
+        if not can_manage(user):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        if lock_file().exists():
+            return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
+        return JSONResponse({"projects": await run_in_threadpool(run_checks)})
 
     @app.get("/admin/settings", include_in_schema=False)
     async def admin_get_settings(

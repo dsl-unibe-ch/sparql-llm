@@ -21,6 +21,7 @@ import os
 import threading
 import time
 import traceback
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -28,12 +29,14 @@ from typing import Any
 from qdrant_client import models
 
 from sparql_llm.config import settings
-from sparql_llm.indexing.drift import save_fingerprint, take_fingerprint
+from sparql_llm.indexing.drift import Fingerprint, save_fingerprint, take_fingerprint
 from sparql_llm.indexing.entity_names import build_entity_names
 from sparql_llm.indexing.index_resources import endpoints_metadata, init_vectordb, qdrant_client
+from sparql_llm.indexing.preflight import run_preflight
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
+from sparql_llm.indexing.void_gen import VoidError, generate_void
 from sparql_llm.migration import migrate_configured
-from sparql_llm.project import get_projects
+from sparql_llm.project import Project, get_projects, reload_projects
 from sparql_llm.utils import logger
 
 
@@ -128,8 +131,33 @@ def _point_alias(alias: str, collection: str) -> None:
     qdrant_client.update_collection_aliases(change_aliases_operations=ops)
 
 
+class RebuildStopped(Exception):
+    """A project failed a check: the rebuild stops before the alias swap. Plain message for the admin page."""
+
+
+def _project_headline(project: Project, report: dict[str, Any], fingerprint: Fingerprint) -> str:
+    """'Norssit: Person 10,137 · Group 2,368 · 330 → 40 classes · 6/6 examples OK.'"""
+    bits = []
+    if project.entities:
+        for type_name, entity_type in project.entities.types.items():
+            if entity_type.class_iri in fingerprint.classes:
+                bits.append(f"{type_name} {fingerprint.classes[entity_type.class_iri]:,}")
+    void = report.get("void") or {}
+    if void:
+        bits.append(f"{void['classes_total']} → {void['classes_kept']} classes")
+    examples = report.get("examples") or {}
+    if examples.get("total"):
+        bits.append(f"{examples['ok']}/{examples['total']} examples OK")
+    return f"{project.label}: {' · '.join(bits)}."
+
+
 def rebuild_index_with_alias() -> dict[str, Any]:
-    """Build a new index, then swap the alias to it. Blocking; call from a worker thread.
+    """Run the onboarding pipeline, build a new index, then swap the alias to it.
+
+    Blocking; call from a worker thread. Per project: preflight checks, curator example
+    sync, VoID generation, entity names; then once: the validator schema, the index, the
+    alias swap, the fingerprints and a reload of the project files. Any error raises
+    RebuildStopped before the swap, so the live index keeps serving.
 
     An alias cannot share a name with a real collection, so the first run has to retire the
     original same-named collection. That is the one moment of downtime, and it lasts a
@@ -137,15 +165,28 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     """
     migrate_configured()
     projects = get_projects()
+    if not projects:
+        raise RebuildStopped("No project is configured for this instance (projects in the install settings).")
     alias = _live_alias()
     version = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     target = f"{alias}-{version}"
+    reports: dict[str, dict[str, Any]] = {p.id: {} for p in projects}
 
-    # Pull the curators' examples first, so a rebuild always indexes what they have
-    # published rather than whatever was last copied across by hand. Every query is
-    # executed before it is written; the ones that fail are left out and reported, since
-    # an example that returns nothing is indistinguishable to the model from one that
-    # works. This never raises — an unreachable repo leaves the previous corpus in place.
+    # 1. Check every project first: a misconfigured one must not produce a running bot
+    #    that answers from the wrong data or schema.
+    for project in projects:
+        _set_job("running", f"{project.label}: checking the configuration…", collection=target)
+        checks = run_preflight(project)
+        reports[project.id]["checks"] = [asdict(c) for c in checks]
+        examples_check = next((c for c in checks if c.step == "examples"), None)
+        reports[project.id]["examples"] = examples_check.details if examples_check else {}
+        errors = [c.message for c in checks if c.status == "error"]
+        if errors:
+            raise RebuildStopped(" ".join(errors))
+
+    # 2. Pull the curators' examples, so a rebuild always indexes what they have published.
+    #    Every query is executed before it is written; the ones that fail are left out and
+    #    reported. This never raises — an unreachable repo leaves the previous corpus in place.
     _set_job("running", "Fetching and testing the curators' example queries…", collection=target)
     examples_reports = {p.id: sync_curator_examples(p) for p in projects}
     synced = {pid: r for pid, r in examples_reports.items() if not r.get("skipped")}
@@ -159,10 +200,32 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     )
     logger.info("Example sync: %s", examples_summary)
 
-    # The name → URI list the entity resolver matches against. Never raises: on failure
-    # the previous list stays in use and the result message says so.
+    # 3. Describe each endpoint's schema. An unreadable result stops the rebuild.
+    for project in projects:
+        _set_job("running", f"{project.label}: describing the schema…", collection=target)
+        try:
+            reports[project.id]["void"] = generate_void(project)
+        except VoidError as exc:
+            raise RebuildStopped(str(exc)) from exc
+        except Exception as exc:
+            raise RebuildStopped(
+                f"{project.label}: the schema could not be generated from {project.endpoint_url} ({exc})."
+            ) from exc
+
+    # 4. Refresh the query validator's schema and prefixes (each project's prefixes.json)
+    #    from the VoID just written, so it never validates against a stale copy.
+    try:
+        endpoints_metadata.refresh()
+    except Exception as exc:
+        raise RebuildStopped(f"The query validator's schema could not be refreshed ({exc}).") from exc
+
+    # 5. The name → URI lists the entity resolver matches against. Never raises: on failure
+    #    the previous list stays in use and the result message says so.
     _set_job("running", f"{examples_summary}. Collecting entity names…", collection=target)
-    entity_reports = {p.label: build_entity_names(p) for p in projects}
+    entity_reports = {}
+    for project in projects:
+        entity_reports[project.label] = build_entity_names(project)
+        reports[project.id]["entities"] = entity_reports[project.label]["entities"]
     entities_report = {
         "entities": sum(r["entities"] for r in entity_reports.values()),
         "error": "; ".join(f"{label}: {r['error']}" for label, r in entity_reports.items() if r["error"]),
@@ -172,16 +235,6 @@ def rebuild_index_with_alias() -> dict[str, Any]:
         if entities_report["error"]
         else ""
     )
-
-    # Refresh the query validator's schema (cached in each project's prefixes.json) from
-    # the same VoID the index is built from, so it never validates against a stale copy.
-    # A failure here keeps the previous schema and is reported with the result.
-    schema_warning = ""
-    try:
-        endpoints_metadata.refresh()
-    except Exception as exc:
-        logger.warning("Could not refresh the query validator's schema: %s", exc)
-        schema_warning = f" ⚠ Query validator schema not refreshed ({exc}); the previous one is still in use."
 
     _set_job("running", f"{examples_summary}. Building new index '{target}'…", collection=target)
 
@@ -193,7 +246,7 @@ def rebuild_index_with_alias() -> dict[str, Any]:
 
     doc_count = init_vectordb(collection_name=target)
     if not doc_count:
-        raise RuntimeError("Indexing produced 0 documents — refusing to swap the alias.")
+        raise RebuildStopped("Indexing produced 0 documents — refusing to swap the alias.")
 
     _set_job("swapping", f"Built {doc_count} documents. Switching traffic to '{target}'…",
              collection=target, documents=doc_count)
@@ -235,6 +288,9 @@ def rebuild_index_with_alias() -> dict[str, Any]:
             except Exception as exc:
                 logger.warning("Could not remove the superseded collection %s: %s", name, exc)
 
+    # The project files may have been uploaded since the last start: serve the new ones.
+    reload_projects()
+
     result = {
         "collection": target,
         "documents": doc_count,
@@ -245,6 +301,7 @@ def rebuild_index_with_alias() -> dict[str, Any]:
         "examples_accepted": examples_report["accepted"],
         "entities": entities_report["entities"],
         "examples_rejected": examples_report["rejected"],
+        "projects": reports,
     }
     # A rejected example is the one outcome an admin must not miss: the rebuild
     # succeeded, but something the curators wrote is not in the assistant. Put it in the
@@ -252,14 +309,39 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     warning = ""
     if examples_report["rejected"] or examples_report["error"]:
         warning = f" ⚠ {examples_summary}"
+    example_warnings = [
+        c["message"] for r in reports.values() for c in r.get("checks", []) if c["status"] == "warning"
+    ]
+    if example_warnings:
+        warning += " ⚠ " + " ".join(example_warnings)
+    headlines = " ".join(_project_headline(p, reports[p.id], fingerprints[p.id]) for p in projects)
     _set_job(
         "done",
-        f"Index rebuilt: {doc_count} documents covering {class_count} classes "
+        f"{headlines} Index rebuilt: {doc_count} documents covering {class_count} classes "
         f"({triples:,} triples), {entities_report['entities']:,} entity names."
-        f"{warning}{schema_warning}{entities_warning}",
+        f"{warning}{entities_warning}",
         **result,
     )
     return result
+
+
+def run_rebuild_job() -> None:
+    """The body of a background rebuild: run it, record how it ended, release the lock."""
+    try:
+        rebuild_index_with_alias()
+    except RebuildStopped as exc:
+        logger.warning("Index rebuild stopped: %s", exc)
+        _set_job("failed", f"Rebuild stopped: {exc} The previous index is still serving.", error=str(exc))
+    except Exception as exc:
+        logger.exception("Index rebuild failed")
+        _set_job(
+            "failed",
+            f"Rebuild failed: {exc}. The previous index is still serving.",
+            error=str(exc),
+            traceback=traceback.format_exc()[-2000:],
+        )
+    finally:
+        _release_lock()
 
 
 def start_rebuild() -> dict[str, Any]:
@@ -272,20 +354,6 @@ def start_rebuild() -> dict[str, Any]:
         job = read_job()
         return {"started": False, "reason": "already-running", "job": job}
 
-    def _run() -> None:
-        try:
-            rebuild_index_with_alias()
-        except Exception as exc:
-            logger.exception("Index rebuild failed")
-            _set_job(
-                "failed",
-                f"Rebuild failed: {exc}. The previous index is still serving.",
-                error=str(exc),
-                traceback=traceback.format_exc()[-2000:],
-            )
-        finally:
-            _release_lock()
-
     _set_job("running", "Starting rebuild…")
-    threading.Thread(target=_run, name="reindex", daemon=True).start()
+    threading.Thread(target=run_rebuild_job, name="reindex", daemon=True).start()
     return {"started": True, "job": read_job()}
