@@ -10,10 +10,12 @@ class FakeInner:
 
     def __init__(self):
         self.seen: list[str] = []
+        self.kwargs: list[dict] = []
 
     def embed(self, texts, **kwargs):
         texts = list(texts)
         self.seen += texts
+        self.kwargs.append(kwargs)
         return [[0.0, 0.0, 0.0] for _ in texts]
 
 
@@ -36,6 +38,15 @@ def test_other_local_models_get_no_prefix():
     list(emb.embed(["a"]))
     list(emb.embed_query(["b"]))
     assert inner.seen == ["a", "b"]
+
+
+def test_local_embeds_in_small_batches_unless_told_otherwise():
+    # fastembed's default of 256 put the whole corpus through e5-large at once and took
+    # vm7 (3.9 GB) to 43 MB free during a rebuild.
+    emb, inner = local("intfloat/multilingual-e5-large")
+    list(emb.embed(["a"]))
+    list(emb.embed_query(["b"], batch_size=4))
+    assert [k["batch_size"] for k in inner.kwargs] == [8, 4]
 
 
 def test_openai_backend_embeds_queries_like_passages():

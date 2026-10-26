@@ -100,6 +100,11 @@ class LocalEmbedding:
     is never loaded unless this backend is explicitly selected.
     """
 
+    # fastembed's default of 256 sends the whole corpus through the model at once. With
+    # e5-large and 512-token documents that peaked at ~3.5 GB on vm7, and ONNX keeps that
+    # memory after the batch. Small batches bound the peak at little cost in speed.
+    BATCH_SIZE = 8
+
     def __init__(self, model: str, **kwargs) -> None:
         from fastembed import TextEmbedding  # noqa: E402
 
@@ -120,10 +125,12 @@ class LocalEmbedding:
 
     def embed(self, texts: Iterable[str], **kwargs) -> Iterable[np.ndarray]:
         """Embed documents (the indexed side) with the fastembed model."""
+        kwargs.setdefault("batch_size", self.BATCH_SIZE)
         return self._inner.embed(self._prefixed(texts, "passage: "), **kwargs)
 
     def embed_query(self, texts: Iterable[str], **kwargs) -> Iterable[np.ndarray]:
         """Embed search queries (the user's side) with the fastembed model."""
+        kwargs.setdefault("batch_size", self.BATCH_SIZE)
         return self._inner.embed(self._prefixed(texts, "query: "), **kwargs)
 
 
