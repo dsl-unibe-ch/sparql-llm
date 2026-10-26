@@ -28,8 +28,8 @@
     "How many persons of each SDHSS class are there?"
   ],
   "docs_collection_name": "swiss-elites",
-  "embedding_backend": "openai",
-  "embedding_model": "qwen3-embedding-0.6b",
+  "embedding_backend": "local",
+  "embedding_model": "intfloat/multilingual-e5-large",
   "embedding_dimensions": 1024,
   "force_index": false,
   "auto_init": true,
