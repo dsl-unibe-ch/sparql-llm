@@ -40,6 +40,8 @@ CHAT_URL = "http://127.0.0.1:8000/chat"
 #: Set from the project in main(): the first project of the install unless --project is given.
 ENDPOINT = ""
 EXAMPLES = Path()
+#: The dataset every question is asked of; the instance answers from it only.
+PROJECT_ID = ""
 QUESTIONS: Path | None = None
 # Curated questions about "a person" in general: any non-empty answer is acceptable.
 OPEN_ENDED = {2, 13, 14, 15, 17, 18}
@@ -159,6 +161,7 @@ async def ask(client: httpx.AsyncClient, item: dict, mode: str, model: str) -> d
         "model": model,
         "stream": False,
         "use_tools": mode == "agent",
+        "project": PROJECT_ID,
     }
     record = {"id": item["id"], "set": item["set"], "mode": mode, "model": model, "question": item["question"]}
     start = time.monotonic()
@@ -297,7 +300,7 @@ def report(paths: list[Path]) -> None:
 
 
 def main() -> None:
-    global ENDPOINT, EXAMPLES, QUESTIONS, CHAT_URL
+    global ENDPOINT, EXAMPLES, QUESTIONS, CHAT_URL, PROJECT_ID
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     common = argparse.ArgumentParser(add_help=False)
@@ -318,6 +321,7 @@ def main() -> None:
     project_id = getattr(args, "project", None)
     project = get_project(project_id) if project_id else get_projects()[0]
     ENDPOINT, EXAMPLES, QUESTIONS = project.endpoint_url, project.examples_path, getattr(args, "questions", None)
+    PROJECT_ID = project.id
     if args.cmd == "check-gold":
         check_gold()
     elif args.cmd == "run":

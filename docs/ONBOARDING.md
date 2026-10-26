@@ -1,6 +1,6 @@
 # Onboarding a new SPARQL endpoint
 
-This guide sets up the chat assistant for a new dataset. You edit three files and upload them on the admin page. You don't need Python, a terminal or a server login.
+This guide adds a new dataset to the chat assistant. One instance serves several datasets: users pick one in the chat, and every answer comes from that dataset only. You add the dataset on the admin page, edit three files and upload them there. You don't need Python, a terminal or a server login.
 
 The worked example throughout is **Norssit**, the alumni register of the Helsinki Normal Lyceum (`https://ldf.fi/norssit/sparql`). Its finished files are in [`docs/examples/norssit/`](examples/norssit/). Swiss Elites values are shown next to it, for an SDHSS project.
 
@@ -26,20 +26,19 @@ Collect these before you start. Ask the dataset's maintainers, or look at the en
 - **5–10 questions** people will ask, with a query that answers each, run on the endpoint and returning rows.
 - **Questions with expected answers** for your own evaluation (section 7).
 
-## 2. Getting a second instance
+## 2. Adding a dataset on the admin page
 
-Each project runs as its own instance of the assistant: its own address, its own user accounts, its own search index. A new project therefore needs, once:
+An **admin** adds the dataset; no restart, no developer and no server change is needed.
 
-1. **From IT** (needs administrator rights on the server):
-   - a second service unit, a copy of the existing `swiss-elites` one with three different settings:
-     - `SETTINGS_FILEPATH`: its own install settings file;
-     - its own port, e.g. `8010`, also written as `server_port` in that install settings file;
-     - its own data folder, set as `data_dir` in that install settings file (e.g. `data-norssit`), so the two instances never share users, indexes or files;
-   - a route on the web proxy from the new address (e.g. `/norssit/`) to that port;
-   - **memory**: one instance with the default embedding model uses about 1.8 GB. Either the server gets more RAM, or the new instance uses the smaller model `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (about 0.6 GB, slightly less accurate).
-2. **From the developers**: the install settings file. It lists the project id (`"projects": ["norssit"]`), the chat name and intro shown on the page, the models, and the admin account. You can't upload this file; it holds secrets.
+1. On the admin page (`/admin`), in the **Datasets** card, fill in **id** (lowercase letters, digits and dashes, e.g. `norssit`) and **Name** (shown to users, e.g. `Norssit`), and press **New dataset**.
+2. The dataset appears in the picker as **new**. Every card below the picker (Project files, Search index) now works on the dataset you picked: click a dataset to switch.
+3. Upload its three files, then Check and Rebuild (section 6). Rebuilding one dataset never touches another dataset's files or index, and a failed rebuild changes nothing.
+4. After the first successful rebuild the dataset is **ready, not published**. Admins and curators see it in the chat's dataset list, marked "only visible to curators", and can try it there. Ordinary users don't see it.
+5. When it answers well, an admin presses **Publish**. Every user sees it from then on. **Unpublish** takes it out of their list again; nothing is deleted. A rebuild never publishes a dataset on its own.
 
-The new instance starts even before its project files exist: its admin page shows the three files as "not uploaded yet", and **Check configuration** reports the missing `project.json`. From then on, everything is done from the admin page.
+Datasets never share an endpoint: each `endpoint_url` belongs to one dataset. Deleting a dataset is a developer step, since it removes its index and the saved chats about it.
+
+Curators can upload, check and rebuild any dataset. Only admins add, publish and unpublish.
 
 ## 3. Filling in `project.json`
 
@@ -47,7 +46,7 @@ Copy `projects/_template/project.json` and fill in each field. Every field excep
 
 | Field | What it is | Norssit | Swiss Elites |
 |---|---|---|---|
-| `id` | Short name: lowercase letters, digits and dashes. Must match the id in the install settings. | `norssit` | `swiss-elites` |
+| `id` | Short name: lowercase letters, digits and dashes. Must stay the id you gave the dataset. | `norssit` | `swiss-elites` |
 | `label` | The name shown to users. | `Norssit` | `Swiss Elites` |
 | `endpoint_url` | The SPARQL endpoint. | `https://ldf.fi/norssit/sparql` | `https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter` |
 | `method` | `GET` or `POST`. Use `GET` unless the endpoint only accepts POST. | `GET` | `GET` |
@@ -64,6 +63,10 @@ Copy `projects/_template/project.json` and fill in each field. Every field excep
 | `curator_examples` | Optional: a public GitHub folder of example files to pull at every rebuild: `{"github_repo", "folder", "branch"}`. | `null` | `lod4hss-projects/elites-suisses`, `llm_documentation/SPARQL_queries_examples`, `main` |
 | `prefix_repairs` | Optional: text replacements for known typos in example files. | `{}` | `{"sdh-so:": "sdh-short:", …}` |
 | `ontology_from_endpoint` | Optional, SDHSS projects: also read the OntoME class definitions and SHACL shapes from the endpoint. | `false` | `true` |
+| `intro` | Shown above the chat when the dataset is picked. `**bold**` and `[links](https://…)` work. | A natural-language interface to **Norssit**… | A natural-language interface to the **Elites Suisses** knowledge graph… |
+| `example_questions` | The questions offered as buttons in an empty chat. | `["How many persons are in the register?", …]` | `["How many persons are in the database?", …]` |
+| `topics` | A few words on what the dataset is about; they go into the assistant's instructions. | alumni of the Helsinki Normal Lyceum, … | Swiss elites, political figures, … |
+| `org` | Who publishes the dataset. | Aalto University, Semantic Computing Research Group (SeCo) | University of Lausanne - Swiss Elites project |
 
 Write full IRIs in `project.json` (`http://www.w3.org/2004/02/skos/core#prefLabel`, not `skos:prefLabel`).
 
@@ -106,7 +109,7 @@ SELECT ?person ?name WHERE { ?person a foaf:Person ; skos:prefLabel ?name }
 
 ## 6. Upload, Check, Rebuild
 
-On the admin page (`/admin`), in the **Project files** card:
+On the admin page (`/admin`), pick the dataset in the **Datasets** card, then, in the **Project files** card:
 
 1. For each file: choose it, press **Upload**. A file with a problem is refused with a message. An accepted file **waits**: the card shows it as "waiting for the next Rebuild", and the assistant keeps using the file in service, even after a server restart. **Download** gives you the waiting file if there is one, else the one in service. **Discard upload** drops a waiting file.
 2. Press **Check configuration** in the **Search index** card. Each check shows ✓ (fine), ⚠ (a warning; the rebuild still runs) or ✗ (an error; fix it first).
@@ -127,7 +130,8 @@ Uploaded files take effect only when a Rebuild succeeds.
 | `method: must be GET or POST` | Write `"GET"` or `"POST"`, in capitals. |
 | `id: must use lowercase letters, digits and dashes only…` | Change the id, e.g. `norssit`, not `Norssit Chat`. |
 | `id: is 'x', but this is the file of project 'y'…` | Keep the id of the project you upload to. |
-| `Project 'x' is not served by this instance.` | The install settings don't list this project; ask the developers. |
+| `Project 'x' is not served by this instance.` | There is no dataset with that id; add it in the Datasets card first. |
+| `endpoint_url: is already used by dataset 'x'. Each dataset needs its own endpoint.` | Another dataset already queries that endpoint. Check `endpoint_url`; two datasets never share one. |
 | `examples.md has no example: …` | Each example needs a `## ` heading, a `Question:` line and a ` ```sparql ` block. |
 | `dataset.md is empty.` | Upload the file with its text. |
 | `… is not UTF-8 text.` | Save the file as UTF-8 in your editor and upload again. |
@@ -152,10 +156,20 @@ Uploaded files take effect only when a Rebuild succeeds.
 | `… the schema could not be generated from …` | The endpoint failed during the schema queries, often a timeout on a large endpoint. Try again later. |
 | `The project file … is missing.` / `The project file … has errors: …` | Upload `project.json` (or fix the field named in the message). |
 | `Rebuild failed: …` | Something unexpected. The old index is still serving. Send the message to the developers. |
+| `A rebuild of x is already running; try again when it finishes.` | One rebuild runs at a time, whichever dataset. Wait until the other one finishes. |
+
+**In the Datasets card and the chat:**
+
+| Message | What to do |
+|---|---|
+| `The dataset 'x' has not been rebuilt successfully yet.` | Publish works only after a successful Rebuild of that dataset. |
+| `'x' is not a valid id…` / `A dataset with the id 'x' already exists.` | Pick another id for the new dataset. |
+| `The dataset 'x' is not available.` | In the chat: the dataset is not published (ordinary users), or does not exist. An admin publishes it in the Datasets card. |
+| `This dataset is not published.` | From an MCP client: the dataset's MCP address answers only once it is published. |
 
 ## 7. Testing with your questions
 
-Ask your evaluation questions in the chat and compare the answers with what you expect. Open the steps under an answer to see the query it ran and the examples it used.
+Pick the dataset in the chat's dataset list (top of the left sidebar), ask your evaluation questions and compare the answers with what you expect. Open the steps under an answer to see the query it ran and the examples it used. Before it is published, only admins and curators see the dataset there.
 
 To score a whole list at once, write your questions as a JSON file, like [`docs/examples/norssit/questions.json`](examples/norssit/questions.json):
 
@@ -166,7 +180,7 @@ To score a whole list at once, write your questions as a JSON file, like [`docs/
 A developer runs it against the instance:
 
 ```
-python scripts/compare_modes.py run --project norssit --questions docs/examples/norssit/questions.json --chat-url http://127.0.0.1:8010/chat --out norssit.jsonl
+python scripts/compare_modes.py run --project norssit --questions docs/examples/norssit/questions.json --chat-url http://127.0.0.1:8000/chat --out norssit.jsonl
 python scripts/compare_modes.py report norssit.jsonl
 ```
 
@@ -179,7 +193,8 @@ When an answer is wrong, the fix is usually one of these:
 
 ## 8. Updating later
 
-- **The data changed** (the endpoint was reloaded): press **Rebuild index**. The Search index card says when the data no longer matches the index.
+- **The data changed** (the endpoint was reloaded): pick the dataset, press **Rebuild index**. The Search index card says when the data no longer matches the index.
 - **You improved a file**: Download, edit, Upload, Check, Rebuild.
 - **A file broke something**: **Undo** queues the version it replaced; then Rebuild.
 - **Files shipped with the code** (`projects/<id>/`) are copied to the server only when the project has no files there yet. After that the files in service are the ones uploaded on the admin page, so a change in the repository reaches the server only by uploading it.
+- **MCP clients** (VS Code, Claude Desktop) reach one dataset per address: `/mcp/<id>`, e.g. `/mcp/norssit`. The bare `/mcp` is the first dataset (Swiss Elites). An unpublished dataset's address answers `This dataset is not published.`

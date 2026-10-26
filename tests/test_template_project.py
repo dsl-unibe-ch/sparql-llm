@@ -53,5 +53,9 @@ def test_guide_explains_every_preflight_and_upload_message():
         "is not valid JSON",
         "A rebuild is running",
         "could not be read back",
+        "is already used by dataset",
+        "has not been rebuilt successfully yet",
+        "is not available",
+        "This dataset is not published",
     ):
         assert phrase in guide, phrase

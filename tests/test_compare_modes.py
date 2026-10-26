@@ -32,3 +32,20 @@ def test_questions_file_becomes_scored_items(tmp_path):
     assert compare.load_questions(path) == [
         {"id": "Q01", "set": "questions", "scoring": "keys", "question": "How many?", "expected": "10,137", "keys": ["10137"]}
     ]
+
+
+def test_questions_are_asked_of_the_chosen_dataset(monkeypatch):
+    import asyncio
+
+    compare = _load()
+    sent = []
+
+    class Client:
+        async def post(self, url, json):
+            sent.append(json)
+            return type("R", (), {"status_code": 500, "json": lambda self: {}})()
+
+    monkeypatch.setattr(compare, "PROJECT_ID", "norssit")
+    item = {"id": "Q01", "set": "questions", "question": "How many?"}
+    asyncio.run(compare.ask(Client(), item, "pipeline", "m"))
+    assert sent[0]["project"] == "norssit"
