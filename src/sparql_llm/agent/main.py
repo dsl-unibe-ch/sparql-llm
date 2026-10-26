@@ -13,9 +13,9 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote_plus
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from langchain_core.runnables import RunnableConfig
@@ -84,6 +84,15 @@ if settings.auth_enabled:
     from sparql_llm.indexing.drift import check_drift
     from sparql_llm.indexing.preflight import run_checks
     from sparql_llm.indexing.rebuild import lock_file, read_job, start_rebuild
+    from sparql_llm.project_files import (
+        MAX_UPLOAD_BYTES,
+        ProjectFileError,
+        file_path,
+        list_files,
+        restore_previous,
+        save_upload,
+        validate_upload,
+    )
 
 
 def is_valid_login_redirect(value: str):
@@ -344,6 +353,70 @@ if settings.auth_enabled:
         if lock_file().exists():
             return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
         return JSONResponse({"projects": await run_in_threadpool(run_checks)})
+
+    @app.get("/admin/project-files", include_in_schema=False)
+    async def admin_project_files(
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """The curator files of each project of this instance, for the Project files card."""
+        if not can_manage(user):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        return JSONResponse({"projects": {pid: list_files(pid) for pid in settings.projects}})
+
+    @app.get("/admin/project-files/{project_id}/{name}", include_in_schema=False, response_model=None)
+    async def admin_download_project_file(
+        project_id: str,
+        name: str,
+        user: "User" = Depends(current_active_user),
+    ) -> PlainTextResponse | JSONResponse:
+        """Download the current version of a project file, to edit it."""
+        if not can_manage(user):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        try:
+            path = file_path(project_id, name)
+        except ProjectFileError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        return PlainTextResponse(
+            path.read_text(encoding="utf-8"),
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
+
+    @app.post("/admin/project-files/{project_id}/{name}", include_in_schema=False)
+    async def admin_upload_project_file(
+        project_id: str,
+        name: str,
+        file: UploadFile = File(...),
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """Replace a project file after validating it. Takes effect at the next Rebuild."""
+        if not can_manage(user):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        if lock_file().exists():
+            return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
+        content = await file.read(MAX_UPLOAD_BYTES + 1)
+        errors = validate_upload(project_id, name, content)
+        if errors:
+            return JSONResponse({"errors": errors}, status_code=422)
+        save_upload(project_id, name, content, getattr(user, "email", ""))
+        return JSONResponse({"ok": True, "files": list_files(project_id)})
+
+    @app.post("/admin/project-files/{project_id}/{name}/undo", include_in_schema=False)
+    async def admin_undo_project_file(
+        project_id: str,
+        name: str,
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """Put back the previous version of a project file."""
+        if not can_manage(user):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        if lock_file().exists():
+            return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
+        try:
+            restore_previous(project_id, name)
+        except ProjectFileError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=404)
+        return JSONResponse({"ok": True, "files": list_files(project_id)})
 
     @app.get("/admin/settings", include_in_schema=False)
     async def admin_get_settings(

@@ -71,6 +71,13 @@
       .btn-reindex:disabled { opacity: 0.55; cursor: not-allowed; }
       .idx-status { font-size: 0.82rem; color: #475569; }
       .btn-check { background: #fff; color: #0f172a; border: 1px solid #cbd5e1; }
+      .pf-list { display: flex; flex-direction: column; gap: 0.6rem; font-size: 0.85rem; }
+      .pf-project { font-weight: 600; color: #0f172a; margin-top: 0.3rem; }
+      .pf-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; padding: 0.45rem 0; border-bottom: 1px solid #f1f5f9; }
+      .pf-name { font-family: ui-monospace, monospace; min-width: 8rem; }
+      .pf-meta { color: #64748b; flex: 1; min-width: 12rem; }
+      .pf-row a, .pf-row button { font-size: 0.8rem; }
+      .pf-row input[type=file] { font-size: 0.78rem; max-width: 14rem; }
       .btn-check:hover:not(:disabled) { background: #f1f5f9; }
       .idx-checks { list-style: none; margin: 0; padding: 0; font-size: 0.85rem; line-height: 1.5; }
       .idx-checks li { padding: 0.3rem 0; border-bottom: 1px solid #f1f5f9; }
@@ -158,6 +165,20 @@
             <span id="idx-status" class="idx-status"></span>
           </div>
           <ul id="idx-checks" class="idx-checks" hidden></ul>
+        </div>
+      </div>
+
+      <!-- Project files -->
+      <div class="card">
+        <div class="card-header">Project files</div>
+        <div class="idx-body">
+          <p class="idx-note">
+            Download a file, edit it, and upload it again. An upload is checked before it replaces
+            anything, and the previous version is kept for Undo. Uploaded files take effect at the
+            next <strong>Rebuild index</strong>; press <strong>Check configuration</strong> first.
+          </p>
+          <div id="pf-list" class="pf-list">Loading&hellip;</div>
+          <ul id="pf-errors" class="idx-checks" hidden></ul>
         </div>
       </div>
 
@@ -291,6 +312,76 @@
       </div>
     </div>
     <script>
+      (function () {
+        var list = document.getElementById('pf-list');
+        var errors = document.getElementById('pf-errors');
+
+        function esc(t) {
+          var d = document.createElement('div');
+          d.textContent = t == null ? '' : String(t);
+          return d.innerHTML;
+        }
+
+        function showMessages(lines, cls) {
+          errors.innerHTML = lines.map(function (l) { return '<li class="' + cls + '">' + esc(l) + '</li>'; }).join('');
+          errors.hidden = lines.length === 0;
+        }
+
+        function render(projects) {
+          var html = '';
+          Object.keys(projects).forEach(function (pid) {
+            html += '<div class="pf-project">' + esc(pid) + '</div>';
+            projects[pid].forEach(function (f) {
+              var base = '/admin/project-files/' + encodeURIComponent(pid) + '/' + encodeURIComponent(f.name);
+              var meta = f.exists
+                ? 'changed ' + esc(f.modified) + (f.uploaded_by ? ' by ' + esc(f.uploaded_by) : '')
+                : 'not uploaded yet';
+              html += '<div class="pf-row">'
+                + '<span class="pf-name">' + esc(f.name) + '</span>'
+                + '<span class="pf-meta">' + meta + '</span>'
+                + (f.exists ? '<a href="' + base + '">Download</a>' : '')
+                + '<input type="file" data-url="' + base + '" />'
+                + '<button class="btn-reindex btn-check" data-upload="' + base + '">Upload</button>'
+                + (f.has_previous ? '<button class="btn-reindex btn-check" data-undo="' + base + '/undo">Undo</button>' : '')
+                + '</div>';
+            });
+          });
+          list.innerHTML = html || 'No project is configured for this instance.';
+        }
+
+        function load() {
+          return fetch('/admin/project-files', { credentials: 'same-origin' })
+            .then(function (r) { return r.ok ? r.json() : null; })
+            .then(function (d) { if (d && d.projects) render(d.projects); })
+            .catch(function () { list.textContent = 'Could not load the project files.'; });
+        }
+
+        function afterSave(r) {
+          return r.json().then(function (d) {
+            if (r.ok) { showMessages(['Saved. It takes effect at the next Rebuild.'], 'ck-ok'); return load(); }
+            showMessages(d.errors || [d.error || 'The file was not saved.'], 'ck-error');
+          });
+        }
+
+        list.addEventListener('click', function (e) {
+          var up = e.target.getAttribute('data-upload');
+          var undo = e.target.getAttribute('data-undo');
+          if (up) {
+            var input = list.querySelector('input[data-url="' + up + '"]');
+            if (!input || !input.files.length) { showMessages(['Choose a file first.'], 'ck-warning'); return; }
+            var form = new FormData();
+            form.append('file', input.files[0]);
+            fetch(up, { method: 'POST', body: form, credentials: 'same-origin' }).then(afterSave)
+              .catch(function () { showMessages(['The upload failed.'], 'ck-error'); });
+          } else if (undo) {
+            fetch(undo, { method: 'POST', credentials: 'same-origin' }).then(afterSave)
+              .catch(function () { showMessages(['Undo failed.'], 'ck-error'); });
+          }
+        });
+
+        load();
+      })();
+
       (function () {
         var banner = document.getElementById('idx-banner');
         var button = document.getElementById('idx-rebuild');
