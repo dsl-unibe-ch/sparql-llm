@@ -1,0 +1,30 @@
+{
+  "id": "my-project",
+  "label": "My Project",
+  "endpoint_url": "https://example.org/sparql",
+  "method": "GET",
+  "description": "One or two sentences on what the dataset holds, its period and its ontologies.",
+  "homepage_url": "https://example.org/",
+  "graphs": [],
+  "prefixes": {
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#"
+  },
+  "dataset_description_file": "dataset.md",
+  "examples_file": "examples.md",
+  "entities": {
+    "label_property": "http://www.w3.org/2000/01/rdf-schema#label",
+    "types": {
+      "Person": {
+        "class": "http://xmlns.com/foaf/0.1/Person",
+        "birth_property": null,
+        "death_property": null
+      },
+      "Group": {"class": "http://xmlns.com/foaf/0.1/Organization"}
+    }
+  },
+  "schema_classes": {"min_instances": 1, "exclude": []},
+  "curator_examples": null,
+  "prefix_repairs": {},
+  "ontology_from_endpoint": false
+}

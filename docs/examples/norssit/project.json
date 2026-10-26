@@ -1,0 +1,34 @@
+{
+  "id": "norssit",
+  "label": "Norssit",
+  "endpoint_url": "https://ldf.fi/norssit/sparql",
+  "method": "GET",
+  "description": "Norssi High School Alumni: short biographies of the 10,137 students of the Helsinki Normal Lyceum (1867-1992), published as linked open data by Aalto SeCo. Ontologies: FOAF, schema.org, SKOS, BIOC.",
+  "homepage_url": "http://www.ldf.fi/dataset/norssit",
+  "graphs": [],
+  "prefixes": {
+    "foaf": "http://xmlns.com/foaf/0.1/",
+    "schema": "http://schema.org/",
+    "skos": "http://www.w3.org/2004/02/skos/core#",
+    "bioc": "http://ldf.fi/schema/bioc/",
+    "reg": "http://ldf.fi/schema/person_registry/",
+    "norssit": "http://ldf.fi/norssit/"
+  },
+  "dataset_description_file": "dataset.md",
+  "examples_file": "examples.md",
+  "entities": {
+    "label_property": "http://www.w3.org/2004/02/skos/core#prefLabel",
+    "types": {
+      "Person": {
+        "class": "http://xmlns.com/foaf/0.1/Person",
+        "birth_property": "http://schema.org/birthDate",
+        "death_property": "http://schema.org/deathDate"
+      },
+      "Group": {"class": "http://xmlns.com/foaf/0.1/Organization"}
+    }
+  },
+  "schema_classes": {"min_instances": 50, "exclude": ["http://ldf.fi/norssit/titles/"]},
+  "curator_examples": null,
+  "prefix_repairs": {},
+  "ontology_from_endpoint": false
+}

@@ -23,6 +23,7 @@ data/swiss-elites/*
 !data/swiss-elites/project.json
 !data/swiss-elites/dataset.md
 !data/swiss-elites/examples.md
+!data/_template/
 .fastembed_cache/
 notebooks/*.csv
 notebooks/*.txt

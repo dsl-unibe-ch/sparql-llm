@@ -1,13 +1,16 @@
 """Compare the pipeline (MCP tools off) with the MCP-tools agent on the same questions.
 
 Each question is sent to the running app's /chat in both modes; the final query each mode
-used is re-run and scored against a reference query. Questions: the curated examples in
-data/elites-suisses-examples.md plus the held-out set in compare_modes_heldout.py.
+used is re-run and scored against a reference query. Questions: the curated examples of the
+project (its examples.md) plus the held-out set in compare_modes_heldout.py, or your own
+questions file with --questions: a JSON list of {"question": ..., "expected": ...}, scored
+by whether the answer contains the numbers, years and names of the expected answer.
 
 Run from the repo root, with the app on 127.0.0.1:8000 and AUTH_ENABLED=false (the agent
 fetches its MCP tools from there):
   python scripts/compare_modes.py check-gold
   python scripts/compare_modes.py run --model gpustack/gpt-oss-120b --out results.jsonl [--only C05,H04] [--workers 3]
+  python scripts/compare_modes.py run --project norssit --questions docs/examples/norssit/questions.json --out norssit.jsonl
   python scripts/compare_modes.py report results.jsonl [results2.jsonl ...]
 
 Results vary between runs, so compare several runs per model. Curated questions about "a
@@ -30,11 +33,14 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent))
 from compare_modes_heldout import HELDOUT
 
+from sparql_llm.project import get_project, get_projects
 from sparql_llm.utils import query_sparql
 
-ENDPOINT = "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter"
 CHAT_URL = "http://127.0.0.1:8000/chat"
-EXAMPLES = Path("data/swiss-elites/examples.md")
+#: Set from the project in main(): the first project of the install unless --project is given.
+ENDPOINT = ""
+EXAMPLES = Path()
+QUESTIONS: Path | None = None
 # Curated questions about "a person" in general: any non-empty answer is acceptable.
 OPEN_ENDED = {2, 13, 14, 15, 17, 18}
 REFUSAL = re.compile(
@@ -59,7 +65,30 @@ def load_curated() -> list[dict]:
     return items
 
 
+def expected_keys(expected: str) -> list[str]:
+    """What an answer must mention to match an expected answer: its years, numbers and names."""
+    keys = []
+    for date in re.findall(r"\b(\d{4})-\d{2}-\d{2}\b", expected):
+        keys.append(date)
+    rest = re.sub(r"\b\d{4}-\d{2}-\d{2}\b", " ", expected)
+    keys += [re.sub(r"[,'\u202f ]", "", n) for n in re.findall(r"\d[\d,'\u202f]*\d|\d", rest) if len(n) >= 2]
+    keys += re.findall(r"\b[A-ZÄÖÅÉÜ][\w-]{3,}", rest)
+    return list(dict.fromkeys(keys))
+
+
+def load_questions(path: Path) -> list[dict]:
+    """A curator's evaluation questions: [{"question": ..., "expected": ...}]."""
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    return [
+        {"id": f"Q{i:02d}", "set": "questions", "scoring": "keys", "question": e["question"],
+         "expected": e["expected"], "keys": expected_keys(e["expected"])}
+        for i, e in enumerate(entries, start=1)
+    ]
+
+
 def load_items() -> list[dict]:
+    if QUESTIONS:
+        return load_questions(QUESTIONS)
     held = [{"set": "heldout", "scoring": "keys", **item} for item in HELDOUT]
     return load_curated() + held
 
@@ -243,7 +272,7 @@ def report(paths: list[Path]) -> None:
         by.setdefault((r["model"], r["mode"]), []).append(r)
     print(f"{'model':28} {'mode':9} {'set':8} {'n':>3} {'correct':>8} {'median s':>9} {'mean s':>7} {'errors':>6} {'step limit':>10}")
     for (model, mode), rs in sorted(by.items()):
-        for subset in ("curated", "heldout", "all"):
+        for subset in ("curated", "heldout", "questions", "all"):
             sub = [r for r in rs if subset == "all" or r["set"] == subset]
             if not sub:
                 continue
@@ -270,8 +299,11 @@ def report(paths: list[Path]) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("check-gold")
-    run_p = sub.add_parser("run")
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--project", default=None, help="Project id (defaults to the first project)")
+    common.add_argument("--questions", type=Path, default=None, help="JSON list of {question, expected}")
+    sub.add_parser("check-gold", parents=[common])
+    run_p = sub.add_parser("run", parents=[common])
     run_p.add_argument("--model", default="gpustack/gpt-oss-120b")
     run_p.add_argument("--out", type=Path, required=True)
     run_p.add_argument("--only", default="")
@@ -280,6 +312,10 @@ def main() -> None:
     rep = sub.add_parser("report")
     rep.add_argument("paths", type=Path, nargs="+")
     args = parser.parse_args()
+    global ENDPOINT, EXAMPLES, QUESTIONS
+    project_id = getattr(args, "project", None)
+    project = get_project(project_id) if project_id else get_projects()[0]
+    ENDPOINT, EXAMPLES, QUESTIONS = project.endpoint_url, project.examples_path, getattr(args, "questions", None)
     if args.cmd == "check-gold":
         check_gold()
     elif args.cmd == "run":

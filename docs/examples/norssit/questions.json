@@ -1,0 +1,10 @@
+[
+  {"question": "How many persons are in the register?", "expected": "10137"},
+  {"question": "How many women are in the register?", "expected": "1120"},
+  {"question": "Who were the father and brothers of Mika Waltari?", "expected": "father Valtari (ent Helenius), Toimi Armas; brother Valtari, Samuel"},
+  {"question": "When was Mika Waltari born and when did he die?", "expected": "1908-09-19 / 1979-08-26"},
+  {"question": "Which organisations employed the most alumni?", "expected": "Helsingin kaupunki 171, Valtion rautatiet 110, Kansallis-Osake-Pankki 87"},
+  {"question": "How many alumni were professors?", "expected": "258 distinct persons (class norssit:titles/professori)"},
+  {"question": "What are the most popular hobbies among the alumni?", "expected": "musiikki 443, kalastus 286, kirjallisuus 265"},
+  {"question": "How many alumni were born in 1900?", "expected": "86"}
+]
