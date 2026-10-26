@@ -177,6 +177,21 @@ def get_prefixes_for_endpoint(
     return prefixes_map
 
 
+def merge_prefixes(discovered: dict[str, str], declared: dict[str, str]) -> dict[str, str]:
+    """Merge discovered prefixes into a project's declared ones; the declared entries win.
+
+    A discovered name for a declared namespace is dropped (no ``schema1``), and so is a
+    discovered namespace under a declared name (no ``schema`` -> https://schema.org/ from
+    rdflib's defaults when the project says http).
+    """
+    merged = dict(declared)
+    for prefix, namespace in discovered.items():
+        if prefix in merged or namespace in merged.values():
+            continue
+        merged[prefix] = namespace
+    return merged
+
+
 def _merge_prefixes_from_turtle(turtle_file: str, prefixes_map: dict[str, str]) -> None:
     """Extract @prefix declarations from a Turtle file and merge into prefixes_map."""
     try:
@@ -317,13 +332,19 @@ def query_sparql(
             elif check_service_desc and not query_resp.get("results", {}).get("bindings", []):
                 # If no results found directly in the endpoint we check in its service description
                 logger.debug(f"No results found, checking service description for {endpoint_url}...")
-                resp = client.get(
-                    endpoint_url,
-                    headers={"Accept": "text/turtle"},
-                )
-                resp.raise_for_status()
-                g = rdflib.Graph()
-                g.parse(data=resp.text, format="turtle")
+                try:
+                    resp = client.get(
+                        endpoint_url,
+                        headers={"Accept": "text/turtle"},
+                    )
+                    resp.raise_for_status()
+                    g = rdflib.Graph()
+                    g.parse(data=resp.text, format="turtle")
+                except Exception as e:
+                    # Many endpoints have no Turtle service description (ldf.fi answers 404):
+                    # that only means there is nothing more to find.
+                    logger.debug(f"No service description at {endpoint_url}: {e}")
+                    return query_resp
                 results = g.query(query)
                 bindings = []
                 for row in results:
@@ -416,7 +437,7 @@ class EndpointsMetadataManager:
             # extract prefixes from the VoID Turtle file's @prefix declarations.
             if void_file:
                 _merge_prefixes_from_turtle(void_file, prefixes_map)
-            prefixes[project.id] = prefixes_map
+            prefixes[project.id] = merge_prefixes(prefixes_map, project.prefixes)
         return prefixes, schemas
 
     def _cache(self, prefixes: dict[str, dict[str, str]], schemas: dict[str, "EndpointsSchemaDict"]) -> None:
