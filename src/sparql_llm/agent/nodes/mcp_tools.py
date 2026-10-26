@@ -4,10 +4,12 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from sparql_llm.agent.request_project import project_of
 from sparql_llm.agent.state import State
-from sparql_llm.config import settings
+from sparql_llm.config import Configuration
+from sparql_llm.mcp_server import agent_connection
 
-# NOTE: experimental, not actually used by the chat agent
+# The "tools" node of the MCP tools agent: it runs the tool calls call_model's model made.
 
 
 async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list[ToolMessage]]:
@@ -44,15 +46,9 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, list
     if not last_msg.tool_calls:
         return {"messages": tool_messages}
 
-    # Set up MCP client
-    mcp_client = MultiServerMCPClient(
-        {
-            "expasy-mcp": {
-                "url": f"{settings.server_url}/mcp",
-                "transport": "streamable_http",
-            }
-        }
-    )
+    # The selected dataset's MCP address, as in call_model: never another dataset's tools.
+    project = project_of(Configuration.from_runnable_config(config))
+    mcp_client = MultiServerMCPClient({"expasy-mcp": agent_connection(project.id)})
 
     async with mcp_client.session("expasy-mcp") as mcp_session:
         # Process each tool call

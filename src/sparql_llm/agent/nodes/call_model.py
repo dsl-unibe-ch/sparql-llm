@@ -14,8 +14,8 @@ from sparql_llm.agent.prompts import FINAL_TURN_PROMPT, resolution_prompt, tools
 from sparql_llm.agent.request_project import project_of
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.agent.utils import count_tool_rounds, fenced, get_msg_text, load_chat_model
-from sparql_llm.config import Configuration, settings
-from sparql_llm.mcp_server import INTERNAL_TOKEN, INTERNAL_TOKEN_HEADER
+from sparql_llm.config import Configuration
+from sparql_llm.mcp_server import agent_connection
 from sparql_llm.utils import extract_think_blocks, strip_think_blocks
 
 
@@ -44,16 +44,9 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     if configuration.use_tools:
         # The selected dataset's own MCP address: every tool there works on that dataset only.
         # The token lets this agent use it before the dataset is published (curators trying it).
-        mcp_url = f"{settings.server_url}/mcp/{project.id}"
-        mcp_client = MultiServerMCPClient(
-            {
-                "expasy-mcp": {
-                    "url": mcp_url,
-                    "transport": "streamable_http",
-                    "headers": {INTERNAL_TOKEN_HEADER: INTERNAL_TOKEN},
-                }
-            }
-        )
+        connection = agent_connection(project.id)
+        mcp_url = connection["url"]
+        mcp_client = MultiServerMCPClient({"expasy-mcp": connection})
         try:
             tools = await mcp_client.get_tools()
         except Exception as exc:

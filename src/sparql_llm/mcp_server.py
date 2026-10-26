@@ -70,6 +70,18 @@ def _first_project() -> Project:
     return get_projects()[0]
 
 
+def agent_connection(project_id: str) -> dict[str, Any]:
+    """How the app's own tools agent reaches a dataset's MCP tools: listing them and running them alike.
+
+    Always that dataset's address, with the token that opens it before it is published.
+    """
+    return {
+        "url": f"{settings.server_url}/mcp/{project_id}",
+        "transport": "streamable_http",
+        "headers": {INTERNAL_TOKEN_HEADER: INTERNAL_TOKEN},
+    }
+
+
 def resolve_endpoint_url(endpoint_url: str, project: Project | None = None) -> tuple[str, str]:
     """The endpoint a tool call runs on: always its dataset's, whatever URL the model passed.
 

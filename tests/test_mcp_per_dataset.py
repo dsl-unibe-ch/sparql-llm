@@ -156,3 +156,30 @@ def test_real_mcp_apps_answer_through_the_dispatcher(two):
     for response in (bare, beta):
         assert response.status_code == 200, response.text
         assert "search_sparql_docs" in {t["name"] for t in response.json()["result"]["tools"]}
+
+
+def test_tool_calls_run_on_the_selected_datasets_address(two, monkeypatch: pytest.MonkeyPatch):
+    """Found in the acceptance run: tools were listed on /mcp/<id> but executed on bare /mcp (the first dataset)."""
+    from langchain_core.messages import AIMessage
+
+    from sparql_llm.agent.nodes import mcp_tools as node
+    from sparql_llm.agent.state import State
+
+    seen: list[dict] = []
+
+    class Recorder:
+        def __init__(self, connections):
+            seen.append(connections)
+
+        def session(self, name):
+            raise ConnectionError("stop here")
+
+    monkeypatch.setattr(node, "MultiServerMCPClient", Recorder)
+    call = AIMessage(content="", tool_calls=[{"name": "search_sparql_docs", "args": {}, "id": "t1"}])
+    config = RunnableConfig(configurable={"project": "b", "use_tools": True})
+    with pytest.raises(ConnectionError):
+        asyncio.run(node.mcp_tools_node(State(messages=[call]), config))
+
+    connection = next(iter(seen[0].values()))
+    assert connection["url"].endswith("/mcp/b")
+    assert connection["headers"]["X-Internal-Token"] == mcp_server.INTERNAL_TOKEN
