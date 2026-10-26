@@ -206,6 +206,22 @@ def get_projects() -> list[Project]:
     return _projects
 
 
+def allowed_endpoint(url: str | None) -> tuple[str | None, str]:
+    """The endpoint a query may run on, and a note when it is not the one asked for.
+
+    Queries only ever run on configured endpoints. With one project an unknown or missing
+    URL can only mean that endpoint; with several there is no safe guess.
+    """
+    urls = [p.endpoint_url for p in get_projects()]
+    if url and url in urls:
+        return url, ""
+    if len(urls) == 1:
+        return urls[0], f"Ran on {urls[0]}, the configured endpoint, instead of {url or 'no endpoint'}."
+    if not urls:
+        return None, "No endpoint is configured for this instance."
+    return None, f"Unknown endpoint {url}. Use one of: {', '.join(urls)}."
+
+
 def get_project(project_id: str) -> Project:
     for project in get_projects():
         if project.id == project_id:

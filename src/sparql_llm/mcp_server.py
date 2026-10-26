@@ -8,6 +8,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
 from sparql_llm.config import settings
 from sparql_llm.entity_resolver import describe_for_tool, get_resolver
 from sparql_llm.indexing.index_resources import embedding_model, endpoints_metadata, init_vectordb, qdrant_client
+from sparql_llm.project import allowed_endpoint
 from sparql_llm.utils import compress_list, get_prefix_converter, logger, query_sparql
 from sparql_llm.validate_sparql import validate_sparql
 
@@ -43,17 +44,15 @@ the query is probably too restrictive: use a broader, case-insensitive string ma
 prefixes, or break the query into smaller parts."""
 
 
-def resolve_endpoint_url(endpoint_url: str) -> str:
-    """Return the endpoint a tool call meant, repairing a corrupted URL.
+def resolve_endpoint_url(endpoint_url: str) -> tuple[str | None, str]:
+    """Return the endpoint a tool call meant, or None and the error text for the tool.
 
     gpt-oss sometimes damages the endpoint_url argument (e.g. repeating part of
     the host), which gets a 404 and costs the model a round. With a single
-    endpoint configured, an unknown URL can only mean that one.
+    endpoint configured, an unknown URL can only mean that one. With several,
+    an unknown URL is refused: queries only run on configured endpoints.
     """
-    known = [endpoint["endpoint_url"] for endpoint in settings.endpoints]
-    if endpoint_url in known or len(known) != 1:
-        return endpoint_url
-    return known[0]
+    return allowed_endpoint(endpoint_url)
 
 
 def get_mcp_app(enable_resources_info_tool: bool = True) -> FastMCP:
@@ -252,7 +251,9 @@ Returns:
         Returns:
             The query results in JSON format
         """
-        endpoint_url = resolve_endpoint_url(endpoint_url)
+        endpoint_url, error = resolve_endpoint_url(endpoint_url)
+        if endpoint_url is None:
+            return error
         resp_msg = ""
         # First check if query valid based on classes schema and known prefixes
         validation_output = validate_sparql(
@@ -317,7 +318,9 @@ Returns:
             hints on how to fix it, and includes the auto-fixed query when
             prefix corrections were applied.
         """
-        endpoint_url = resolve_endpoint_url(endpoint_url)
+        endpoint_url, error = resolve_endpoint_url(endpoint_url)
+        if endpoint_url is None:
+            return error
         validation_output = validate_sparql(
             sparql_query,
             endpoint_url,
@@ -397,7 +400,9 @@ Returns:
             A numbered list of all class names (in compact prefix:LocalName
             form) together with the predicates each class supports.
         """
-        endpoint_url = resolve_endpoint_url(endpoint_url)
+        endpoint_url, error = resolve_endpoint_url(endpoint_url)
+        if endpoint_url is None:
+            return error
         void_dict = endpoints_metadata.void_dict.get(endpoint_url, {})
 
         if not void_dict:
