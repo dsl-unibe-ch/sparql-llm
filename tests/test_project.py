@@ -89,3 +89,17 @@ def test_settings_endpoints_derived_from_projects(tmp_path: Path, monkeypatch: p
     finally:
         monkeypatch.undo()
         reload_projects()
+
+
+@pytest.mark.parametrize("value", ["../../.env", "/etc/passwd", "C:/secrets.md", "sub/dataset.md", "dataset.txt"])
+def test_file_fields_must_be_bare_markdown_names(tmp_path: Path, value: str):
+    write_project(tmp_path, "norssit", {**NORSSIT, "dataset_description_file": value})
+    with pytest.raises(ProjectError, match="dataset_description_file"):
+        load_project(tmp_path, "norssit")
+
+
+@pytest.mark.parametrize("field", ["endpoint_url", "homepage_url"])
+def test_urls_must_be_http(tmp_path: Path, field: str):
+    write_project(tmp_path, "norssit", {**NORSSIT, field: "javascript:alert(1)"})
+    with pytest.raises(ProjectError, match=field):
+        load_project(tmp_path, "norssit")

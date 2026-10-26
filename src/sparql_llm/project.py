@@ -12,7 +12,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, ValidationError, field_validator
 
 if TYPE_CHECKING:
     from sparql_llm.config import SparqlEndpointLinks
@@ -69,14 +69,27 @@ class Project(BaseModel):
 
     _data_dir: Path = PrivateAttr(default=Path("data"))
 
+    @field_validator("dataset_description_file", "examples_file")
+    @classmethod
+    def _bare_markdown_name(cls, value: str) -> str:
+        # Read into every prompt: a path out of the project folder could expose server files.
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*\.md", value) or ".." in value:
+            raise ValueError("must be a file name in the project folder ending in .md, e.g. dataset.md")
+        return value
+
+    @field_validator("endpoint_url", "homepage_url")
+    @classmethod
+    def _http_url(cls, value: str | None) -> str | None:
+        if value is not None and not re.match(r"https?://[^\s]+$", value):
+            raise ValueError("must be an http:// or https:// address")
+        return value
+
     @property
     def dir(self) -> Path:
         return self._data_dir / self.id
 
     def _in_dir(self, name: str) -> Path:
-        # Relative names resolve under the project folder; absolute paths are used as given.
-        path = Path(name)
-        return path if path.is_absolute() else self.dir / path
+        return self.dir / name
 
     @property
     def void_path(self) -> Path:

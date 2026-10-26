@@ -117,3 +117,8 @@ def test_non_manager_gets_403(norssit_project, client_as):
     assert client.post(
         "/admin/project-files/norssit/dataset.md", files={"file": ("dataset.md", b"## x\n\ny\n", "text/markdown")}
     ).status_code == 403
+
+
+def test_path_field_message_is_plain(norssit_project):
+    errors = validate_upload("norssit", "project.json", _project_json(norssit_project, dataset_description_file="../../.env"))
+    assert errors == ["dataset_description_file: must be a file name in the project folder ending in .md, e.g. dataset.md"]

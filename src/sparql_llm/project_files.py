@@ -49,6 +49,8 @@ def _field_reason(error: dict[str, Any]) -> str:
         return f"must be {expected}"
     if kind == "string_pattern_mismatch":
         return "must use lowercase letters, digits and dashes only, starting with a letter or digit"
+    if kind == "value_error":
+        return error["msg"].removeprefix("Value error, ")
     if kind.endswith("_type"):
         return error["msg"].lower().replace("input should be", "must be")
     return error["msg"]
