@@ -36,7 +36,7 @@ from sparql_llm.indexing.preflight import run_preflight
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.indexing.void_gen import VoidError, generate_void
 from sparql_llm.migration import migrate_configured
-from sparql_llm.project import Project, get_projects, reload_projects
+from sparql_llm.project import Project, get_projects, project_problems, reload_projects, restore_projects
 from sparql_llm.utils import logger
 
 
@@ -164,7 +164,20 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     single Qdrant call rather than the length of a rebuild.
     """
     migrate_configured()
-    projects = get_projects()
+    # Run on the project files as uploaded; if the rebuild stops, serve the previous ones again.
+    previous, previous_problems = get_projects(), project_problems()
+    projects = reload_projects()
+    try:
+        return _rebuild(projects)
+    except Exception:
+        restore_projects(previous, previous_problems)
+        raise
+
+
+def _rebuild(projects: list[Project]) -> dict[str, Any]:
+    problems = project_problems()
+    if problems:
+        raise RebuildStopped(" ".join(problems.values()))
     if not projects:
         raise RebuildStopped("No project is configured for this instance (projects in the install settings).")
     alias = _live_alias()

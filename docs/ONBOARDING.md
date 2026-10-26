@@ -33,13 +33,13 @@ Each project runs as its own instance of the assistant: its own address, its own
 1. **From IT** (needs administrator rights on the server):
    - a second service unit, a copy of the existing `swiss-elites` one with three different settings:
      - `SETTINGS_FILEPATH`: its own install settings file;
-     - its own port, e.g. `8010`;
+     - its own port, e.g. `8010`, also written as `server_port` in that install settings file;
      - its own data folder, set as `data_dir` in that install settings file (e.g. `data-norssit`), so the two instances never share users, indexes or files;
    - a route on the web proxy from the new address (e.g. `/norssit/`) to that port;
    - **memory**: one instance with the default embedding model uses about 1.8 GB. Either the server gets more RAM, or the new instance uses the smaller model `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2` (about 0.6 GB, slightly less accurate).
 2. **From the developers**: the install settings file. It lists the project id (`"projects": ["norssit"]`), the chat name and intro shown on the page, the models, and the admin account. You can't upload this file; it holds secrets.
 
-From then on, everything is done from the admin page.
+The new instance starts even before its project files exist: its admin page shows the three files as "not uploaded yet", and **Check configuration** reports the missing `project.json`. From then on, everything is done from the admin page.
 
 ## 3. Filling in `project.json`
 
@@ -150,6 +150,7 @@ Uploaded files take effect only at the next Rebuild.
 | `… no entities block, so names in questions will not be looked up.` (warning) | Add the `entities` block, unless the dataset has no named things. |
 | `The generated schema for <label> could not be read back: …` | The schema description of the endpoint could not be written. Send the message to the developers. |
 | `… the schema could not be generated from …` | The endpoint failed during the schema queries, often a timeout on a large endpoint. Try again later. |
+| `The project file … is missing.` / `The project file … has errors: …` | Upload `project.json` (or fix the field named in the message). |
 | `Rebuild failed: …` | Something unexpected. The old index is still serving. Send the message to the developers. |
 
 ## 7. Testing with your questions
@@ -165,7 +166,7 @@ To score a whole list at once, write your questions as a JSON file, like [`docs/
 A developer runs it against the instance:
 
 ```
-python scripts/compare_modes.py run --project norssit --questions docs/examples/norssit/questions.json --out norssit.jsonl
+python scripts/compare_modes.py run --project norssit --questions docs/examples/norssit/questions.json --chat-url http://127.0.0.1:8010/chat --out norssit.jsonl
 python scripts/compare_modes.py report norssit.jsonl
 ```
 

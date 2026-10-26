@@ -15,7 +15,7 @@ from typing import Any, Literal
 import httpx
 
 from sparql_llm.indexing.sync_examples import parse_examples
-from sparql_llm.project import Project, get_projects, graph_pattern
+from sparql_llm.project import Project, graph_pattern, read_projects
 from sparql_llm.utils import query_sparql
 
 STEPS = ("endpoint", "graphs", "entities", "files", "examples")
@@ -168,5 +168,9 @@ def run_preflight(project: Project, fetch: Callable[..., Any] = query_sparql) ->
 
 
 def run_checks() -> dict[str, list[dict[str, Any]]]:
-    """Preflight every project of this instance, for the admin page's Check button."""
-    return {p.id: [asdict(r) for r in run_preflight(p)] for p in get_projects()}
+    """Preflight every project of this instance as its files are on disk now (Check button)."""
+    projects, problems = read_projects()
+    results = {pid: [asdict(CheckResult("project", "error", message))] for pid, message in problems.items()}
+    for project in projects:
+        results[project.id] = [asdict(r) for r in run_preflight(project)]
+    return results

@@ -302,6 +302,7 @@ def main() -> None:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--project", default=None, help="Project id (defaults to the first project)")
     common.add_argument("--questions", type=Path, default=None, help="JSON list of {question, expected}")
+    common.add_argument("--chat-url", default=CHAT_URL, help="The instance's /chat URL")
     sub.add_parser("check-gold", parents=[common])
     run_p = sub.add_parser("run", parents=[common])
     run_p.add_argument("--model", default="gpustack/gpt-oss-120b")
@@ -312,7 +313,8 @@ def main() -> None:
     rep = sub.add_parser("report")
     rep.add_argument("paths", type=Path, nargs="+")
     args = parser.parse_args()
-    global ENDPOINT, EXAMPLES, QUESTIONS
+    global ENDPOINT, EXAMPLES, QUESTIONS, CHAT_URL
+    CHAT_URL = getattr(args, "chat_url", CHAT_URL)
     project_id = getattr(args, "project", None)
     project = get_project(project_id) if project_id else get_projects()[0]
     ENDPOINT, EXAMPLES, QUESTIONS = project.endpoint_url, project.examples_path, getattr(args, "questions", None)

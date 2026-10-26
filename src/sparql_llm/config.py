@@ -143,6 +143,9 @@ class Settings(BaseSettings):
     admin_password: str = ""
     """Password for the initial admin account (set via ADMIN_PASSWORD env var)."""
 
+    server_port: int = 8000
+    """The port this instance listens on; the tools agent fetches its MCP tools from it."""
+
     use_tools: bool = False
     """Experimental: Whether to use tools or not. If set to False, the agent will use the functions sequentially to answer questions."""
 
@@ -176,7 +179,7 @@ class Settings(BaseSettings):
             A string like 'http://127.0.0.1:8888'.
         """
         # Use 127.0.0.1 for connecting to the service (0.0.0.0 is only for binding)
-        return "http://127.0.0.1:8000"
+        return f"http://127.0.0.1:{self.server_port}"
 
     @classmethod
     def from_file(cls, filepath: str) -> Settings:

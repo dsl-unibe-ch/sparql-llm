@@ -54,8 +54,10 @@ def pipeline(norssit_project, monkeypatch: pytest.MonkeyPatch):
 
 def test_pipeline_runs_in_order(pipeline):
     rebuild.rebuild_index_with_alias()
-    assert pipeline[:4] == ["preflight", "sync", "void", "refresh"]
-    assert pipeline.index("entities") < pipeline.index("index") < pipeline.index("swap") < pipeline.index("reload")
+    # The uploaded project files are read first, then checked.
+    assert pipeline[:5] == ["reload", "preflight", "sync", "void", "refresh"]
+    last_reload = max(i for i, call in enumerate(pipeline) if call == "reload")
+    assert pipeline.index("entities") < pipeline.index("index") < pipeline.index("swap") < last_reload
 
 
 def test_rebuild_stops_before_swap_on_preflight_error(pipeline, monkeypatch: pytest.MonkeyPatch):

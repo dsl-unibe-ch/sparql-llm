@@ -7,6 +7,7 @@ Every module asks this registry for the endpoint entries instead of hard-coding 
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -189,15 +190,47 @@ def load_project(data_dir: Path, project_id: str) -> Project:
 
 
 _projects: list[Project] | None = None
+_problems: dict[str, str] = {}
+
+
+def read_projects() -> tuple[list[Project], dict[str, str]]:
+    """Read every project listed in the install settings from disk, without serving them.
+
+    Returns the valid projects and, per project id, why its file could not be used. A
+    missing or broken project file must not stop the instance: its admin page is where
+    the curator uploads the fix.
+    """
+    from sparql_llm.config import settings
+
+    projects: list[Project] = []
+    problems: dict[str, str] = {}
+    for pid in settings.projects:
+        try:
+            projects.append(load_project(Path(settings.data_dir), pid))
+        except ProjectError as e:
+            problems[pid] = str(e)
+    return projects, problems
 
 
 def reload_projects() -> list[Project]:
-    """Read every project listed in the install settings from disk again."""
-    global _projects
-    from sparql_llm.config import settings
-
-    _projects = [load_project(Path(settings.data_dir), pid) for pid in settings.projects]
+    """Serve the project files as they are on disk now."""
+    global _projects, _problems
+    _projects, _problems = read_projects()
+    for message in _problems.values():
+        logging.getLogger("sparql_llm").error(message)
     return _projects
+
+
+def restore_projects(projects: list[Project], problems: dict[str, str] | None = None) -> None:
+    """Serve a previously loaded set of projects again, e.g. after a failed rebuild."""
+    global _projects, _problems
+    _projects, _problems = projects, dict(problems or {})
+
+
+def project_problems() -> dict[str, str]:
+    """Per project id, why its project file is not being served (empty when all are fine)."""
+    get_projects()
+    return dict(_problems)
 
 
 def get_projects() -> list[Project]:
