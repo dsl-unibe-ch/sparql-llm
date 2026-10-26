@@ -29,6 +29,7 @@ from starlette.concurrency import run_in_threadpool
 from sparql_llm.agent.graph import get_graph, graph
 from sparql_llm.agent.request_project import ProjectRefused, allowed_datasets, resolve_request_project
 from sparql_llm.agent.roles import (
+    ADMIN,
     ROLE_LABELS,
     USER,
     assignable_roles,
@@ -43,7 +44,14 @@ from sparql_llm.agent.roles import (
 from markupsafe import Markup
 
 from sparql_llm.config import settings, settings_filepath
-from sparql_llm.datasets import dataset_state, list_dataset_ids
+from sparql_llm.datasets import (
+    DatasetError,
+    add_dataset,
+    dataset_label,
+    dataset_state,
+    list_dataset_ids,
+    set_published,
+)
 from sparql_llm.indexing.drift import load_fingerprint
 from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
@@ -332,24 +340,35 @@ if settings.auth_enabled:
         )
         return response
 
+    #: How the admin picker names each dataset state.
+    STATE_LABELS = {"published": "published", "ready": "ready, not published", "new": "new"}
+
     @app.get("/admin", response_class=HTMLResponse, include_in_schema=False)
     async def admin_page(
         request: Request,
+        dataset: str = "",
         flash_success: str = "",
         flash_error: str = "",
         user: "User" = Depends(current_active_user),
+        session: "AsyncSession" = Depends(get_async_session),
     ) -> HTMLResponse:
-        """Admin panel — index status and rebuild, and users. Admins and curators.
+        """Admin panel — datasets, their files, index status and rebuild, and users. Admins and curators.
 
-        What each row offers (remove, change role) is decided here by the rules in
-        ``roles`` rather than in the template, so the page and the endpoints that enforce
-        the same rules cannot disagree.
+        Every dataset card works on the dataset picked with ``?dataset=`` (the first by
+        default). What each row offers (remove, change role) is decided here by the rules
+        in ``roles`` rather than in the template, so the page and the endpoints that
+        enforce the same rules cannot disagree.
         """
         if not can_manage(user):
             return RedirectResponse("/", status_code=302)
-        async with async_session_maker() as session:
-            result = await session.execute(select(User).order_by(User.email))
-            users = result.scalars().all()
+        result = await session.execute(select(User).order_by(User.email))
+        users = result.scalars().all()
+        dataset_ids = list_dataset_ids()
+        selected = dataset if dataset in dataset_ids else (dataset_ids[0] if dataset_ids else "")
+        datasets = [
+            {"id": pid, "label": dataset_label(pid), "state": dataset_state(pid), "state_label": STATE_LABELS[dataset_state(pid)]}
+            for pid in dataset_ids
+        ]
         rows = [
             {
                 "user": u,
@@ -371,8 +390,50 @@ if settings.auth_enabled:
                 "role_labels": ROLE_LABELS,
                 "flash_success": flash_success,
                 "flash_error": flash_error,
+                "datasets": datasets,
+                "dataset": next((d for d in datasets if d["id"] == selected), None),
+                "is_admin": role_of(user) == ADMIN,
             },
         )
+
+    @app.post("/admin/datasets", include_in_schema=False)
+    async def admin_add_dataset(
+        request: Request,
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """A new, empty dataset (not published), ready for its three files. Admins only."""
+        if role_of(user) != ADMIN:
+            return JSONResponse({"error": "Only admins can add a dataset."}, status_code=403)
+        if request.headers.get("content-type", "").startswith("application/json"):
+            body = await request.json()
+        else:
+            body = dict(await request.form())
+        try:
+            add_dataset(str(body.get("id", "")).strip(), str(body.get("label", "")))
+        except DatasetError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=422)
+        return JSONResponse({"ok": True, "dataset": str(body.get("id", "")).strip()})
+
+    async def _set_published(dataset_id: str, published: bool, user: Any) -> JSONResponse:
+        if role_of(user) != ADMIN:
+            return JSONResponse({"error": "Only admins can publish or unpublish a dataset."}, status_code=403)
+        if dataset_id not in list_dataset_ids():
+            return JSONResponse({"error": f"There is no dataset '{dataset_id}'."}, status_code=404)
+        try:
+            set_published(dataset_id, published)
+        except DatasetError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        return JSONResponse({"ok": True, "state": dataset_state(dataset_id)})
+
+    @app.post("/admin/datasets/{dataset_id}/publish", include_in_schema=False)
+    async def admin_publish_dataset(dataset_id: str, user: "User" = Depends(current_active_user)) -> JSONResponse:
+        """Make a rebuilt dataset visible to every user. Admins only."""
+        return await _set_published(dataset_id, True, user)
+
+    @app.post("/admin/datasets/{dataset_id}/unpublish", include_in_schema=False)
+    async def admin_unpublish_dataset(dataset_id: str, user: "User" = Depends(current_active_user)) -> JSONResponse:
+        """Take a dataset out of users' picker; nothing is deleted. Admins only."""
+        return await _set_published(dataset_id, False, user)
 
     def _admin_dataset(dataset: str) -> str | None:
         """The dataset an admin route works on: the one named, or the first; None if there is no such dataset."""
@@ -445,12 +506,16 @@ if settings.auth_enabled:
 
     @app.get("/admin/project-files", include_in_schema=False)
     async def admin_project_files(
+        dataset: str = "",
         user: "User" = Depends(current_active_user),
     ) -> JSONResponse:
-        """The curator files of each project of this instance, for the Project files card."""
+        """The curator files of one dataset (the first by default), for the Project files card."""
         if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        return JSONResponse({"projects": {pid: list_files(pid) for pid in list_dataset_ids()}})
+        project_id = _admin_dataset(dataset)
+        if project_id is None:
+            return _no_dataset(dataset)
+        return JSONResponse({"projects": {project_id: list_files(project_id)}})
 
     @app.get("/admin/project-files/{project_id}/{name}", include_in_schema=False, response_model=None)
     async def admin_download_project_file(

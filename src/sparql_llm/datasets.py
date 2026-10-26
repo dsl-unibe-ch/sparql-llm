@@ -93,6 +93,18 @@ def dataset_state(dataset_id: str) -> Literal["new", "ready", "published"]:
     raise DatasetError(f"There is no dataset '{dataset_id}'.")
 
 
+def dataset_label(dataset_id: str) -> str:
+    """The name to show: the live project's, else the one staged for a new dataset, else the id."""
+    for path in (_data_dir() / dataset_id / PROJECT_FILE, _data_dir() / dataset_id / UPLOADED_DIR / PROJECT_FILE):
+        try:
+            label = json.loads(path.read_text(encoding="utf-8")).get("label")
+        except Exception:
+            continue
+        if isinstance(label, str) and label.strip():
+            return label
+    return dataset_id
+
+
 def set_published(dataset_id: str, published: bool) -> None:
     if published and dataset_state(dataset_id) == "new":
         raise DatasetError(f"The dataset '{dataset_id}' has not been rebuilt successfully yet.")

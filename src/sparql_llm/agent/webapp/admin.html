@@ -122,6 +122,18 @@
       .flash-error   { background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; }
 
       .empty-state { padding: 2rem 1.25rem; text-align: center; color: #94a3b8; font-size: 0.85rem; }
+
+      /* ── Datasets: the picker every card below follows ── */
+      .ds-list { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.25rem 0 0.75rem; }
+      .ds-item { display: flex; flex-direction: column; gap: 0.1rem; padding: 0.45rem 0.8rem; border: 1px solid #e2e8f0; border-radius: 8px; text-decoration: none; color: #1e293b; font-size: 0.85rem; background: #fff; }
+      .ds-item:hover { background: #f8fafc; }
+      .ds-item.ds-selected { border-color: #2563eb; background: #eff6ff; font-weight: 600; }
+      .ds-state { font-size: 0.7rem; font-weight: 600; }
+      .ds-published { color: #15803d; }
+      .ds-ready { color: #b45309; }
+      .ds-new { color: #64748b; }
+      .ds-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+      .ds-row input { padding: 0.4rem 0.6rem; font-size: 0.82rem; border: 1px solid #cbd5e1; border-radius: 8px; }
     </style>
   </head>
   <body>
@@ -150,9 +162,46 @@
       <div class="flash flash-error">{{ flash_error }}</div>
       {% endif %}
 
+      <!-- Datasets -->
+      <div class="card" id="datasets-card" data-selected-dataset="{{ dataset.id if dataset else '' }}">
+        <div class="card-header">Datasets</div>
+        <div class="idx-body">
+          <p class="idx-note">
+            The cards below work on the dataset picked here: its files, its check and its rebuild.
+            A new dataset is visible only to admins and curators, in the chat too, once it has been
+            rebuilt successfully; an admin then publishes it for every user.
+          </p>
+          <div class="ds-list">
+            {% for d in datasets %}
+            <a href="/admin?dataset={{ d.id }}" class="ds-item{% if dataset and d.id == dataset.id %} ds-selected{% endif %}">
+              <span>{{ d.label }}</span>
+              <span class="ds-state ds-{{ d.state }}">{{ d.state_label }}</span>
+            </a>
+            {% endfor %}
+          </div>
+          {% if is_admin %}
+          <div class="ds-row">
+            {% if dataset and dataset.state == "published" %}
+            <button class="btn-reindex btn-check" data-dataset-action="/admin/datasets/{{ dataset.id }}/unpublish">Unpublish {{ dataset.label }}</button>
+            {% elif dataset and dataset.state == "ready" %}
+            <button class="btn-reindex" data-dataset-action="/admin/datasets/{{ dataset.id }}/publish">Publish {{ dataset.label }}</button>
+            {% elif dataset %}
+            <span class="idx-note">{{ dataset.label }} can be published after its first successful rebuild.</span>
+            {% endif %}
+          </div>
+          <div class="ds-row">
+            <input id="ds-new-id" placeholder="id, e.g. norssit" pattern="[a-z0-9][a-z0-9-]*" />
+            <input id="ds-new-label" placeholder="Name, e.g. Norssit" />
+            <button id="ds-new" class="btn-reindex btn-check">New dataset</button>
+          </div>
+          {% endif %}
+          <span id="ds-status" class="idx-status"></span>
+        </div>
+      </div>
+
       <!-- Search index -->
       <div class="card">
-        <div class="card-header">Search index</div>
+        <div class="card-header">Search index{% if dataset %} — {{ dataset.label }}{% endif %}</div>
         <div class="idx-body">
           <p class="idx-note">
             Rebuild after the triplestore is reloaded, or after the example queries change,
@@ -170,7 +219,7 @@
 
       <!-- Project files -->
       <div class="card">
-        <div class="card-header">Project files</div>
+        <div class="card-header">Project files{% if dataset %} — {{ dataset.label }}{% endif %}</div>
         <div class="idx-body">
           <p class="idx-note">
             Download a file, edit it, and upload it again. An uploaded file waits: press
@@ -312,6 +361,42 @@
       </div>
     </div>
     <script>
+      // Every dataset card's request names the dataset picked in the Datasets card.
+      var DATASET = {{ (dataset.id if dataset else "") | tojson }};
+      var DATASET_QUERY = DATASET ? '?dataset=' + encodeURIComponent(DATASET) : '';
+
+      (function () {
+        var status = document.getElementById('ds-status');
+        function done(r) {
+          return r.json().then(function (d) {
+            if (!r.ok) { status.textContent = d.error || 'That did not work.'; return; }
+            location.href = '/admin?dataset=' + encodeURIComponent(d.dataset || DATASET);
+          });
+        }
+        document.querySelectorAll('[data-dataset-action]').forEach(function (btn) {
+          btn.addEventListener('click', function () {
+            btn.disabled = true;
+            fetch(btn.getAttribute('data-dataset-action'), { method: 'POST', credentials: 'same-origin' })
+              .then(done)
+              .catch(function () { status.textContent = 'That did not work.'; })
+              .finally(function () { btn.disabled = false; });
+          });
+        });
+        var add = document.getElementById('ds-new');
+        if (add) {
+          add.addEventListener('click', function () {
+            var id = document.getElementById('ds-new-id').value.trim();
+            var label = document.getElementById('ds-new-label').value.trim();
+            fetch('/admin/datasets', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ id: id, label: label })
+            }).then(done).catch(function () { status.textContent = 'The dataset was not added.'; });
+          });
+        }
+      })();
+
       (function () {
         var list = document.getElementById('pf-list');
         var errors = document.getElementById('pf-errors');
@@ -353,7 +438,7 @@
         }
 
         function load() {
-          return fetch('/admin/project-files', { credentials: 'same-origin' })
+          return fetch('/admin/project-files' + DATASET_QUERY, { credentials: 'same-origin' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) { if (d && d.projects) render(d.projects); })
             .catch(function () { list.textContent = 'Could not load the project files.'; });
@@ -399,6 +484,11 @@
 
         function renderDrift(drift) {
           if (!drift) return;
+          if (drift.reason === 'no-project') {
+            banner.className = 'idx-banner idx-stale';
+            banner.innerHTML = esc(drift.error || 'This dataset has not been rebuilt yet.');
+            return;
+          }
           if (drift.reason === 'endpoint-unreachable') {
             banner.className = 'idx-banner idx-error';
             banner.innerHTML = 'Could not reach the SPARQL endpoint, so the index could not be checked.';
@@ -436,7 +526,7 @@
         checkBtn.addEventListener('click', function () {
           checkBtn.disabled = true;
           status.innerHTML = '<span class="spinner"></span>Checking the configuration…';
-          fetch('/admin/check', { method: 'POST', credentials: 'same-origin' })
+          fetch('/admin/check' + DATASET_QUERY, { method: 'POST', credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
             .then(function (d) {
               status.textContent = d.error ? d.error : '';
@@ -468,7 +558,7 @@
         }
 
         function refresh() {
-          return fetch('/admin/index-status', { credentials: 'same-origin' })
+          return fetch('/admin/index-status' + DATASET_QUERY, { credentials: 'same-origin' })
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (d) {
               if (!d) return false;
@@ -493,9 +583,13 @@
           if (!confirm('Rebuild the search index from the live database? This takes a few minutes. The chatbot keeps working while it runs.')) return;
           button.disabled = true;
           status.innerHTML = '<span class="spinner"></span>Starting...';
-          fetch('/admin/reindex', { method: 'POST', credentials: 'same-origin' })
+          fetch('/admin/reindex' + DATASET_QUERY, { method: 'POST', credentials: 'same-origin' })
             .then(function (r) { return r.json(); })
-            .then(function () { poll(); })
+            .then(function (d) {
+              // Another dataset's rebuild holds the instance: say so instead of polling this one.
+              if (d && d.started === false) { status.textContent = d.error || 'A rebuild is already running.'; button.disabled = false; return; }
+              poll();
+            })
             .catch(function () {
               status.textContent = 'Could not start the rebuild.';
               button.disabled = false;
