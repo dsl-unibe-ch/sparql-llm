@@ -87,12 +87,18 @@
       .chat-wrapper { flex: 1; min-height: 0; display: flex; flex-direction: column; width: 100%; }
       /* Custom element must fill and flex as a column */
       chat-with-context { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+
+      /* ── Dataset picker: moved into the top of the widget's history sidebar (inline
+         styles there, the page's CSS does not reach into its shadow root); shown in
+         the header instead when the widget has no sidebar. ── */
+      #dataset-picker { display: none; }
+      .site-header #dataset-picker { display: flex; align-items: center; gap: 0.5rem; }
     </style>
     <script type="module" crossorigin src="/assets/index-CWm5W83b.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-V5TykCWV.css">
   </head>
 
-  <body>
+  <body data-selected-dataset="{{ dataset.id if dataset else '' }}">
     <!-- Header -->
     <header class="site-header">
       <a href="/" class="header-brand">
@@ -178,8 +184,21 @@
           </div>
         </div>
 
+        {% if datasets | length > 1 %}
+        <nav id="dataset-picker" aria-label="Datasets" style="padding: 0.5rem 0.5rem 0.75rem; border-bottom: 1px solid #e2e8f0; margin-bottom: 0.5rem;">
+          <div style="font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; padding: 0.25rem 0.5rem;">Datasets</div>
+          {% for d in datasets %}
+          <a href="/?dataset={{ d.id }}"{% if dataset and d.id == dataset.id %} aria-current="page"{% endif %}
+             style="display: block; padding: 0.4rem 0.5rem; border-radius: 8px; font-size: 0.85rem; text-decoration: none; color: #1e293b;{% if dataset and d.id == dataset.id %} background: #e2e8f0; font-weight: 600;{% endif %}">
+            {{ d.label }}{% if not d.published %}<span style="display: block; font-size: 0.68rem; font-weight: 500; color: #b45309;">only visible to curators</span>{% endif %}
+          </a>
+          {% endfor %}
+        </nav>
+        {% endif %}
+
         <chat-with-context
           id="chat-element"
+          data-placeholder="{% if dataset %}Ask about {{ dataset.label }}…{% endif %}"
           chat-endpoint="{{ chat_endpoint }}"
           feedback-endpoint="{{ feedback_endpoint }}"
           history-endpoint="{{ history_endpoint }}"
@@ -224,6 +243,8 @@
     // chat endpoint based on the header controls. Defaults: MCP tools OFF, 3 fixes.
     (function () {
       var CHAT_ENDPOINT = "{{ chat_endpoint }}";
+      var HISTORY_ENDPOINT = "{{ history_endpoint }}";
+      var DATASET = {{ (dataset.id if dataset else "") | tojson }};
       window.__USE_TOOLS__ = false;
       window.__MAX_FIXES__ = 3;
       window.__MAX_STEPS__ = 10;
@@ -297,6 +318,8 @@
           var isChat = method === "POST" && CHAT_ENDPOINT && url.indexOf(CHAT_ENDPOINT) !== -1;
           if (isChat && init && typeof init.body === "string") {
             var payload = JSON.parse(init.body);
+            // The dataset is the page's: the server checks it and answers from it only.
+            payload.project = {{ (dataset.id if dataset else "") | tojson }};
             payload.use_tools = !!window.__USE_TOOLS__;
             payload.max_try_fix_sparql = window.__MAX_FIXES__;
             payload.max_tool_iterations = window.__MAX_STEPS__;
@@ -313,11 +336,68 @@
             }
             init = Object.assign({}, init, { body: JSON.stringify(payload) });
           }
+          // Saved chats belong to a dataset: the history lists the selected dataset's
+          // only, and a save records it. The widget builds each chat's URL from its
+          // history-endpoint attribute, so the filter is added here, not there.
+          if (HISTORY_ENDPOINT && DATASET && typeof input === "string") {
+            if (method === "GET" && url === HISTORY_ENDPOINT) {
+              input = HISTORY_ENDPOINT + "?project=" + encodeURIComponent(DATASET);
+            } else if (method === "PUT" && url.indexOf(HISTORY_ENDPOINT + "/") === 0 && init && typeof init.body === "string") {
+              var saved = JSON.parse(init.body);
+              saved.project = DATASET;
+              init = Object.assign({}, init, { body: JSON.stringify(saved) });
+            }
+          }
         } catch (e) {
           console.warn("chat option injection skipped:", e);
         }
         return origFetch(input, init);
       };
+    })();
+
+    // ── Dataset picker and placeholder, placed inside the compiled widget ──
+    // The widget renders into a shadow root and re-renders parts of it, so both are
+    // (re)applied whenever its content changes.
+    (function () {
+      var chatEl = document.getElementById("chat-element");
+      var picker = document.getElementById("dataset-picker");
+      var placeholder = chatEl.getAttribute("data-placeholder");
+      var placed = false;
+
+      function apply() {
+        var root = chatEl.shadowRoot;
+        if (!root) return;
+        if (placeholder) {
+          root.querySelectorAll("textarea").forEach(function (t) {
+            if (t.placeholder !== placeholder) t.placeholder = placeholder;
+          });
+        }
+        if (picker && !picker.isConnected) placed = false;
+        var aside = root.querySelector('aside[aria-label="Saved conversations"]');
+        if (picker && aside && picker.parentNode !== aside) {
+          picker.style.display = "block";
+          aside.insertBefore(picker, aside.firstChild);
+          placed = true;
+        }
+      }
+
+      var observer = new MutationObserver(apply);
+      function watch() {
+        if (!chatEl.shadowRoot) return setTimeout(watch, 50);
+        observer.observe(chatEl.shadowRoot, { childList: true, subtree: true });
+        apply();
+      }
+      watch();
+      // No history sidebar (auth off): offer the datasets in the header instead.
+      setTimeout(function () {
+        if (picker && !placed) {
+          var actions = document.querySelector(".header-actions");
+          actions.insertBefore(picker, actions.firstChild);
+          picker.removeAttribute("style");
+          picker.querySelectorAll("div").forEach(function (d) { d.style.display = "none"; });
+          picker.querySelectorAll("span").forEach(function (sp) { sp.style.display = "inline"; sp.style.marginLeft = "0.35rem"; });
+        }
+      }, 3000);
     })();
 
     // ── Fetch models and wire up the chat element ──

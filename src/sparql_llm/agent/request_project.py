@@ -21,9 +21,14 @@ class ProjectRefused(Exception):
     """The request names a dataset this user may not ask. Plain message."""
 
 
+def allowed_datasets(user: Any) -> list[Project]:
+    """The datasets this user may see and ask, in picker order."""
+    return datasets_for(_AUTH_OFF if user is None else user)
+
+
 def resolve_request_project(requested: str, user: Any) -> Project:
     """The dataset to answer from; an empty request means the first one this user may ask."""
-    allowed = datasets_for(_AUTH_OFF if user is None else user)
+    allowed = allowed_datasets(user)
     if not requested:
         if not allowed:
             raise ProjectRefused("No dataset is available yet.")

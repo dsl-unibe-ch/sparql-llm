@@ -13,10 +13,20 @@ FORBIDDEN = ["swiss-elites.lod4hss", "elites-suisses.lod4hss", "sdh-short", "crm
 ADMIN = SimpleNamespace(id=1, email="admin@example.org", is_superuser=True, is_curator=False, is_active=True)
 
 
+def _set_intro(project, intro: str) -> None:
+    """The chat page shows the selected dataset's own intro (project.json), never the install's."""
+    from sparql_llm.project import reload_projects
+
+    path = project.dir / "project.json"
+    content = json.loads(path.read_text(encoding="utf-8"))
+    path.write_text(json.dumps({**content, "intro": intro}), encoding="utf-8")
+    reload_projects()
+
+
 @pytest.fixture
 def norssit_site(norssit_project, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "app_name", "Norssit Chat")
-    monkeypatch.setattr(settings, "app_intro", "Ask about the **Norssit** alumni register of [the lyceum](http://www.ldf.fi/dataset/norssit).")
+    _set_intro(norssit_project, "Ask about the **Norssit** alumni register of [the lyceum](http://www.ldf.fi/dataset/norssit).")
     main.app.dependency_overrides[main.current_active_user] = lambda: ADMIN
     yield TestClient(main.app)
     main.app.dependency_overrides.clear()
@@ -37,8 +47,8 @@ def test_other_pages_use_the_app_name(norssit_site):
         assert "Norssit Chat" in page, path
 
 
-def test_intro_markdown_is_escaped(norssit_site, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(settings, "app_intro", "<script>alert(1)</script> **ok**")
+def test_intro_markdown_is_escaped(norssit_site, norssit_project):
+    _set_intro(norssit_project, "<script>alert(1)</script> **ok**")
     page = norssit_site.get("/").text
     assert "<script>alert(1)</script>" not in page
     assert "<strong>ok</strong>" in page

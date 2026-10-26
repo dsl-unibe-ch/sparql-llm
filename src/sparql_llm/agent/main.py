@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from sparql_llm.agent.graph import get_graph, graph
-from sparql_llm.agent.request_project import ProjectRefused, resolve_request_project
+from sparql_llm.agent.request_project import ProjectRefused, allowed_datasets, resolve_request_project
 from sparql_llm.agent.roles import (
     ROLE_LABELS,
     USER,
@@ -43,11 +43,11 @@ from sparql_llm.agent.roles import (
 from markupsafe import Markup
 
 from sparql_llm.config import settings, settings_filepath
-from sparql_llm.datasets import list_dataset_ids
+from sparql_llm.datasets import dataset_state, list_dataset_ids
 from sparql_llm.indexing.drift import load_fingerprint
 from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
-from sparql_llm.project import get_projects
+from sparql_llm.project import Project, get_projects
 from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
 
 if settings.sentry_url:
@@ -186,10 +186,10 @@ def intro_html(text: str) -> Markup:
     return Markup(escaped)
 
 
-def project_stats() -> list[dict[str, Any]]:
+def project_stats(projects: "list[Project] | None" = None) -> list[dict[str, Any]]:
     """Entity counts per type from each project's last fingerprint; empty before the first rebuild."""
     stats = []
-    for project in get_projects():
+    for project in get_projects() if projects is None else projects:
         fingerprint = load_fingerprint(project)
         if not fingerprint or not project.entities:
             continue
@@ -200,15 +200,25 @@ def project_stats() -> list[dict[str, Any]]:
 
 
 def site_context(request: Request) -> dict[str, Any]:
-    """Values every page shows: this instance's name, intro, endpoints and counts."""
+    """Values every page shows: this instance's name, intro, endpoints and counts.
+
+    On the chat page they are the selected dataset's only (``request.state.dataset``):
+    another dataset's intro, endpoint or counts must never appear beside it.
+    """
+    dataset: Project | None = getattr(request.state, "dataset", None)
+    intro = dataset.intro if dataset is not None else settings.app_intro
+    if dataset is not None:
+        endpoints = [{"label": dataset.label, "endpoint_url": dataset.endpoint_url}]
+    else:
+        endpoints = [{"label": e.get("label"), "endpoint_url": e["endpoint_url"]} for e in settings.endpoints]
     return {
         "app_name": settings.app_name,
-        "app_intro": intro_html(settings.app_intro),
-        "app_description": re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", settings.app_intro).replace("**", "")
+        "app_intro": intro_html(intro),
+        "app_description": re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", intro).replace("**", "")
         or f"Natural-language interface to {settings.app_name}.",
-        "app_homepage_url": settings.app_homepage_url,
-        "endpoints": [{"label": e.get("label"), "endpoint_url": e["endpoint_url"]} for e in settings.endpoints],
-        "stats": project_stats(),
+        "app_homepage_url": (dataset.homepage_url if dataset is not None else None) or settings.app_homepage_url,
+        "endpoints": endpoints,
+        "stats": project_stats([dataset] if dataset is not None else None),
     }
 
 
@@ -1269,24 +1279,55 @@ app.mount(
 )
 
 
+#: Remembers the dataset a browser used last, so "/" opens on it.
+LAST_DATASET_COOKIE = "last_dataset"
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def chat_ui(
     request: Request,
+    dataset: str = "",
+    chat: str = "",
     _user: Any = Depends(require_user),
+    session: Any = Depends(db_session),
 ) -> HTMLResponse:
-    """Render the chat UI using jinja2 + HTML."""
-    return templates.TemplateResponse(
+    """Render the chat UI for one dataset: ``?dataset=``, else a saved chat's, else the last used, else the first.
+
+    A dataset the user may not use is never an error page: the first allowed one is shown.
+    """
+    allowed = allowed_datasets(_user)
+    by_id = {p.id: p for p in allowed}
+    wanted = [dataset, request.cookies.get(LAST_DATASET_COOKIE, "")]
+    if chat and session is not None and _user is not None:
+        # A link to a saved chat opens on that chat's dataset.
+        from sparql_llm.agent.auth import Conversation
+
+        conversation = await session.get(Conversation, chat)
+        if conversation is not None and conversation.user_id == _user.id:
+            wanted.insert(0, conversation.project)
+    selected = next((by_id[w] for w in wanted if w in by_id), allowed[0] if allowed else None)
+    request.state.dataset = selected
+    response = templates.TemplateResponse(
         request,
         "index.html",
         {
             "api_key": settings.chat_api_key,
             "chat_endpoint": "/chat",
             "feedback_endpoint": "/feedback",
-            # Saved chats need a logged-in owner; without auth the sidebar stays hidden.
+            # Saved chats need a logged-in owner; without auth the sidebar stays hidden. The
+            # widget builds each chat's URL from this, so the dataset filter is added by the
+            # page's fetch wrapper rather than here.
             "history_endpoint": "/conversations" if settings.auth_enabled else "",
-            "examples": ",".join(settings.example_questions),
+            "examples": ",".join(selected.example_questions) if selected else "",
             "auth_enabled": settings.auth_enabled,
             # Shows the header link to /admin — curators need it too.
             "can_manage": can_manage(_user),
+            "datasets": [
+                {"id": p.id, "label": p.label, "published": dataset_state(p.id) == "published"} for p in allowed
+            ],
+            "dataset": {"id": selected.id, "label": selected.label} if selected else None,
         },
     )
+    if selected is not None:
+        response.set_cookie(LAST_DATASET_COOKIE, selected.id, max_age=31536000, samesite="lax")
+    return response
