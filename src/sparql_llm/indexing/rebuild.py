@@ -162,7 +162,11 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     # The name → URI list the entity resolver matches against. Never raises: on failure
     # the previous list stays in use and the result message says so.
     _set_job("running", f"{examples_summary}. Collecting entity names…", collection=target)
-    entities_report = build_entity_names()
+    entity_reports = {p.label: build_entity_names(p) for p in projects}
+    entities_report = {
+        "entities": sum(r["entities"] for r in entity_reports.values()),
+        "error": "; ".join(f"{label}: {r['error']}" for label, r in entity_reports.items() if r["error"]),
+    }
     entities_warning = (
         f" ⚠ Entity names not rebuilt ({entities_report['error']}); the previous list is still in use."
         if entities_report["error"]

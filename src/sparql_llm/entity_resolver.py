@@ -16,7 +16,7 @@ from pathlib import Path
 
 from rapidfuzz import fuzz, process
 
-from sparql_llm.indexing.entity_names import ENTITY_NAMES_FILE
+from sparql_llm.project import get_projects
 from sparql_llm.utils import logger
 
 SCORE_CUTOFF = 86
@@ -58,31 +58,34 @@ class Resolution:
 
 
 class EntityResolver:
-    """Loads the entity file lazily and reloads it when it changes on disk."""
+    """Loads the entity files lazily (one per project) and reloads them when they change on disk."""
 
-    def __init__(self, path: Path) -> None:
-        self.path = path
-        self._mtime: float | None = None
+    def __init__(self, path: Path | list[Path]) -> None:
+        self.paths = path if isinstance(path, list) else [path]
+        self._mtime: tuple[float, ...] | None = None
         self._rows: list[dict[str, str]] = []
         self._keys: list[str] = []
         self._warned = False
 
     def _load(self) -> bool:
-        try:
-            mtime = self.path.stat().st_mtime
-        except OSError:
+        existing = [p for p in self.paths if p.is_file()]
+        if not existing:
             self._rows, self._keys, self._mtime = [], [], None
             if not self._warned:
-                logger.info("Entity resolution unavailable: %s not built yet", self.path)
+                logger.info("Entity resolution unavailable: %s not built yet", ", ".join(map(str, self.paths)))
                 self._warned = True
             return False
+        try:
+            mtime = tuple(p.stat().st_mtime for p in existing)
+        except OSError:
+            return bool(self._rows)
         if mtime == self._mtime:
             return bool(self._rows)
         try:
-            rows = json.loads(self.path.read_text(encoding="utf-8"))["entities"]
+            rows = [row for p in existing for row in json.loads(p.read_text(encoding="utf-8"))["entities"]]
             keys = [normalise(r["label"]) for r in rows]
         except Exception as exc:
-            logger.warning("Entity resolution unavailable: cannot read %s (%s)", self.path, exc)
+            logger.warning("Entity resolution unavailable: cannot read the entity names (%s)", exc)
             self._rows, self._keys = [], []
         else:
             self._rows, self._keys = rows, keys
@@ -183,7 +186,9 @@ _resolver: EntityResolver | None = None
 
 
 def get_resolver() -> EntityResolver:
+    """The resolver over every project's entity names; rebuilt when the projects change."""
     global _resolver
-    if _resolver is None:
-        _resolver = EntityResolver(ENTITY_NAMES_FILE)
+    paths = [p.entity_names_path for p in get_projects()]
+    if _resolver is None or _resolver.paths != paths:
+        _resolver = EntityResolver(paths)
     return _resolver

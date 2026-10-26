@@ -1,59 +1,58 @@
-"""Write every nameable entity in the endpoint to data/entity_names.json.
+"""Write every nameable entity of a project's endpoint to data/<id>/entity_names.json.
 
-The entity resolver matches the names a user types against these labels. Persons carry
-birth and death years so homonyms (2,729 persons share a label with someone else) can be
-told apart. Built by the admin rebuild; a failure keeps the previous file.
+The entity resolver matches the names a user types against these labels. Which classes
+count as entities, and their label property, come from the project's ``entities`` block.
+Types with birth and death properties carry those years so homonyms can be told apart.
+Built by the admin rebuild; a failure keeps the previous file.
 
 Usage:
-    uv run python -m sparql_llm.indexing.entity_names
+    uv run python -m sparql_llm.indexing.entity_names [project id]
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from sparql_llm.config import settings
+from sparql_llm.project import Project, get_project, get_projects, graph_pattern
 from sparql_llm.utils import logger, query_sparql
 
-ENTITY_NAMES_FILE = Path("data") / "entity_names.json"
-GRAPH = "https://swiss-elites.lod4hss.cloud/resource/"
-LABEL = "https://sdhss.org/ontology/shortcuts/P9"
-BIRTH = "https://sdhss.org/ontology/shortcuts/P2"
-DEATH = "https://sdhss.org/ontology/shortcuts/P13"
 PAGE = 10000
 MIN_KEPT_FRACTION = 0.9
 
-ENTITY_TYPES: dict[str, str] = {
-    "Person": "http://www.cidoc-crm.org/cidoc-crm/E21",
-    "Group": "http://www.cidoc-crm.org/cidoc-crm/E74",
-    "Place": "https://sdhss.org/ontology/core/C13",
-    "Discipline": "https://sdhss.org/ontology/social-life-specific/C9",
-    "Study title": "https://sdhss.org/ontology/social-life-specific/C8",
-}
 
-
-def _query(class_iri: str, offset: int) -> str:
+def entity_query(project: Project, type_name: str, offset: int) -> str:
+    """One page of the entities of one type, with birth/death years when the type has them."""
+    assert project.entities is not None
+    entity_type = project.entities.types[type_name]
     years = ""
-    if class_iri == ENTITY_TYPES["Person"]:
-        years = f"OPTIONAL {{ ?s <{BIRTH}> ?birth }} OPTIONAL {{ ?s <{DEATH}> ?death }}"
+    if entity_type.birth_property:
+        years += f" OPTIONAL {{ ?s <{entity_type.birth_property}> ?birth }}"
+    if entity_type.death_property:
+        years += f" OPTIONAL {{ ?s <{entity_type.death_property}> ?death }}"
+    pattern = f"?s a <{entity_type.class_iri}> ; <{project.entities.label_property}> ?l .{years}"
     return (
-        f"SELECT ?s ?l ?birth ?death WHERE {{ GRAPH <{GRAPH}> {{ ?s a <{class_iri}> ; <{LABEL}> ?l . {years} }} }}\n"
+        f"SELECT ?s ?l ?birth ?death WHERE {{ {graph_pattern(project.graphs, pattern)} }}\n"
         f"ORDER BY ?s LIMIT {PAGE} OFFSET {offset}"
     )
 
 
-def fetch_entities(endpoint: str, fetch: Callable[..., Any] = query_sparql) -> list[dict[str, str]]:
-    """Page through every entity type. Raises on an endpoint error."""
+def fetch_entities(project: Project, fetch: Callable[..., Any] = query_sparql) -> list[dict[str, str]]:
+    """Page through every entity type of the project. Raises on an endpoint error."""
     rows: list[dict[str, str]] = []
-    for type_name, class_iri in ENTITY_TYPES.items():
+    if project.entities is None:
+        return rows
+    post = project.method == "POST"
+    for type_name in project.entities.types:
         offset = 0
         while True:
-            bindings = fetch(_query(class_iri, offset), endpoint, post=False, timeout=180)["results"]["bindings"]
+            query = entity_query(project, type_name, offset)
+            bindings = fetch(query, project.endpoint_url, post=post, timeout=180)["results"]["bindings"]
             for b in bindings:
                 row = {"uri": b["s"]["value"], "label": b["l"]["value"], "type": type_name}
                 for key in ("birth", "death"):
@@ -74,16 +73,16 @@ def _previous_count(path: Path) -> int:
         return 0
 
 
-def build_entity_names(
-    path: Path = ENTITY_NAMES_FILE,
-    endpoint: str | None = None,
-    fetch: Callable[..., Any] = query_sparql,
-) -> dict[str, Any]:
-    """Fetch and write the entity file atomically. Never raises; keeps the old file on failure."""
-    endpoint = endpoint or settings.endpoints[0]["endpoint_url"]
+def build_entity_names(project: Project, fetch: Callable[..., Any] = query_sparql) -> dict[str, Any]:
+    """Fetch and write the project's entity file atomically. Never raises; keeps the old file on failure."""
+    path = project.entity_names_path
+    endpoint = project.endpoint_url
     report: dict[str, Any] = {"entities": 0, "path": str(path), "error": ""}
+    if project.entities is None:
+        report["skipped"] = True
+        return report
     try:
-        rows = fetch_entities(endpoint, fetch)
+        rows = fetch_entities(project, fetch)
         if not rows:
             raise ValueError("the endpoint returned no entities")
         previous = _previous_count(path)
@@ -104,4 +103,4 @@ def build_entity_names(
 
 
 if __name__ == "__main__":
-    print(build_entity_names())
+    print(build_entity_names(get_project(sys.argv[1]) if len(sys.argv) > 1 else get_projects()[0]))
