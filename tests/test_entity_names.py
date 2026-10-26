@@ -150,3 +150,25 @@ def test_resolver_merges_every_project_file(tmp_path):
     resolver = EntityResolver([a, b, tmp_path / "absent.json"])
     assert resolver.resolve("Ernst Brenner").candidates[0].uri == "https://a/1"
     assert resolver.resolve("Mika Waltari").candidates[0].uri == "https://b/1"
+
+
+def test_a_list_from_another_endpoint_is_replaced_even_if_smaller(norssit_project):
+    # After a wrong endpoint is corrected, the big wrong list must not survive the shrink guard.
+    old = [{"uri": f"https://swiss/p{i}", "label": f"Old {i}", "type": "Person"} for i in range(10)]
+    norssit_project.entity_names_path.write_text(
+        json.dumps({"endpoint": "https://swiss.example/sparql", "entities": old}), encoding="utf-8"
+    )
+    pages = {"Person": [_b(s="http://ldf.fi/norssit/norssi_1", l="Waltari, Mika")]}
+    report = build_entity_names(norssit_project, fetch=fake_fetch(norssit_project, pages))
+    assert report["error"] == "" and report["entities"] == 1
+
+
+def test_resolver_ignores_projects_without_entities(use_projects):
+    from sparql_llm.entity_resolver import get_resolver
+
+    project = use_projects({"id": "bare", "label": "Bare", "endpoint_url": "https://x/sparql"})[0]
+    project.entity_names_path.parent.mkdir(parents=True, exist_ok=True)
+    project.entity_names_path.write_text(
+        json.dumps({"entities": [{"uri": "https://x/1", "label": "Stale, Name", "type": "Person"}]}), encoding="utf-8"
+    )
+    assert get_resolver().resolve("Name Stale") is None

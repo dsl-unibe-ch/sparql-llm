@@ -188,7 +188,8 @@ _resolver: EntityResolver | None = None
 def get_resolver() -> EntityResolver:
     """The resolver over every project's entity names; rebuilt when the projects change."""
     global _resolver
-    paths = [p.entity_names_path for p in get_projects()]
+    # A project without an entities block has no names to resolve, whatever is left on disk.
+    paths = [p.entity_names_path for p in get_projects() if p.entities]
     if _resolver is None or _resolver.paths != paths:
         _resolver = EntityResolver(paths)
     return _resolver

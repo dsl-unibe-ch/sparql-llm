@@ -59,3 +59,12 @@ def test_general_info_iri_is_homepage(norssit_project):
     docs = general_info_docs()
     assert docs[0].metadata["iri"] == "http://www.ldf.fi/dataset/norssit"
     assert "Norssit (https://ldf.fi/norssit/sparql)" in docs[0].metadata["answer"]
+
+
+def test_synced_examples_only_when_curator_sync_is_configured(norssit_project, offline):
+    norssit_project.synced_examples_path.write_text(
+        "## Example S1: Stale\n\nQuestion: A stale synced question?\n\n```sparql\nSELECT * WHERE { ?s ?p ?o }\n```\n",
+        encoding="utf-8",
+    )
+    docs = build_project_docs(norssit_project)
+    assert not any(d.metadata["question"] == "A stale synced question?" for d in docs)

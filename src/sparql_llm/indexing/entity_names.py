@@ -65,12 +65,26 @@ def fetch_entities(project: Project, fetch: Callable[..., Any] = query_sparql) -
     return rows
 
 
-def _previous_count(path: Path) -> int:
-    """Entities in the current file, or 0 if there is none or it cannot be read."""
+def _source(project: Project) -> dict[str, Any]:
+    """What a list of names was built from: a list from another source is no baseline."""
+    assert project.entities is not None
+    return {"endpoint": project.endpoint_url, "graphs": project.graphs, "entities": project.entities.model_dump()}
+
+
+def _previous_count(path: Path, source: dict[str, Any]) -> int:
+    """Entities in the current file if it was built from the same source; else 0."""
     try:
-        return len(json.loads(path.read_text(encoding="utf-8"))["entities"])
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return 0
+    if "source" in payload:
+        same = payload["source"] == source
+    else:
+        # Older files record only the endpoint, or nothing: keep the guard unless it differs.
+        same = payload.get("endpoint", source["endpoint"]) == source["endpoint"]
+    if not same:
+        return 0
+    return len(payload.get("entities", []))
 
 
 def build_entity_names(project: Project, fetch: Callable[..., Any] = query_sparql) -> dict[str, Any]:
@@ -85,12 +99,17 @@ def build_entity_names(project: Project, fetch: Callable[..., Any] = query_sparq
         rows = fetch_entities(project, fetch)
         if not rows:
             raise ValueError("the endpoint returned no entities")
-        previous = _previous_count(path)
+        previous = _previous_count(path, _source(project))
         if previous and len(rows) < MIN_KEPT_FRACTION * previous:
             # A short page is read as "done", so an endpoint row cap would truncate the list
             # without an error. A large drop is far likelier to be that than real deletions.
             raise ValueError(f"only {len(rows)} entities against {previous} in the previous list")
-        payload = {"built_at": datetime.now(timezone.utc).isoformat(), "endpoint": endpoint, "entities": rows}
+        payload = {
+            "built_at": datetime.now(timezone.utc).isoformat(),
+            "endpoint": endpoint,
+            "source": _source(project),
+            "entities": rows,
+        }
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
         tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")

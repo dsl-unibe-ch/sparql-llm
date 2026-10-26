@@ -165,7 +165,7 @@ def build_project_docs(project: Project) -> list[Document]:
         # endpoint-tested by sync_examples at the start of every rebuild. A separate
         # gitignored file so a rebuild never dirties the server's working tree; absent
         # on a first run or when their repository was unreachable, which is not fatal.
-        if project.synced_examples_path.exists():
+        if project.curator_examples and project.synced_examples_path.exists():
             synced_docs = SparqlExamplesMdLoader(
                 project.synced_examples_path, endpoint_url, prefix_repairs=project.prefix_repairs
             ).load()
