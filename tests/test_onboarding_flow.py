@@ -31,7 +31,7 @@ def test_missing_project_file_does_not_stop_the_instance(empty_instance):
 
 
 def test_check_reports_the_missing_project_file(empty_instance):
-    results = run_checks()["norssit"]
+    results = run_checks("norssit")
     assert results[0]["status"] == "error"
     assert "project.json" in results[0]["message"]
 
@@ -40,7 +40,7 @@ def test_check_reads_the_uploaded_project_file(empty_instance, monkeypatch: pyte
     seen = []
     monkeypatch.setattr(preflight, "run_preflight", lambda project: seen.append(project.label) or [])
     save_upload("norssit", "project.json", json.dumps({**NORSSIT, "label": "Norssit uploaded"}).encode(), "s@x")
-    run_checks()
+    run_checks("norssit")
     assert seen == ["Norssit uploaded"]
 
 
@@ -53,7 +53,7 @@ def test_rebuild_uses_the_uploaded_project_file(norssit_project, monkeypatch: py
 
     monkeypatch.setattr(rebuild, "run_preflight", stop)
     save_upload("norssit", "project.json", json.dumps({**NORSSIT, "label": "Norssit v2"}).encode(), "s@x")
-    rebuild.run_rebuild_job()
+    rebuild.run_rebuild_job("norssit")
     assert seen == ["Norssit v2"]
     # The rebuild stopped, so the instance keeps serving the configuration it had.
     assert get_projects()[0].label == "Norssit"

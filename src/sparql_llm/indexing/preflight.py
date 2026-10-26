@@ -15,7 +15,7 @@ from typing import Any, Literal
 import httpx
 
 from sparql_llm.indexing.sync_examples import parse_examples
-from sparql_llm.project import Project, graph_pattern, read_projects
+from sparql_llm.project import Project, graph_pattern
 from sparql_llm.utils import query_sparql
 
 STEPS = ("endpoint", "graphs", "entities", "files", "examples")
@@ -167,10 +167,12 @@ def run_preflight(project: Project, fetch: Callable[..., Any] = query_sparql) ->
     return results
 
 
-def run_checks() -> dict[str, list[dict[str, Any]]]:
-    """Preflight every project of this instance as its files are on disk now (Check button)."""
-    projects, problems = read_projects(candidates=True)
-    results = {pid: [asdict(CheckResult("project", "error", message))] for pid, message in problems.items()}
-    for project in projects:
-        results[project.id] = [asdict(r) for r in run_preflight(project)]
-    return results
+def run_checks(project_id: str) -> list[dict[str, Any]]:
+    """Preflight one dataset as its files are on disk now, uploads included (Check button)."""
+    from sparql_llm.indexing.rebuild import RebuildStopped, load_candidate
+
+    try:
+        project = load_candidate(project_id)
+    except RebuildStopped as exc:
+        return [asdict(CheckResult("project", "error", str(exc)))]
+    return [asdict(r) for r in run_preflight(project)]

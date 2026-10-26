@@ -78,8 +78,8 @@ def test_a_late_failure_leaves_every_live_file_untouched(writing_pipeline, monke
     project = writing_pipeline
     _upload_project(label="Norssit v2")
     monkeypatch.setattr(rebuild, "init_vectordb", lambda collection_name=None, projects=None, prefixes_map=None: 0)
-    rebuild.run_rebuild_job()
-    assert rebuild.read_job()["state"] == "failed"
+    rebuild.run_rebuild_job("norssit")
+    assert rebuild.read_job("norssit")["state"] == "failed"
     assert project.void_path.read_text(encoding="utf-8") == "# live void\n"
     assert project.entity_names_path.read_text(encoding="utf-8") == '{"entities": []}'
     assert not (project.dir / "next").exists()
@@ -96,8 +96,8 @@ def test_a_successful_rebuild_promotes_uploads_and_generated_files(writing_pipel
         "init_vectordb",
         lambda collection_name=None, projects=None, prefixes_map=None: seen.extend(p.label for p in projects) or 5,
     )
-    rebuild.run_rebuild_job()
-    assert rebuild.read_job()["state"] == "done", rebuild.read_job()["message"]
+    rebuild.run_rebuild_job("norssit")
+    assert rebuild.read_job("norssit")["state"] == "done", rebuild.read_job("norssit")["message"]
     assert seen == ["Norssit v2"]
     assert project.void_path.read_text(encoding="utf-8") == "# new void\n"
     assert json.loads(project.entity_names_path.read_text(encoding="utf-8"))["entities"] == [{"label": "new"}]

@@ -37,7 +37,7 @@ def test_generated_files_land_in_project_dir(norssit_project, monkeypatch: pytes
 
 
 def test_job_files_live_in_the_data_dir(norssit_project):
-    assert job_file() == norssit_project.dir.parent / "reindex_job.json"
+    assert job_file("norssit") == norssit_project.dir / "reindex_job.json"
     assert lock_file() == norssit_project.dir.parent / "reindex.lock"
 
 

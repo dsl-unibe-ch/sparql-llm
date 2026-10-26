@@ -357,49 +357,74 @@ if settings.auth_enabled:
             },
         )
 
+    def _admin_dataset(dataset: str) -> str | None:
+        """The dataset an admin route works on: the one named, or the first; None if there is no such dataset."""
+        ids = list_dataset_ids()
+        if not dataset:
+            return ids[0] if ids else None
+        return dataset if dataset in ids else None
+
+    def _no_dataset(dataset: str) -> JSONResponse:
+        return JSONResponse({"error": f"There is no dataset '{dataset}'."}, status_code=404)
+
     @app.get("/admin/index-status", include_in_schema=False)
     async def admin_index_status(
+        dataset: str = "",
         user: "User" = Depends(current_active_user),
     ) -> JSONResponse:
-        """Is the retrieval index still in step with the endpoint, and is a rebuild running?
+        """Is this dataset's index still in step with its endpoint, and is a rebuild running?
 
         Fetched by the admin page after render rather than during it: the drift check makes
         three SPARQL queries and should never hold up the page.
         """
         if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        drift = await run_in_threadpool(check_drift)
-        return JSONResponse({"drift": drift, "job": read_job()})
+        project_id = _admin_dataset(dataset)
+        if project_id is None:
+            return _no_dataset(dataset)
+        drift = await run_in_threadpool(check_drift, project_id)
+        return JSONResponse({"dataset": project_id, "drift": drift, "job": read_job(project_id)})
 
     @app.post("/admin/reindex", include_in_schema=False)
     async def admin_reindex(
+        dataset: str = "",
         user: "User" = Depends(current_active_user),
     ) -> JSONResponse:
-        """Rebuild the retrieval index from the live endpoint. Admins and curators.
+        """Rebuild one dataset's index from its endpoint. Admins and curators.
 
         Returns as soon as the job starts. The new index is built into a fresh collection
         and only swapped in when complete, so the assistant keeps answering from the current
-        index throughout, and a failed rebuild changes nothing.
+        index throughout, and a failed rebuild changes nothing. Other datasets are untouched.
         """
         if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        result = await run_in_threadpool(start_rebuild)
+        project_id = _admin_dataset(dataset)
+        if project_id is None:
+            return _no_dataset(dataset)
+        result = await run_in_threadpool(start_rebuild, project_id)
         if not result.get("started"):
+            running = result.get("dataset") or "another dataset"
             return JSONResponse(
-                {"error": "A rebuild is already running.", **result}, status_code=409
+                {"error": f"A rebuild of {running} is already running; try again when it finishes.", **result},
+                status_code=409,
             )
         return JSONResponse(result)
 
     @app.post("/admin/check", include_in_schema=False)
     async def admin_check(
+        dataset: str = "",
         user: "User" = Depends(current_active_user),
     ) -> JSONResponse:
-        """Run the preflight checks of every project, without rebuilding anything."""
+        """Run one dataset's preflight checks, without rebuilding anything."""
         if not can_manage(user):
             return JSONResponse({"error": "forbidden"}, status_code=403)
+        project_id = _admin_dataset(dataset)
+        if project_id is None:
+            return _no_dataset(dataset)
         if lock_file().exists():
             return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
-        return JSONResponse({"projects": await run_in_threadpool(run_checks)})
+        checks = await run_in_threadpool(run_checks, project_id)
+        return JSONResponse({"dataset": project_id, "projects": {project_id: checks}})
 
     @app.get("/admin/project-files", include_in_schema=False)
     async def admin_project_files(

@@ -185,24 +185,24 @@ def compare(indexed: Fingerprint | None, live: Fingerprint) -> dict[str, Any]:
     }
 
 
-def check_drift(project: Project | None = None) -> dict[str, Any]:
-    """Full check: take a live fingerprint and compare it to the indexed one.
+def check_drift(project_id: str = "") -> dict[str, Any]:
+    """Full check of one dataset: take a live fingerprint and compare it to the indexed one.
 
     Returns the same shape as :func:`compare`, with ``error`` set instead of ``stale``
     when the endpoint could not be reached. Defaults to the first project.
     """
-    if project is None:
-        projects = get_projects()
-        if not projects:
-            return {
-                "stale": False,
-                "reason": "no-project",
-                "error": "No project is configured for this instance.",
-                "changes": [],
-                "indexed": None,
-                "live": None,
-            }
-        project = projects[0]
+    projects = [p for p in get_projects() if not project_id or p.id == project_id]
+    if not projects:
+        return {
+            "stale": False,
+            "reason": "no-project",
+            "error": "This dataset has not been rebuilt successfully yet." if project_id
+            else "No project is configured for this instance.",
+            "changes": [],
+            "indexed": None,
+            "live": None,
+        }
+    project = projects[0]
     try:
         live = take_fingerprint(project)
     except Exception as exc:

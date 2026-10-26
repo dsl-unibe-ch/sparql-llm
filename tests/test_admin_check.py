@@ -41,3 +41,25 @@ def test_check_refused_while_a_rebuild_runs(norssit_project, client_as):
 
 def test_check_is_for_managers_only(norssit_project, client_as):
     assert client_as(USER).post("/admin/check").status_code == 403
+
+
+def test_check_of_an_unknown_dataset_is_404(norssit_project, client_as):
+    for response in (
+        client_as(ADMIN).post("/admin/check?dataset=ghost"),
+        client_as(ADMIN).post("/admin/reindex?dataset=ghost"),
+        client_as(ADMIN).get("/admin/index-status?dataset=ghost"),
+    ):
+        assert response.status_code == 404
+        assert response.json()["error"] == "There is no dataset 'ghost'."
+
+
+def test_check_runs_only_the_named_dataset(use_projects, client_as, monkeypatch: pytest.MonkeyPatch):
+    use_projects(
+        {"id": "a", "label": "Alpha", "endpoint_url": "https://a.example/sparql"},
+        {"id": "b", "label": "Beta", "endpoint_url": "https://b.example/sparql"},
+    )
+    seen = []
+    monkeypatch.setattr(preflight, "run_preflight", lambda project: seen.append(project.id) or [])
+    response = client_as(ADMIN).post("/admin/check?dataset=b")
+    assert response.json()["projects"] == {"b": []}
+    assert seen == ["b"]

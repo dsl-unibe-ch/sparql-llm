@@ -62,7 +62,7 @@ def pipeline(norssit_project, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_pipeline_runs_in_order(pipeline):
-    rebuild.rebuild_index_with_alias()
+    rebuild.rebuild_index_with_alias("norssit")
     assert pipeline[:4] == ["preflight", "sync", "void", "refresh"]
     last_reload = max(i for i, call in enumerate(pipeline) if call == "reload")
     assert pipeline.index("entities") < pipeline.index("index") < pipeline.index("swap") < last_reload
@@ -71,9 +71,9 @@ def test_pipeline_runs_in_order(pipeline):
 def test_rebuild_stops_before_swap_on_preflight_error(pipeline, monkeypatch: pytest.MonkeyPatch):
     error = CheckResult("endpoint", "error", "Norssit: the endpoint https://ldf.fi/norssit/sparql did not answer.")
     monkeypatch.setattr(rebuild, "run_preflight", lambda project: [error])
-    rebuild.run_rebuild_job()
+    rebuild.run_rebuild_job("norssit")
     assert "swap" not in pipeline and "index" not in pipeline
-    job = rebuild.read_job()
+    job = rebuild.read_job("norssit")
     assert job["state"] == "failed"
     assert "did not answer" in job["message"]
     assert "traceback" not in job
@@ -86,15 +86,15 @@ def test_rebuild_stops_when_the_schema_cannot_be_read(pipeline, monkeypatch: pyt
         raise VoidError("The generated schema for Norssit could not be read back: bad name")
 
     monkeypatch.setattr(rebuild, "generate_void", broken)
-    rebuild.run_rebuild_job()
+    rebuild.run_rebuild_job("norssit")
     assert "swap" not in pipeline
-    assert "could not be read back" in rebuild.read_job()["message"]
+    assert "could not be read back" in rebuild.read_job("norssit")["message"]
 
 
 def test_rebuild_reloads_projects_after_success(pipeline):
-    rebuild.run_rebuild_job()
+    rebuild.run_rebuild_job("norssit")
     assert pipeline[-1] == "reload" or "reload" in pipeline[pipeline.index("swap") :]
-    job = rebuild.read_job()
+    job = rebuild.read_job("norssit")
     assert job["state"] == "done"
     assert "Norssit: Person 10,137 · 330 → 40 classes" in job["message"]
     assert job["projects"]["norssit"]["void"]["classes_kept"] == 40
@@ -113,6 +113,6 @@ def test_job_status_write_retries_a_briefly_locked_file(norssit_project, monkeyp
 
     monkeypatch.setattr(rebuild.os, "replace", flaky)
     monkeypatch.setattr(rebuild.time, "sleep", lambda s: None)
-    rebuild._set_job("running", "Checking…")
+    rebuild._set_job("norssit", "running", "Checking…")
     assert len(attempts) == 2
-    assert rebuild.read_job()["message"] == "Checking…"
+    assert rebuild.read_job("norssit")["message"] == "Checking…"

@@ -9,6 +9,10 @@ Instead this builds into a fresh versioned collection and, only once it has fini
 points a Qdrant alias at it. Readers address the alias, so the switch is atomic and a
 failed build leaves the previous index serving untouched.
 
+Each dataset has its own index (alias ``<id>__docs``), job file and rebuild: rebuilding
+one never touches another's collection, files or job. One rebuild runs at a time per
+instance (a global lock), since they share the embedding model.
+
 Job state lives in a file rather than process memory: the app can run under several
 uvicorn workers, and a status request may well land on a different worker from the one
 that started the job.
@@ -18,6 +22,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import traceback
@@ -36,18 +41,17 @@ from sparql_llm.indexing.preflight import run_preflight
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.indexing.void_gen import VoidError, generate_void
 from sparql_llm.migration import migrate_configured
-from sparql_llm.project import Project, discard_build, promote, read_projects, reload_projects
+from sparql_llm.project import Project, ProjectError, discard_build, load_project, promote, reload_projects
 from sparql_llm.utils import EndpointsMetadataManager, logger
 
 
-
-def job_file() -> Path:
-    """Job status, shared across workers. Written atomically; safe to read at any moment."""
-    return Path(settings.data_dir) / "reindex_job.json"
+def job_file(project_id: str) -> Path:
+    """A dataset's rebuild status, shared across workers. Written atomically; safe to read at any moment."""
+    return Path(settings.data_dir) / project_id / "reindex_job.json"
 
 
 def lock_file() -> Path:
-    """Held for the duration of a rebuild so two admins clicking at once cannot both run one."""
+    """Held for the duration of any rebuild: one at a time per instance, whichever dataset."""
     return Path(settings.data_dir) / "reindex.lock"
 
 
@@ -76,28 +80,29 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
             time.sleep(0.1)
 
 
-def read_job() -> dict[str, Any]:
-    """Current (or last) rebuild job status. Always returns a usable dict."""
-    if not job_file().exists():
+def read_job(project_id: str) -> dict[str, Any]:
+    """A dataset's current (or last) rebuild job status. Always returns a usable dict."""
+    path = job_file(project_id)
+    if not path.exists():
         return {"state": "idle", "message": "No rebuild has been run yet."}
     try:
-        return json.loads(job_file().read_text(encoding="utf-8"))
+        return json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {"state": "unknown", "message": "Job status file could not be read."}
 
 
-def _set_job(state: str, message: str, **extra: Any) -> None:
-    payload = {"state": state, "message": message, "updated_at": _now(), **extra}
-    _write_json_atomic(job_file(), payload)
-    logger.info("Reindex job: %s — %s", state, message)
+def _set_job(project_id: str, state: str, message: str, **extra: Any) -> None:
+    payload = {"state": state, "message": message, "updated_at": _now(), "dataset": project_id, **extra}
+    _write_json_atomic(job_file(project_id), payload)
+    logger.info("Reindex job %s: %s — %s", project_id, state, message)
 
 
-def _acquire_lock() -> bool:
-    """Take the rebuild lock. Breaks a lock left behind by a dead job."""
+def _acquire_lock(project_id: str) -> bool:
+    """Take the rebuild lock for this dataset. Breaks a lock left behind by a dead job."""
     lock_file().parent.mkdir(parents=True, exist_ok=True)
     try:
         fd = os.open(lock_file(), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, f"{os.getpid()} {_now()}".encode())
+        os.write(fd, f"{os.getpid()} {_now()} {project_id}".encode())
         os.close(fd)
         return True
     except FileExistsError:
@@ -108,8 +113,17 @@ def _acquire_lock() -> bool:
         if age > STALE_JOB_SECONDS:
             logger.warning("Breaking a stale reindex lock (%.0fs old)", age)
             _release_lock()
-            return _acquire_lock()
+            return _acquire_lock(project_id)
         return False
+
+
+def running_dataset() -> str:
+    """The dataset whose rebuild holds the lock ("" when none, or an old-style lock)."""
+    try:
+        parts = lock_file().read_text(encoding="utf-8").split()
+    except OSError:
+        return ""
+    return parts[2] if len(parts) > 2 else ""
 
 
 def _release_lock() -> None:
@@ -117,11 +131,6 @@ def _release_lock() -> None:
         lock_file().unlink()
     except FileNotFoundError:
         pass
-
-
-def _live_alias() -> str:
-    """The name readers query. Retrieval and the MCP server both use this."""
-    return settings.docs_collection_name
 
 
 def alias_for(project: Project) -> str:
@@ -199,47 +208,83 @@ def _project_headline(project: Project, report: dict[str, Any], fingerprint: Fin
     return f"{project.label}: {' · '.join(bits)}."
 
 
-def rebuild_index_with_alias() -> dict[str, Any]:
-    """Run the onboarding pipeline, build a new index, then swap the alias to it.
+def load_candidate(project_id: str) -> Project:
+    """The dataset as Check and Rebuild see it: uploaded files over live ones."""
+    from sparql_llm.datasets import list_dataset_ids
 
-    Blocking; call from a worker thread. It runs on the candidate projects (uploaded files
-    over live ones) and writes everything it generates to each project's next/ folder. Per
-    project: preflight checks, curator example sync, VoID generation, validator schema,
-    entity names; then once: the index and the alias swap. Only then are next/ and the
-    uploaded files promoted to live and the projects reloaded. Any error raises
-    RebuildStopped before the swap; the live index and every live file stay as they were.
+    if project_id not in list_dataset_ids():
+        raise RebuildStopped(f"There is no dataset '{project_id}'.")
+    try:
+        return load_project(Path(settings.data_dir), project_id, candidate=True)
+    except ProjectError as exc:
+        raise RebuildStopped(str(exc)) from exc
 
-    An alias cannot share a name with a real collection, so the first run has to retire the
-    original same-named collection. That is the one moment of downtime, and it lasts a
-    single Qdrant call rather than the length of a rebuild.
+
+def rebuild_index_with_alias(project_id: str) -> dict[str, Any]:
+    """Run the onboarding pipeline for one dataset, build its new index, then swap its alias.
+
+    Blocking; call from a worker thread. It runs on the candidate project (uploaded files
+    over live ones) and writes everything it generates to its next/ folder: preflight
+    checks, curator example sync, VoID generation, validator schema, entity names, the
+    index and the alias swap. Only then are next/ and the uploaded files promoted to live
+    and the projects reloaded. Any error raises RebuildStopped before the swap; the live
+    index and every live file stay as they were. No other dataset is read or written.
     """
     migrate_configured()
-    projects, problems = read_projects(candidates=True)
-    for project in projects:
-        discard_build(project)
-        project.build_dir.mkdir(parents=True, exist_ok=True)
+    project = load_candidate(project_id)
+    discard_build(project)
+    project.build_dir.mkdir(parents=True, exist_ok=True)
     try:
-        return _rebuild(projects, problems)
+        return _rebuild(project)
     finally:
         # After a promotion next/ is already gone; after a failure this drops what was built.
-        for project in projects:
-            discard_build(project)
+        discard_build(project)
 
 
-def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any]:
-    if problems:
-        raise RebuildStopped(" ".join(problems.values()))
-    if not projects:
-        raise RebuildStopped("No project is configured for this instance (projects in the install settings).")
-    alias = _live_alias()
+def _legacy_collections(existing: list[str]) -> list[str]:
+    """The single-dataset install's versioned collections: "<docs_collection_name>-YYYYmmdd-HHMMSS"."""
+    pattern = re.compile(re.escape(settings.docs_collection_name) + r"-\d{8}-\d{6}")
+    return [name for name in existing if pattern.fullmatch(name)]
+
+
+def _retire_legacy_index(project: Project) -> list[str]:
+    """Once the first dataset has its own alias, drop the single-dataset install's index.
+
+    Only the exact legacy names: the alias and its timestamped collections. A prefix match
+    could catch another dataset whose id starts with the legacy name.
+    """
+    from sparql_llm.datasets import list_dataset_ids
+
+    ids = list_dataset_ids()
+    if not ids or ids[0] != project.id:
+        return []
+    removed = []
+    legacy = settings.docs_collection_name
+    try:
+        if legacy in _aliases():
+            qdrant_client.update_collection_aliases(
+                change_aliases_operations=[models.DeleteAliasOperation(delete_alias=models.DeleteAlias(alias_name=legacy))]
+            )
+        existing = _collections()
+        for name in ([legacy] if legacy in existing else []) + _legacy_collections(existing):
+            qdrant_client.delete_collection(name)
+            removed.append(name)
+    except Exception as exc:
+        logger.warning("Could not remove the single-dataset index %s: %s", legacy, exc)
+    return removed
+
+
+def _rebuild(project: Project) -> dict[str, Any]:
+    projects = [project]
+    alias = alias_for(project)
     version = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    target = f"{alias}-{version}"
+    target = versioned_collection(project, version)
     reports: dict[str, dict[str, Any]] = {p.id: {} for p in projects}
 
     # 1. Check every project first: a misconfigured one must not produce a running bot
     #    that answers from the wrong data or schema.
     for project in projects:
-        _set_job("running", f"{project.label}: checking the configuration…", collection=target)
+        _set_job(project.id, "running", f"{project.label}: checking the configuration…", collection=target)
         checks = run_preflight(project)
         reports[project.id]["checks"] = [asdict(c) for c in checks]
         examples_check = next((c for c in checks if c.step == "examples"), None)
@@ -251,7 +296,7 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
     # 2. Pull the curators' examples, so a rebuild always indexes what they have published.
     #    Every query is executed before it is written; the ones that fail are left out and
     #    reported. This never raises — an unreachable repo leaves the previous corpus in place.
-    _set_job("running", "Fetching and testing the curators' example queries…", collection=target)
+    _set_job(project.id, "running", "Fetching and testing the curators' example queries…", collection=target)
     examples_reports = {p.id: sync_curator_examples(p) for p in projects}
     synced = {pid: r for pid, r in examples_reports.items() if not r.get("skipped")}
     examples_report = {
@@ -266,7 +311,7 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
 
     # 3. Describe each endpoint's schema. An unreadable result stops the rebuild.
     for project in projects:
-        _set_job("running", f"{project.label}: describing the schema…", collection=target)
+        _set_job(project.id, "running", f"{project.label}: describing the schema…", collection=target)
         try:
             reports[project.id]["void"] = generate_void(project)
         except VoidError as exc:
@@ -286,7 +331,7 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
 
     # 5. The name → URI lists the entity resolver matches against. Never raises: on failure
     #    the previous list stays in use and the result message says so.
-    _set_job("running", f"{examples_summary}. Collecting entity names…", collection=target)
+    _set_job(project.id, "running", f"{examples_summary}. Collecting entity names…", collection=target)
     entity_reports = {}
     for project in projects:
         entity_reports[project.label] = build_entity_names(project)
@@ -301,7 +346,7 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
         else ""
     )
 
-    _set_job("running", f"{examples_summary}. Building new index '{target}'…", collection=target)
+    _set_job(project.id, "running", f"{examples_summary}. Building new index '{target}'…", collection=target)
 
     # Fingerprint BEFORE building so the recorded snapshot can never claim to be newer
     # than the data the index was actually built from.
@@ -314,20 +359,15 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
     if not doc_count:
         raise RebuildStopped("Indexing produced 0 documents — refusing to swap the alias.")
 
-    _set_job("swapping", f"Built {doc_count} documents. Switching traffic to '{target}'…",
+    _set_job(project.id, "swapping", f"Built {doc_count} documents. Switching traffic to '{target}'…",
              collection=target, documents=doc_count)
 
     existing = _collections()
     previous: str | None = None
 
-    if alias in existing:
-        # First run under the alias scheme: a real collection still occupies the name.
-        logger.info("Retiring the original collection '%s' so the alias can take its name", alias)
-        qdrant_client.delete_collection(alias)
-    else:
-        for name in existing:
-            if name.startswith(f"{alias}-") and name != target:
-                previous = name  # candidate for cleanup after a successful swap
+    for name in existing:
+        if name.startswith(version_prefix(project)) and name != target:
+            previous = name  # candidate for cleanup after a successful swap
 
     try:
         _point_alias(alias, target)
@@ -345,9 +385,9 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
         save_fingerprint(fingerprints[project.id], project)
 
     # Only now is the old index unreachable, so dropping it is safe.
-    removed = []
+    removed = _retire_legacy_index(project)
     for name in _collections():
-        if name.startswith(f"{alias}-") and name != target:
+        if name.startswith(version_prefix(project)) and name != target:
             try:
                 qdrant_client.delete_collection(name)
                 removed.append(name)
@@ -385,6 +425,7 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
         warning += " ⚠ " + " ".join(example_warnings)
     headlines = " ".join(_project_headline(p, reports[p.id], fingerprints[p.id]) for p in projects)
     _set_job(
+        project.id,
         "done",
         f"{headlines} Index rebuilt: {doc_count} documents covering {class_count} classes "
         f"({triples:,} triples), {entities_report['entities']:,} entity names."
@@ -394,16 +435,17 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
     return result
 
 
-def run_rebuild_job() -> None:
+def run_rebuild_job(project_id: str) -> None:
     """The body of a background rebuild: run it, record how it ended, release the lock."""
     try:
-        rebuild_index_with_alias()
+        rebuild_index_with_alias(project_id)
     except RebuildStopped as exc:
-        logger.warning("Index rebuild stopped: %s", exc)
-        _set_job("failed", f"Rebuild stopped: {exc} The previous index is still serving.", error=str(exc))
+        logger.warning("Index rebuild of %s stopped: %s", project_id, exc)
+        _set_job(project_id, "failed", f"Rebuild stopped: {exc} The previous index is still serving.", error=str(exc))
     except Exception as exc:
-        logger.exception("Index rebuild failed")
+        logger.exception("Index rebuild of %s failed", project_id)
         _set_job(
+            project_id,
             "failed",
             f"Rebuild failed: {exc}. The previous index is still serving.",
             error=str(exc),
@@ -413,16 +455,21 @@ def run_rebuild_job() -> None:
         _release_lock()
 
 
-def start_rebuild() -> dict[str, Any]:
-    """Kick off a rebuild in the background. Returns immediately.
+def start_rebuild(project_id: str) -> dict[str, Any]:
+    """Kick off a rebuild of one dataset in the background. Returns immediately.
 
-    Refuses if one is already running — the caller should surface that rather than queueing,
-    since a second rebuild would only redo the first one's work.
+    Refuses while any rebuild is running (one at a time per instance: they share the
+    embedding model) and says which dataset's; the caller surfaces that rather than queueing.
     """
-    if not _acquire_lock():
-        job = read_job()
-        return {"started": False, "reason": "already-running", "job": job}
+    if not _acquire_lock(project_id):
+        running = running_dataset()
+        return {
+            "started": False,
+            "reason": "already-running",
+            "dataset": running,
+            "job": read_job(running) if running else {},
+        }
 
-    _set_job("running", "Starting rebuild…")
-    threading.Thread(target=run_rebuild_job, name="reindex", daemon=True).start()
-    return {"started": True, "job": read_job()}
+    _set_job(project_id, "running", "Starting rebuild…")
+    threading.Thread(target=run_rebuild_job, args=(project_id,), name=f"reindex-{project_id}", daemon=True).start()
+    return {"started": True, "job": read_job(project_id)}
