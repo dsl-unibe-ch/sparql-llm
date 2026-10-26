@@ -1,14 +1,13 @@
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
 import curies
 import httpx
 import rdflib
 
-from sparql_llm.config import SparqlEndpointLinks
+from sparql_llm.project import Project
 
 THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
@@ -160,9 +159,6 @@ WHERE {
     [] sh:namespace ?namespace ;
         sh:prefix ?prefix .
 } ORDER BY ?prefix"""
-
-ENDPOINTS_METADATA_FILE = Path("data") / "endpoints_metadata.json"
-
 
 def get_prefixes_for_endpoint(
     endpoint_url: str, examples_file: str | None = None, prefixes_map: dict[str, str] | None = None
@@ -335,10 +331,15 @@ def query_sparql(
 
 
 class EndpointsMetadataManager:
-    """Lazy-loading manager for endpoints metadata."""
+    """Lazy-loading manager for the endpoints' prefixes and classes schema.
 
-    def __init__(self, endpoints: list[SparqlEndpointLinks], auto_init: bool = True) -> None:
-        self._endpoints = endpoints
+    Each project caches its own metadata in ``project.prefixes_path``; the manager merges
+    all projects in memory. Without an explicit list it follows the project registry, so
+    a project reloaded after a rebuild is picked up.
+    """
+
+    def __init__(self, projects: list[Project] | None = None, auto_init: bool = True) -> None:
+        self._fixed_projects = projects
         self._prefixes_map: dict[str, str] = {}
         self._void_dict: EndpointsSchemaDict = {}
         self._initialized = False
@@ -346,25 +347,33 @@ class EndpointsMetadataManager:
             logger.info("Auto-initializing endpoints metadata...")
             self._ensure_loaded()
 
+    @property
+    def _projects(self) -> list[Project]:
+        if self._fixed_projects is not None:
+            return self._fixed_projects
+        from sparql_llm.project import get_projects
+
+        return get_projects()
+
     def _ensure_loaded(self) -> None:
-        """Load metadata if not already loaded."""
+        """Load metadata if not already loaded: each project's cache file, else fetch them all."""
         if self._initialized:
             return
-        # Try loading from file first
+        prefixes_map: dict[str, str] = {}
+        void_dict: EndpointsSchemaDict = {}
         try:
-            with open(ENDPOINTS_METADATA_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-                self._prefixes_map = data.get("prefixes_map", {})
-                self._void_dict = data.get("classes_schema", {})
-                if self._prefixes_map and self._void_dict:
-                    logger.info(
-                        f"💾 Loaded endpoints metadata from {ENDPOINTS_METADATA_FILE.resolve()} "
-                        f"for {len(self._void_dict)} endpoints"
-                    )
-                    self._initialized = True
-                    return
+            for project in self._projects:
+                data = json.loads(project.prefixes_path.read_text(encoding="utf-8"))
+                for prefix, namespace in data.get("prefixes_map", {}).items():
+                    prefixes_map.setdefault(prefix, namespace)
+                void_dict.update(data.get("classes_schema", {}))
+            if prefixes_map and void_dict:
+                logger.info(f"💾 Loaded endpoints metadata for {len(void_dict)} endpoints")
+                self._prefixes_map, self._void_dict = prefixes_map, void_dict
+                self._initialized = True
+                return
         except Exception as e:
-            logger.debug(f"Could not load metadata from {ENDPOINTS_METADATA_FILE}: {e}")
+            logger.debug(f"Could not load cached endpoints metadata: {e}")
 
         self._cache(*self._fetch())
 
@@ -377,34 +386,45 @@ class EndpointsMetadataManager:
         index rebuild calls this. Only this process sees the new schema at once;
         other workers pick it up from the file when they restart.
         """
-        prefixes_map, void_dict = self._fetch()
-        if not any(void_dict.values()):
+        prefixes, schemas = self._fetch()
+        if not any(schema for project_schemas in schemas.values() for schema in project_schemas.values()):
             raise RuntimeError("no classes schema found for any endpoint; the previous schema is kept")
-        self._cache(prefixes_map, void_dict)
+        self._cache(prefixes, schemas)
 
-    def _fetch(self) -> tuple[dict[str, str], "EndpointsSchemaDict"]:
-        """Build the prefixes map and classes schema from the endpoints and their VoID files."""
-        prefixes_map: dict[str, str] = {}
-        void_dict: EndpointsSchemaDict = {}
-        logger.info(f"Fetching metadata for {len(self._endpoints)} endpoints...")
-        for endpoint in self._endpoints:
-            logger.info(f"Fetching {endpoint['endpoint_url']} metadata...")
-            void_file = endpoint.get("void_file")
-            void_dict[endpoint["endpoint_url"]] = get_schema_for_endpoint(endpoint["endpoint_url"], void_file)
-            prefixes_map = get_prefixes_for_endpoint(endpoint["endpoint_url"], endpoint.get("examples_file"), prefixes_map)
+    def _fetch(self) -> tuple[dict[str, dict[str, str]], dict[str, "EndpointsSchemaDict"]]:
+        """Build each project's prefixes map and classes schema from its endpoint and VoID file."""
+        prefixes: dict[str, dict[str, str]] = {}
+        schemas: dict[str, EndpointsSchemaDict] = {}
+        logger.info(f"Fetching metadata for {len(self._projects)} endpoints...")
+        for project in self._projects:
+            logger.info(f"Fetching {project.endpoint_url} metadata...")
+            void_file = str(project.void_path) if project.void_path.is_file() else None
+            schemas[project.id] = {project.endpoint_url: get_schema_for_endpoint(project.endpoint_url, void_file)}
+            prefixes_map = get_prefixes_for_endpoint(project.endpoint_url, None, {})
             # Endpoints that don't support SHACL prefix queries (e.g. Wisski):
             # extract prefixes from the VoID Turtle file's @prefix declarations.
             if void_file:
                 _merge_prefixes_from_turtle(void_file, prefixes_map)
-        return prefixes_map, void_dict
+            prefixes[project.id] = prefixes_map
+        return prefixes, schemas
 
-    def _cache(self, prefixes_map: dict[str, str], void_dict: "EndpointsSchemaDict") -> None:
-        """Write the metadata to the cache file, then swap it in."""
-        with open(ENDPOINTS_METADATA_FILE, "w", encoding="utf-8") as f:
-            json.dump({"prefixes_map": prefixes_map, "classes_schema": void_dict}, f, indent=2)
+    def _cache(self, prefixes: dict[str, dict[str, str]], schemas: dict[str, "EndpointsSchemaDict"]) -> None:
+        """Write each project's metadata to its cache file, then swap the merged view in."""
+        prefixes_map: dict[str, str] = {}
+        void_dict: EndpointsSchemaDict = {}
+        for project in self._projects:
+            project_prefixes, project_schema = prefixes.get(project.id, {}), schemas.get(project.id, {})
+            project.prefixes_path.parent.mkdir(parents=True, exist_ok=True)
+            project.prefixes_path.write_text(
+                json.dumps({"prefixes_map": project_prefixes, "classes_schema": project_schema}, indent=2),
+                encoding="utf-8",
+            )
+            logger.info(f"💾 Cached endpoints metadata to {project.prefixes_path.resolve()}")
+            for prefix, namespace in project_prefixes.items():
+                prefixes_map.setdefault(prefix, namespace)
+            void_dict.update(project_schema)
         self._prefixes_map, self._void_dict = prefixes_map, void_dict
         self._initialized = True
-        logger.info(f"💾 Cached endpoints metadata to {ENDPOINTS_METADATA_FILE.resolve()}")
 
     @property
     def prefixes_map(self) -> dict[str, str]:

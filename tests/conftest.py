@@ -91,6 +91,8 @@ _write_swiss(_SESSION_DATA)
 os.environ["SETTINGS_FILEPATH"] = ""
 os.environ["DATA_DIR"] = str(_SESSION_DATA)
 os.environ["PROJECTS"] = '["swiss-elites"]'
+# Never fetch endpoint metadata over the network while importing modules.
+os.environ["AUTO_INIT"] = "false"
 
 
 def _use_projects(monkeypatch: pytest.MonkeyPatch, data_dir: Path, project_ids: list[str]):

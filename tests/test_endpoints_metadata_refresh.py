@@ -1,6 +1,6 @@
 """The query validator's schema must follow the VoID file, not a stale cache.
 
-The validator reads its classes schema from data/endpoints_metadata.json, which
+The validator reads its classes schema from a cache file (now data/<project>/prefixes.json), which
 was written only when missing and is not tracked by git. On vm7 it was a
 months-old snapshot (it listed the dead sdh-slc:C9 and lacked sdh-slc:C3), so
 every correct marriage query was rejected as using an unknown class, and the
@@ -8,6 +8,7 @@ agent concluded Ernst Brenner had no spouse. The admin rebuild now refreshes it.
 """
 
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -22,8 +23,9 @@ C9 = "https://sdhss.org/ontology/social-life-core/C9"
 
 
 @pytest.fixture
-def stale_cache(tmp_path, monkeypatch: pytest.MonkeyPatch):
-    cache = tmp_path / "endpoints_metadata.json"
+def stale_cache(swiss_project, monkeypatch: pytest.MonkeyPatch):
+    shutil.copy(VOID_FILE, swiss_project.void_path)
+    cache = swiss_project.prefixes_path
     cache.write_text(
         json.dumps(
             {
@@ -33,7 +35,6 @@ def stale_cache(tmp_path, monkeypatch: pytest.MonkeyPatch):
         ),
         encoding="utf-8",
     )
-    monkeypatch.setattr(utils, "ENDPOINTS_METADATA_FILE", cache)
     # Prefixes come from the VoID file here; do not ask the live endpoint.
     monkeypatch.setattr(
         utils, "get_prefixes_for_endpoint", lambda url, examples_file=None, prefixes_map=None: prefixes_map or {}
@@ -42,8 +43,7 @@ def stale_cache(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _manager() -> EndpointsMetadataManager:
-    endpoint = {"label": "Swiss Elites", "endpoint_url": ENDPOINT, "void_file": VOID_FILE}
-    return EndpointsMetadataManager([endpoint], auto_init=False)  # type: ignore[list-item]
+    return EndpointsMetadataManager(auto_init=False)
 
 
 def test_the_cache_file_is_used_until_refreshed(stale_cache):

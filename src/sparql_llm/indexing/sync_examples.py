@@ -2,8 +2,8 @@
 
 The curators own the examples: they know the data, and asking them to work in this
 repository would put the material behind a fork-and-pull-request loop they have no
-reason to learn. So their file stays in ``lod4hss-projects/elites-suisses`` and a
-rebuild fetches it.
+reason to learn. So their files stay in their own repository (the project's
+``curator_examples`` entry) and a rebuild fetches them.
 
 The one thing that must not be automated away is the check. Example queries are the
 highest-leverage part of the retrieval corpus — the assistant copies their shape — and
@@ -31,40 +31,23 @@ from typing import Any
 
 import httpx
 
-from sparql_llm.config import settings
-from sparql_llm.loaders.sparql_examples_md_loader import PREFIX_TYPO_FIXES
+from sparql_llm.project import CuratorExamples, Project, get_project, get_projects
 from sparql_llm.utils import logger, query_sparql
 
-#: The curators' examples folder. Every Markdown file in it except the readme is a source,
-#: so a file they add is picked up on the next rebuild without a change here. Their
-#: repository is public, so no token is needed; ``main`` rather than a pinned sha because
-#: the point is to pick up their edits.
-CURATOR_REPO = "lod4hss-projects/elites-suisses"
-CURATOR_FOLDER = "llm_documentation/SPARQL_queries_examples"
-CURATOR_LISTING_URL = f"https://api.github.com/repos/{CURATOR_REPO}/contents/{CURATOR_FOLDER}?ref=main"
-_RAW_BASE = f"https://raw.githubusercontent.com/{CURATOR_REPO}/main/{CURATOR_FOLDER}/"
+#: The curators' examples folder comes from the project's ``curator_examples`` entry. Every
+#: Markdown file in it except the readme is a source, so a file they add is picked up on
+#: the next rebuild without a change here. Their repository must be public, so no token is
+#: needed; a branch rather than a pinned sha because the point is to pick up their edits.
 
-#: Used only when the folder cannot be listed (GitHub allows 60 unauthenticated API
-#: calls per hour per IP): the files known on 2026-10-09.
-CURATOR_SOURCES: tuple[str, ...] = tuple(
-    _RAW_BASE + name
-    for name in (
-        "query_birth_death.md",
-        "query_examples.md",
-        "query_family_light.md",
-        "query_gender_light.md",
-        "query_geocoordinates.md",
-        "query_geoplace_type.md",
-        "query_membership.md",
-        "query_obtaining_study_title.md",
-    )
-)
 
-#: The synced material is written here rather than into the curated file, which is
-#: git-tracked: rewriting it during a rebuild would leave the server's working tree dirty
-#: for the next `git pull`. The curators' repository is the audit trail, and `data/*` is
-#: gitignored with a short whitelist, so this path is ignored automatically.
-SYNCED_SUFFIX = "-synced"
+def listing_url(config: CuratorExamples) -> str:
+    return f"https://api.github.com/repos/{config.github_repo}/contents/{config.folder}?ref={config.branch}"
+
+
+#: The synced material is written to ``project.synced_examples_path`` rather than into the
+#: curated file, which is git-tracked: rewriting it during a rebuild would leave the
+#: server's working tree dirty for the next `git pull`. The curators' repository is the
+#: audit trail, and generated project files are gitignored.
 
 _SECTION = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _SPARQL_BLOCK = re.compile(r"```\s*sparql\s*\n(.*?)```", re.DOTALL)
@@ -143,13 +126,13 @@ def parse_examples(text: str, source: str = "") -> list[Example]:
     return examples
 
 
-def normalise_query(query: str) -> str:
-    """Repair the prefix mistakes the curators' file has carried for months.
+def normalise_query(query: str, repairs: dict[str, str]) -> str:
+    """Repair the prefix mistakes the curators' files carry (the project's ``prefix_repairs``).
 
-    Reuses the same table the Markdown loader applies at index time, so a query that
-    survives this is the query that gets indexed.
+    The Markdown loader applies the same table at index time, so a query that survives
+    this is the query that gets indexed.
     """
-    for wrong, right in PREFIX_TYPO_FIXES.items():
+    for wrong, right in repairs.items():
         query = query.replace(wrong, right)
     return query
 
@@ -198,16 +181,6 @@ def render_examples(examples: list[Example]) -> str:
     return "\n".join(parts)
 
 
-def synced_examples_path(curated_file: str | Path) -> Path:
-    """Where the curators' synced examples are written, beside the curated file.
-
-    A distinct file, never the curated one: a rebuild must not modify anything git
-    tracks on the server.
-    """
-    curated = Path(curated_file)
-    return curated.with_name(f"{curated.stem}{SYNCED_SUFFIX}{curated.suffix}")
-
-
 def _question_key(question: str) -> str:
     """Comparable form of a question: case, spacing and trailing punctuation ignored."""
     return re.sub(r"[^a-z0-9]+", " ", question.lower()).strip()
@@ -250,16 +223,16 @@ def fetch(url: str, client: httpx.Client | None = None) -> str:
             client.close()
 
 
-def discover_sources(client: httpx.Client | None = None) -> tuple[tuple[str, ...], str]:
+def discover_sources(config: CuratorExamples, client: httpx.Client | None = None) -> tuple[tuple[str, ...], str]:
     """List the curators' example files. Returns (raw URLs, note).
 
-    Falls back to ``CURATOR_SOURCES`` when the listing fails, and says so in the note,
-    so a rate-limited rebuild still syncs the files we know about.
+    Returns no URLs when the listing fails or is empty, and says why in the note; the
+    caller then keeps the previously synced examples.
     """
     owned = client is None
     client = client or httpx.Client(follow_redirects=True, timeout=30)
     try:
-        response = client.get(CURATOR_LISTING_URL, headers={"Accept": "application/vnd.github+json"})
+        response = client.get(listing_url(config), headers={"Accept": "application/vnd.github+json"})
         response.raise_for_status()
         urls = tuple(
             sorted(
@@ -271,32 +244,33 @@ def discover_sources(client: httpx.Client | None = None) -> tuple[tuple[str, ...
             )
         )
         if not urls:
-            return CURATOR_SOURCES, "folder listing was empty; used the known file list"
+            return (), f"the curators' folder {config.folder} has no example files"
         return urls, ""
     except Exception as exc:
-        logger.warning("Example sync: could not list %s (%s); using the known file list", CURATOR_FOLDER, exc)
-        return CURATOR_SOURCES, f"could not list the curators' folder ({type(exc).__name__}); used the known file list"
+        logger.warning("Example sync: could not list %s (%s)", config.folder, exc)
+        return (), f"could not list the curators' folder {config.folder} ({type(exc).__name__})"
     finally:
         if owned:
             client.close()
 
 
 def sync_curator_examples(
+    project: Project,
     sources: tuple[str, ...] | None = None,
-    target: str | Path | None = None,
-    endpoint: str | None = None,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Fetch, validate and splice the curators' examples. Never raises.
 
     A rebuild calls this, so a failure here must degrade rather than abort: if their
     repository or the endpoint is unreachable, the corpus keeps whatever was synced last
-    time and the report says so.
+    time and the report says so. Projects without ``curator_examples`` are skipped.
     """
-    endpoint = endpoint or settings.endpoints[0]["endpoint_url"]
-    curated_path = Path(target) if target else Path(settings.endpoints[0]["examples_file"])
-    target_path = synced_examples_path(curated_path)
+    config = project.curator_examples
+    endpoint = project.endpoint_url
+    curated_path = project.examples_path
+    target_path = project.synced_examples_path
     report: dict[str, Any] = {
+        "skipped": config is None,
         "accepted": 0,
         "rejected": [],
         "skipped_as_curated": [],
@@ -306,10 +280,17 @@ def sync_curator_examples(
         "note": "",
     }
 
+    if config is None:
+        report["note"] = "no curator example sync configured"
+        return report
+
     parsed: list[Example] = []
     with httpx.Client(follow_redirects=True, timeout=30) as client:
         if sources is None:
-            sources, report["note"] = discover_sources(client)
+            sources, report["note"] = discover_sources(config, client)
+            if not sources:
+                report["error"] = f"{report['note']}; the previously synced examples are kept"
+                return report
         for url in sources:
             try:
                 text = fetch(url, client)
@@ -322,7 +303,7 @@ def sync_curator_examples(
             parsed.extend(found)
 
     for example in parsed:
-        example.query = normalise_query(example.query)
+        example.query = normalise_query(example.query, project.prefix_repairs)
 
     curated = curated_path.read_text(encoding="utf-8") if curated_path.exists() else ""
     parsed, already_ours = drop_already_curated(parsed, curated)
@@ -346,10 +327,9 @@ def sync_curator_examples(
 
     header = (
         "<!-- Generated by sparql_llm.indexing.sync_examples — do not edit.\n"
-        "     Source of truth: lod4hss-projects/elites-suisses, "
-        "llm_documentation/SPARQL_queries_examples/\n"
+        f"     Source of truth: {config.github_repo}, {config.folder}/\n"
         "     Every query below was executed against the endpoint before being written. -->\n\n"
-        "# Elites Suisses — example queries synced from the curators\n\n"
+        f"# {project.label} — example queries synced from the curators\n\n"
     )
     # Written even when empty: the file mirrors what they currently publish, so an
     # example they delete or break disappears from our corpus on the next rebuild
@@ -385,10 +365,12 @@ def main() -> int:
             stream.reconfigure(encoding="utf-8", errors="replace")
 
     parser = argparse.ArgumentParser(description="Sync example queries from the curators' repo")
+    parser.add_argument("--project", default=None, help="Project id (defaults to the first project)")
     parser.add_argument("--dry-run", action="store_true", help="Validate but do not write")
     args = parser.parse_args()
 
-    report = sync_curator_examples(dry_run=args.dry_run)
+    project = get_project(args.project) if args.project else get_projects()[0]
+    report = sync_curator_examples(project, dry_run=args.dry_run)
     if report.get("note"):
         print(f"  note: {report['note']}")
     for source in report["sources"]:

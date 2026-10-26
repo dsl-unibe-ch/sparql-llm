@@ -23,7 +23,7 @@ from sparql_llm.loaders.ontology_profiles_loader import (
     fetch_ontology_terms,
     fetch_shacl_shapes,
 )
-from sparql_llm.indexing.sync_examples import synced_examples_path
+from sparql_llm.project import get_projects
 from sparql_llm.loaders.sparql_info_loader import GENERAL_INFO_DOC_TYPE
 from sparql_llm.utils import EndpointsMetadataManager, get_prefix_converter
 
@@ -49,9 +49,7 @@ def _hide_md_examples_file(endpoints: list[SparqlEndpointLinks]) -> list[SparqlE
 
 
 # Global instance, metadata loads lazily on first property access
-endpoints_metadata = EndpointsMetadataManager(
-    _hide_md_examples_file(settings.endpoints), settings.auto_init
-)
+endpoints_metadata = EndpointsMetadataManager(auto_init=settings.auto_init)
 
 # TODO: Getting `TypeError: cannot pickle '_thread.RLock' object` when doing `QdrantVectorStore.from_existing_collection(client=qdrant_client)`
 qdrant_client = (
@@ -238,7 +236,8 @@ def init_vectordb(collection_name: str | None = None) -> int:
             # endpoint-tested by sync_examples at the start of every rebuild. A separate
             # gitignored file so a rebuild never dirties the server's working tree; absent
             # on a first run or when their repository was unreachable, which is not fatal.
-            synced_file = synced_examples_path(examples_file)
+            project = next(p for p in get_projects() if p.endpoint_url == endpoint["endpoint_url"])
+            synced_file = project.synced_examples_path
             if synced_file.exists():
                 synced_docs = SparqlExamplesMdLoader(
                     synced_file,

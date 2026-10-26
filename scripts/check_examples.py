@@ -30,7 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from sparql_llm.config import settings
+from sparql_llm.project import get_project, get_projects
 from sparql_llm.utils import query_sparql
 
 # Same conventions the Markdown loader expects, so what this validates is what
@@ -97,11 +97,13 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--file", default=None, help="Markdown examples file to check")
     parser.add_argument("--endpoint", default=None, help="SPARQL endpoint URL")
+    parser.add_argument("--project", default=None, help="Project id (defaults to the first project)")
     parser.add_argument("--verbose", action="store_true", help="Show the first row of each result")
     args = parser.parse_args()
 
-    endpoint = args.endpoint or settings.endpoints[0]["endpoint_url"]
-    path = Path(args.file) if args.file else Path(settings.endpoints[0]["examples_file"])
+    project = get_project(args.project) if args.project else get_projects()[0]
+    endpoint = args.endpoint or project.endpoint_url
+    path = Path(args.file) if args.file else project.examples_path
     if not path.exists():
         print(f"Examples file not found: {path}", file=sys.stderr)
         return 2

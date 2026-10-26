@@ -33,13 +33,20 @@ from sparql_llm.indexing.entity_names import build_entity_names
 from sparql_llm.indexing.index_resources import endpoints_metadata, init_vectordb, qdrant_client
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.migration import migrate_configured
+from sparql_llm.project import get_projects
 from sparql_llm.utils import logger
 
-#: Job status, shared across workers. Written atomically; safe to read at any moment.
-JOB_FILE = Path("data") / "reindex_job.json"
 
-#: Held for the duration of a rebuild so two admins clicking at once cannot both run one.
-LOCK_FILE = Path("data") / "reindex.lock"
+
+def job_file() -> Path:
+    """Job status, shared across workers. Written atomically; safe to read at any moment."""
+    return Path(settings.data_dir) / "reindex_job.json"
+
+
+def lock_file() -> Path:
+    """Held for the duration of a rebuild so two admins clicking at once cannot both run one."""
+    return Path(settings.data_dir) / "reindex.lock"
+
 
 #: A rebuild that has not reported progress for this long is presumed dead (worker killed,
 #: container restarted) and its lock may be broken.
@@ -60,31 +67,31 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 def read_job() -> dict[str, Any]:
     """Current (or last) rebuild job status. Always returns a usable dict."""
-    if not JOB_FILE.exists():
+    if not job_file().exists():
         return {"state": "idle", "message": "No rebuild has been run yet."}
     try:
-        return json.loads(JOB_FILE.read_text(encoding="utf-8"))
+        return json.loads(job_file().read_text(encoding="utf-8"))
     except Exception:
         return {"state": "unknown", "message": "Job status file could not be read."}
 
 
 def _set_job(state: str, message: str, **extra: Any) -> None:
     payload = {"state": state, "message": message, "updated_at": _now(), **extra}
-    _write_json_atomic(JOB_FILE, payload)
+    _write_json_atomic(job_file(), payload)
     logger.info("Reindex job: %s — %s", state, message)
 
 
 def _acquire_lock() -> bool:
     """Take the rebuild lock. Breaks a lock left behind by a dead job."""
-    LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lock_file().parent.mkdir(parents=True, exist_ok=True)
     try:
-        fd = os.open(LOCK_FILE, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        fd = os.open(lock_file(), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         os.write(fd, f"{os.getpid()} {_now()}".encode())
         os.close(fd)
         return True
     except FileExistsError:
         try:
-            age = time.time() - LOCK_FILE.stat().st_mtime
+            age = time.time() - lock_file().stat().st_mtime
         except OSError:
             return False
         if age > STALE_JOB_SECONDS:
@@ -96,7 +103,7 @@ def _acquire_lock() -> bool:
 
 def _release_lock() -> None:
     try:
-        LOCK_FILE.unlink()
+        lock_file().unlink()
     except FileNotFoundError:
         pass
 
@@ -129,6 +136,7 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     single Qdrant call rather than the length of a rebuild.
     """
     migrate_configured()
+    projects = get_projects()
     alias = _live_alias()
     version = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     target = f"{alias}-{version}"
@@ -139,8 +147,16 @@ def rebuild_index_with_alias() -> dict[str, Any]:
     # an example that returns nothing is indistinguishable to the model from one that
     # works. This never raises — an unreachable repo leaves the previous corpus in place.
     _set_job("running", "Fetching and testing the curators' example queries…", collection=target)
-    examples_report = sync_curator_examples()
-    examples_summary = format_report(examples_report)
+    examples_reports = {p.id: sync_curator_examples(p) for p in projects}
+    synced = {pid: r for pid, r in examples_reports.items() if not r.get("skipped")}
+    examples_report = {
+        "accepted": sum(r["accepted"] for r in synced.values()),
+        "rejected": [rej for r in synced.values() for rej in r["rejected"]],
+        "error": "; ".join(r["error"] for r in synced.values() if r["error"]),
+    }
+    examples_summary = (
+        "; ".join(format_report(r) for r in synced.values()) if synced else "No curator example sync configured"
+    )
     logger.info("Example sync: %s", examples_summary)
 
     # The name → URI list the entity resolver matches against. Never raises: on failure
@@ -153,7 +169,7 @@ def rebuild_index_with_alias() -> dict[str, Any]:
         else ""
     )
 
-    # Refresh the query validator's schema (cached in data/endpoints_metadata.json) from
+    # Refresh the query validator's schema (cached in each project's prefixes.json) from
     # the same VoID the index is built from, so it never validates against a stale copy.
     # A failure here keeps the previous schema and is reported with the result.
     schema_warning = ""
@@ -167,7 +183,9 @@ def rebuild_index_with_alias() -> dict[str, Any]:
 
     # Fingerprint BEFORE building so the recorded snapshot can never claim to be newer
     # than the data the index was actually built from.
-    fingerprint = take_fingerprint()
+    fingerprints = {p.id: take_fingerprint(p) for p in projects}
+    triples = sum(fp.triples for fp in fingerprints.values())
+    class_count = sum(len(fp.classes) for fp in fingerprints.values())
 
     doc_count = init_vectordb(collection_name=target)
     if not doc_count:
@@ -200,7 +218,8 @@ def rebuild_index_with_alias() -> dict[str, Any]:
             ]
         )
 
-    save_fingerprint(fingerprint)
+    for project in projects:
+        save_fingerprint(fingerprints[project.id], project)
 
     # Only now is the old index unreachable, so dropping it is safe.
     removed = []
@@ -217,8 +236,8 @@ def rebuild_index_with_alias() -> dict[str, Any]:
         "documents": doc_count,
         "removed": removed,
         "previous": previous,
-        "triples": fingerprint.triples,
-        "classes": len(fingerprint.classes),
+        "triples": triples,
+        "classes": class_count,
         "examples_accepted": examples_report["accepted"],
         "entities": entities_report["entities"],
         "examples_rejected": examples_report["rejected"],
@@ -231,8 +250,8 @@ def rebuild_index_with_alias() -> dict[str, Any]:
         warning = f" ⚠ {examples_summary}"
     _set_job(
         "done",
-        f"Index rebuilt: {doc_count} documents covering {len(fingerprint.classes)} classes "
-        f"({fingerprint.triples:,} triples), {entities_report['entities']:,} entity names."
+        f"Index rebuilt: {doc_count} documents covering {class_count} classes "
+        f"({triples:,} triples), {entities_report['entities']:,} entity names."
         f"{warning}{schema_warning}{entities_warning}",
         **result,
     )

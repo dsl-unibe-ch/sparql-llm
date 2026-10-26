@@ -119,6 +119,16 @@ class Project(BaseModel):
         }
 
 
+def graph_pattern(graphs: list[str], pattern: str) -> str:
+    """Wrap a triple pattern for the project's graphs: none = default graph, one, or several."""
+    if not graphs:
+        return pattern
+    if len(graphs) == 1:
+        return f"GRAPH <{graphs[0]}> {{ {pattern} }}"
+    values = " ".join(f"<{g}>" for g in graphs)
+    return f"GRAPH ?g {{ {pattern} }} VALUES ?g {{ {values} }}"
+
+
 def describe_validation_error(err: ValidationError) -> list[str]:
     """Pydantic errors as plain ``"<field>: <reason>"`` lines."""
     lines = []

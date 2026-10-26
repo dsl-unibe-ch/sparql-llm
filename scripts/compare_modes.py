@@ -34,7 +34,7 @@ from sparql_llm.utils import query_sparql
 
 ENDPOINT = "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter"
 CHAT_URL = "http://127.0.0.1:8000/chat"
-EXAMPLES = Path("data/elites-suisses-examples.md")
+EXAMPLES = Path("data/swiss-elites/examples.md")
 # Curated questions about "a person" in general: any non-empty answer is acceptable.
 OPEN_ENDED = {2, 13, 14, 15, 17, 18}
 REFUSAL = re.compile(

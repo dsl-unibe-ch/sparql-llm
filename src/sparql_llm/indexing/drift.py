@@ -18,32 +18,24 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from sparql_llm.config import settings
+from sparql_llm.project import Project, get_projects, graph_pattern
 from sparql_llm.utils import logger, query_sparql
 
-#: Where the fingerprint taken at index time is kept. Lives beside the vector store so a
-#: wiped index and a wiped fingerprint stay in step.
-FINGERPRINT_FILE = Path("data") / "index_fingerprint.json"
-
-#: The graph holding the project data. Note this is still the ``swiss-elites.lod4hss.cloud``
-#: name even though entity URIs are now minted under ``elites-suisses.lod4hss.org`` — the
-#: graph name did not move with the URIs.
-DATA_GRAPH = "https://swiss-elites.lod4hss.cloud/resource/"
-
+# The fingerprint taken at index time is kept in each project's folder (project.fingerprint_path).
+# The graph clause follows the project's graphs: none, one, or several.
 _TRIPLES_QUERY = """
-SELECT (COUNT(*) AS ?n) WHERE { GRAPH <%(g)s> { ?s ?p ?o } }
+SELECT (COUNT(*) AS ?n) WHERE { %(triples)s }
 """
 
 _CLASSES_QUERY = """
-SELECT ?class (COUNT(?s) AS ?n) WHERE { GRAPH <%(g)s> { ?s a ?class } }
+SELECT ?class (COUNT(?s) AS ?n) WHERE { %(classes)s }
 GROUP BY ?class ORDER BY ?class
 """
 
 _PREDICATES_QUERY = """
-SELECT DISTINCT ?p WHERE { GRAPH <%(g)s> { ?s ?p ?o } } ORDER BY ?p
+SELECT DISTINCT ?p WHERE { %(triples)s } ORDER BY ?p
 """
 
 
@@ -74,23 +66,26 @@ class Fingerprint:
         )
 
 
-def take_fingerprint(endpoint_url: str | None = None) -> Fingerprint:
-    """Query the endpoint for its current shape. Three aggregate queries, a few seconds."""
-    endpoint_url = endpoint_url or settings.endpoints[0]["endpoint_url"]
-    subs = {"g": DATA_GRAPH}
+def take_fingerprint(project: Project, fetch=query_sparql) -> Fingerprint:
+    """Query the project's endpoint for its current shape. Three aggregate queries, a few seconds."""
+    endpoint_url = project.endpoint_url
+    post = project.method == "POST"
+    subs = {
+        "triples": graph_pattern(project.graphs, "?s ?p ?o"),
+        "classes": graph_pattern(project.graphs, "?s a ?class"),
+    }
 
     triples = 0
-    rows = query_sparql(_TRIPLES_QUERY % subs, endpoint_url)["results"]["bindings"]
+    rows = fetch(_TRIPLES_QUERY % subs, endpoint_url, post=post)["results"]["bindings"]
     if rows:
         triples = int(rows[0]["n"]["value"])
 
     classes: dict[str, int] = {}
-    for row in query_sparql(_CLASSES_QUERY % subs, endpoint_url)["results"]["bindings"]:
+    for row in fetch(_CLASSES_QUERY % subs, endpoint_url, post=post)["results"]["bindings"]:
         classes[row["class"]["value"]] = int(row["n"]["value"])
 
     predicates = [
-        row["p"]["value"]
-        for row in query_sparql(_PREDICATES_QUERY % subs, endpoint_url)["results"]["bindings"]
+        row["p"]["value"] for row in fetch(_PREDICATES_QUERY % subs, endpoint_url, post=post)["results"]["bindings"]
     ]
 
     return Fingerprint(
@@ -101,15 +96,17 @@ def take_fingerprint(endpoint_url: str | None = None) -> Fingerprint:
     )
 
 
-def save_fingerprint(fp: Fingerprint, path: Path = FINGERPRINT_FILE) -> None:
+def save_fingerprint(fp: Fingerprint, project: Project) -> None:
     """Record the fingerprint that a freshly built index corresponds to."""
+    path = project.fingerprint_path
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(fp.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     logger.info("Saved index fingerprint to %s (%s triples)", path, fp.triples)
 
 
-def load_fingerprint(path: Path = FINGERPRINT_FILE) -> Fingerprint | None:
+def load_fingerprint(project: Project) -> Fingerprint | None:
     """The fingerprint the current index was built from, or None if never recorded."""
+    path = project.fingerprint_path
     if not path.exists():
         return None
     try:
@@ -188,14 +185,26 @@ def compare(indexed: Fingerprint | None, live: Fingerprint) -> dict[str, Any]:
     }
 
 
-def check_drift(endpoint_url: str | None = None) -> dict[str, Any]:
+def check_drift(project: Project | None = None) -> dict[str, Any]:
     """Full check: take a live fingerprint and compare it to the indexed one.
 
     Returns the same shape as :func:`compare`, with ``error`` set instead of ``stale``
-    when the endpoint could not be reached.
+    when the endpoint could not be reached. Defaults to the first project.
     """
+    if project is None:
+        projects = get_projects()
+        if not projects:
+            return {
+                "stale": False,
+                "reason": "no-project",
+                "error": "No project is configured for this instance.",
+                "changes": [],
+                "indexed": None,
+                "live": None,
+            }
+        project = projects[0]
     try:
-        live = take_fingerprint(endpoint_url)
+        live = take_fingerprint(project)
     except Exception as exc:
         logger.warning("Drift check could not reach the endpoint: %s", exc)
         return {
@@ -203,7 +212,7 @@ def check_drift(endpoint_url: str | None = None) -> dict[str, Any]:
             "reason": "endpoint-unreachable",
             "error": str(exc),
             "changes": [],
-            "indexed": (load_fingerprint() or Fingerprint()).to_dict(),
+            "indexed": (load_fingerprint(project) or Fingerprint()).to_dict(),
             "live": None,
         }
-    return compare(load_fingerprint(), live)
+    return compare(load_fingerprint(project), live)

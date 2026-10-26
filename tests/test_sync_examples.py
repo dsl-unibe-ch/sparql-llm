@@ -12,20 +12,25 @@ server never leaves a dirty working tree for the next `git pull` to trip over.
 Executing the queries needs the endpoint and is covered by scripts/check_examples.py.
 """
 
-from pathlib import Path
 
 import httpx
 
 from sparql_llm.indexing.sync_examples import (
-    CURATOR_SOURCES,
     Example,
     discover_sources,
     drop_already_curated,
+    listing_url,
     normalise_query,
     parse_examples,
     render_examples,
-    synced_examples_path,
 )
+from sparql_llm.project import CuratorExamples
+
+REPAIRS = {
+    "sdh-so:": "sdh-short:",
+    "https://sdhss.org/ontology/social-life/": "https://sdhss.org/ontology/social-life-core/",
+}
+CONFIG = CuratorExamples(github_repo="lod4hss-projects/elites-suisses", folder="llm_documentation/SPARQL_queries_examples")
 
 OUR_LAYOUT = """# Heading
 
@@ -100,7 +105,7 @@ def test_a_title_is_derived_when_the_curators_give_none():
 
 def test_normalise_repairs_the_two_standing_prefix_typos():
     q = "PREFIX sdh-slc: <https://sdhss.org/ontology/social-life/>\nSELECT * { ?m sdh-so:P1 ?p }"
-    fixed = normalise_query(q)
+    fixed = normalise_query(q, REPAIRS)
     assert "sdh-so:" not in fixed
     assert "social-life-core/" in fixed
     assert "ontology/social-life/" not in fixed
@@ -108,7 +113,7 @@ def test_normalise_repairs_the_two_standing_prefix_typos():
 
 def test_normalise_leaves_a_correct_query_alone():
     q = "PREFIX sdh-slc: <https://sdhss.org/ontology/social-life-core/>\nSELECT * { ?m sdh-slc:P1 ?p }"
-    assert normalise_query(q) == q
+    assert normalise_query(q, REPAIRS) == q
 
 
 # ── Rendering ─────────────────────────────────────────────────────────────────
@@ -125,15 +130,13 @@ def test_rendered_output_can_be_parsed_back():
 # ── Where the synced file goes ────────────────────────────────────────────────
 
 
-def test_synced_file_sits_beside_the_curated_one_under_a_distinct_name():
-    path = synced_examples_path("data/elites-suisses-examples.md")
-    assert path == Path("data/elites-suisses-examples-synced.md")
+def test_synced_file_sits_in_the_project_folder_under_a_distinct_name(swiss_project):
+    assert swiss_project.synced_examples_path == swiss_project.dir / "examples-synced.md"
 
 
-def test_synced_file_is_never_the_curated_file():
+def test_synced_file_is_never_the_curated_file(swiss_project):
     # The whole point: a rebuild must not rewrite a git-tracked file on the server.
-    for curated in ("data/x.md", "data/elites-suisses-examples.md", "other/y.md"):
-        assert synced_examples_path(curated) != Path(curated)
+    assert swiss_project.synced_examples_path != swiss_project.examples_path
 
 
 # ── Not indexing the same question twice ──────────────────────────────────────
@@ -181,18 +184,25 @@ def _entry(name: str, kind: str = "file") -> dict:
 def test_every_markdown_file_in_their_folder_is_a_source_except_the_readme():
     listing = [_entry("readme.md"), _entry("query_membership.md"), _entry("query_birth_death.md"),
                _entry("notes.txt"), _entry("drafts", kind="dir")]
-    urls, note = discover_sources(_client(lambda request: httpx.Response(200, json=listing)))
+    urls, note = discover_sources(CONFIG, _client(lambda request: httpx.Response(200, json=listing)))
     assert urls == ("https://raw.example/query_birth_death.md", "https://raw.example/query_membership.md")
     assert note == ""
 
 
-def test_a_failed_listing_falls_back_to_the_known_files_and_says_so():
-    urls, note = discover_sources(_client(lambda request: httpx.Response(403, json={"message": "rate limit"})))
-    assert urls == CURATOR_SOURCES
-    assert "known file list" in note
+def test_a_failed_listing_gives_no_sources_and_says_so():
+    urls, note = discover_sources(CONFIG, _client(lambda request: httpx.Response(403, json={"message": "rate limit"})))
+    assert urls == ()
+    assert "could not list" in note
 
 
-def test_an_empty_listing_falls_back_to_the_known_files():
-    urls, note = discover_sources(_client(lambda request: httpx.Response(200, json=[_entry("readme.md")])))
-    assert urls == CURATOR_SOURCES
+def test_an_empty_listing_gives_no_sources():
+    urls, note = discover_sources(CONFIG, _client(lambda request: httpx.Response(200, json=[_entry("readme.md")])))
+    assert urls == ()
     assert note
+
+
+def test_listing_url_comes_from_the_project_config():
+    assert listing_url(CONFIG) == (
+        "https://api.github.com/repos/lod4hss-projects/elites-suisses/contents/"
+        "llm_documentation/SPARQL_queries_examples?ref=main"
+    )
