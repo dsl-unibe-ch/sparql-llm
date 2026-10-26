@@ -215,6 +215,10 @@ def read_projects() -> tuple[list[Project], dict[str, str]]:
 def reload_projects() -> list[Project]:
     """Serve the project files as they are on disk now."""
     global _projects, _problems
+    from sparql_llm.migration import migrate_configured
+
+    # Before anything reads a project folder: the validator metadata loads at import time.
+    migrate_configured()
     _projects, _problems = read_projects()
     for message in _problems.values():
         logging.getLogger("sparql_llm").error(message)

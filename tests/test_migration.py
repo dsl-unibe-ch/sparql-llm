@@ -41,3 +41,26 @@ def test_swiss_project_file_loads():
     project = load_project(Path("data"), "swiss-elites")
     assert len(project.entities.types) == 5
     assert project.prefixes["swel"] == "https://elites-suisses.lod4hss.org/resource/"
+
+
+def test_reading_the_projects_migrates_first(tmp_path: Path, monkeypatch):
+    # At startup the validator's metadata loads at import, before the app's lifespan runs:
+    # the legacy cache must already be in the project folder by then.
+    import json
+
+    from sparql_llm.config import settings
+    from sparql_llm.project import reload_projects
+
+    (tmp_path / "swiss-elites").mkdir()
+    (tmp_path / "swiss-elites" / "project.json").write_text(
+        json.dumps({"id": "swiss-elites", "label": "S", "endpoint_url": "https://x/sparql"}), encoding="utf-8"
+    )
+    (tmp_path / "endpoints_metadata.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(settings, "data_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "projects", ["swiss-elites"])
+    try:
+        reload_projects()
+        assert (tmp_path / "swiss-elites" / "prefixes.json").is_file()
+    finally:
+        monkeypatch.undo()
+        reload_projects()
