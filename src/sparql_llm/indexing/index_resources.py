@@ -1,11 +1,11 @@
 import time
 
+import re
+
 import httpx
-import pandas as pd
 from bs4 import BeautifulSoup
 from sparql_llm.embeddings import create_embedding_model
 from langchain_core.documents import Document
-from markdownify import markdownify
 from qdrant_client import QdrantClient, models
 from qdrant_client.http.models import Distance, VectorParams
 from rdflib import RDF, Dataset, Namespace
@@ -23,29 +23,13 @@ from sparql_llm.loaders.ontology_profiles_loader import (
     fetch_ontology_terms,
     fetch_shacl_shapes,
 )
-from sparql_llm.project import get_projects
+from sparql_llm.project import Project, get_projects
 from sparql_llm.loaders.sparql_info_loader import GENERAL_INFO_DOC_TYPE
 from sparql_llm.utils import EndpointsMetadataManager, get_prefix_converter
 
 SCHEMA = Namespace("http://schema.org/")
-
-
-def _hide_md_examples_file(endpoints: list[SparqlEndpointLinks]) -> list[SparqlEndpointLinks]:
-    """Return a copy of endpoints with any ``.md`` examples_file set to None.
-
-    sparql-llm's prefix discovery (``get_prefixes_for_endpoint``) and
-    ``SparqlVoidShapesLoader`` feed ``examples_file`` to rdflib, which only
-    understands Turtle. For our Markdown examples file we handle the loading
-    ourselves via ``SparqlExamplesMdLoader``; everywhere else, hide it.
-    """
-    safe: list[SparqlEndpointLinks] = []
-    for ep in endpoints:
-        ep_copy: SparqlEndpointLinks = dict(ep)  # type: ignore[assignment]
-        ex = ep_copy.get("examples_file")
-        if ex and ex.endswith(".md"):
-            ep_copy["examples_file"] = None
-        safe.append(ep_copy)
-    return safe
+#: A ``## heading`` and the text up to the next one.
+_DATASET_SECTION = re.compile(r"^##\s+(.+?)\s*$\n(.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
 
 
 # Global instance, metadata loads lazily on first property access
@@ -143,68 +127,109 @@ def load_schemaorg_description(endpoint: SparqlEndpointLinks) -> list[Document]:
     return docs
 
 
-# Which tools can I use for enrichment analysis?
-
-
-def load_expasy_resources_infos(file: str = "expasy_resources_metadata.csv") -> list[Document]:
-    """Get documents for all SIB expasy resources defined in expasy_resources_metadata.csv"""
-    df = pd.read_csv(file)
-    docs: list[Document] = []
-    for _, row in df.iterrows():
-        # Long description of the resource
-        q = f"[{row['title']}]({row['url']}) ({row['category']}): {row['description']}"
-        doc = Document(
-            page_content=q,
-            metadata={
-                "question": q,
-                "iri": row["url"],
-                "doc_type": GENERAL_INFO_DOC_TYPE,
-            },
-        )
-        docs.append(doc)
-
-        # Short description and ontology terms
-        if isinstance(row.get("ontology_terms"), str):
-            q = f"[{row['title']}]({row['url']}) ({row['category']}): {row['short_description']}.\n\n{row['ontology_terms']}"
-            doc = Document(
-                page_content=q,
+def dataset_description_docs(project: Project) -> list[Document]:
+    """One General-information doc per ``##`` section of the project's dataset.md."""
+    if not project.dataset_path.is_file():
+        return []
+    text = project.dataset_path.read_text(encoding="utf-8")
+    docs = []
+    for match in _DATASET_SECTION.finditer(text):
+        heading, body = match.group(1).strip(), match.group(2).strip()
+        if not body:
+            continue
+        docs.append(
+            Document(
+                page_content=heading,
                 metadata={
-                    "question": q,
-                    "iri": row["url"],
+                    "question": heading,
+                    "answer": body,
+                    "endpoint_url": project.endpoint_url,
+                    "iri": project.homepage_url,
                     "doc_type": GENERAL_INFO_DOC_TYPE,
                 },
             )
-            docs.append(doc)
-
-        # Info about the resource maintainers
-        if isinstance(row.get("group_info"), str):
-            q = f"[{row['title']}]({row['url']}): {markdownify(row['group_info'])} License: {row.get('license', 'not specified')}"
-            detail_doc = Document(
-                page_content=q,
-                metadata={
-                    "question": q,
-                    "iri": row["url"],
-                    "doc_type": GENERAL_INFO_DOC_TYPE,
-                },
-            )
-            docs.append(detail_doc)
-
-    q = "How many resources are there in the Expasy catalog?"
-    docs.append(
-        Document(
-            page_content=q,
-            # page_content=f"There are {len(df)} resources in the Expasy catalog",
-            metadata={
-                # "iri": row["url"],
-                "question": q,
-                "answer": str(len(df)),
-                "doc_type": GENERAL_INFO_DOC_TYPE,
-            },
         )
-    )
-
-    print(f"Extracted {len(docs)} documents from {file}")
     return docs
+
+
+def build_project_docs(project: Project) -> list[Document]:
+    """Every retrieval doc for one project: examples, schema, optional ontology, descriptions."""
+    endpoint_url = project.endpoint_url
+    print(f"\n  🔎 Getting metadata for {project.label} at {endpoint_url}")
+    docs: list[Document] = []
+
+    examples_file = project.examples_path
+    if examples_file.suffix == ".md":
+        docs += SparqlExamplesMdLoader(examples_file, endpoint_url, prefix_repairs=project.prefix_repairs).load()
+        # Examples the curators publish in their own repository, refreshed and
+        # endpoint-tested by sync_examples at the start of every rebuild. A separate
+        # gitignored file so a rebuild never dirties the server's working tree; absent
+        # on a first run or when their repository was unreachable, which is not fatal.
+        if project.synced_examples_path.exists():
+            synced_docs = SparqlExamplesMdLoader(
+                project.synced_examples_path, endpoint_url, prefix_repairs=project.prefix_repairs
+            ).load()
+            print(f"  📥 {len(synced_docs)} example doc(s) synced from the curators' repo")
+            docs += synced_docs
+    else:
+        docs += SparqlExamplesLoader(endpoint_url, examples_file=str(examples_file)).load()
+
+    # The OWL application profiles + SHACL shapes (the designed schema behind an SDHSS
+    # mapping), served by the endpoint alongside the data. They supply the human
+    # definitions and property cardinalities the VoID statistics don't carry. Optional.
+    converter = get_prefix_converter(endpoints_metadata.prefixes_map)
+    term_map: dict = {}
+    shape_map: dict = {}
+    if project.ontology_from_endpoint:
+        term_map = fetch_ontology_terms(endpoint_url, converter)
+        shape_map = fetch_shacl_shapes(endpoint_url, converter)
+
+    void_docs: list[Document] = []
+    if project.void_path.is_file():
+        void_docs = SparqlVoidShapesLoader(
+            endpoint_url,
+            prefix_map=endpoints_metadata.prefixes_map,
+            void_file=str(project.void_path),
+            term_map=term_map,
+            shape_map=shape_map,
+            method=project.method,
+        ).load()
+    else:
+        print(f"  ⚠️ No schema file at {project.void_path}; class docs skipped")
+    docs += void_docs
+
+    # Emit standalone docs for the designed classes not yet present in the data, so the
+    # assistant already knows the schema the full database will instantiate. Skip the
+    # classes the VoID already covers to avoid duplicate/competing docs.
+    if term_map or shape_map:
+        covered = {
+            converter.compress(d.metadata["iri"], passthrough=True)
+            for d in void_docs
+            if d.metadata.get("doc_type") == CLASSES_DOC_TYPE and d.metadata.get("iri")
+        }
+        docs += OntologyProfilesLoader(
+            endpoint_url,
+            term_map=term_map,
+            shape_map=shape_map,
+            converter=converter,
+            skip_iris=covered,
+        ).load()
+
+    docs += load_schemaorg_description(project.as_endpoint_links())
+    docs += dataset_description_docs(project)
+    return docs
+
+
+def general_info_docs() -> list[Document]:
+    """The 'which resources does this service cover' doc, linking to the project homepage."""
+    projects = get_projects()
+    homepage = settings.app_homepage_url or (projects[0].homepage_url if projects else None)
+    return SparqlInfoLoader(
+        [p.as_endpoint_links() for p in projects],
+        source_iri=homepage or None,
+        service_label=settings.app_name,
+        org_label=f"from the {settings.app_org}" if settings.app_org else "",
+    ).load()
 
 
 def init_vectordb(collection_name: str | None = None) -> int:
@@ -221,109 +246,9 @@ def init_vectordb(collection_name: str | None = None) -> int:
     target = collection_name or settings.docs_collection_name
     docs: list[Document] = []
 
-    # Gets documents from the SPARQL endpoints
-    for endpoint in settings.endpoints:
-        print(f"\n  🔎 Getting metadata for {endpoint.get('label')} at {endpoint['endpoint_url']}")
-        examples_file = endpoint.get("examples_file")
-        if examples_file and examples_file.endswith(".md"):
-            # LESSH/Elites Suisses: examples are plain Markdown rather than SHACL .ttl.
-            # Swap back to SparqlExamplesLoader once they migrate.
-            docs += SparqlExamplesMdLoader(
-                examples_file,
-                endpoint_url=endpoint["endpoint_url"],
-            ).load()
-            # Examples the curators publish in their own repository, refreshed and
-            # endpoint-tested by sync_examples at the start of every rebuild. A separate
-            # gitignored file so a rebuild never dirties the server's working tree; absent
-            # on a first run or when their repository was unreachable, which is not fatal.
-            project = next(p for p in get_projects() if p.endpoint_url == endpoint["endpoint_url"])
-            synced_file = project.synced_examples_path
-            if synced_file.exists():
-                synced_docs = SparqlExamplesMdLoader(
-                    synced_file,
-                    endpoint_url=endpoint["endpoint_url"],
-                ).load()
-                print(f"  📥 {len(synced_docs)} example doc(s) synced from the curators' repo")
-                docs += synced_docs
-        else:
-            docs += SparqlExamplesLoader(
-                endpoint["endpoint_url"],
-                examples_file=examples_file,
-            ).load()
-
-        # examples_file is hidden from the VoID shapes loader when it's .md —
-        # rdflib can't parse Markdown. See _hide_md_examples_file above.
-        void_examples_file = endpoint.get("examples_file")
-        if void_examples_file and void_examples_file.endswith(".md"):
-            void_examples_file = None
-        # Fetch the OWL application profiles + SHACL shapes (the designed schema behind the
-        # R2RML mapping) that the endpoint serves alongside the data. They supply the human
-        # definitions and property cardinalities the VoID statistics don't carry.
-        converter = get_prefix_converter(endpoints_metadata.prefixes_map)
-        term_map = fetch_ontology_terms(endpoint["endpoint_url"], converter)
-        shape_map = fetch_shacl_shapes(endpoint["endpoint_url"], converter)
-
-        void_docs = SparqlVoidShapesLoader(
-            endpoint["endpoint_url"],
-            prefix_map=endpoints_metadata.prefixes_map,
-            void_file=endpoint.get("void_file"),
-            examples_file=void_examples_file,
-            term_map=term_map,
-            shape_map=shape_map,
-        ).load()
-        docs += void_docs
-
-        # Emit standalone docs for the designed classes not yet present in the data, so the
-        # assistant already knows the schema the full database will instantiate. Skip the
-        # classes the VoID already covers to avoid duplicate/competing docs.
-        if term_map or shape_map:
-            covered = {
-                converter.compress(d.metadata["iri"], passthrough=True)
-                for d in void_docs
-                if d.metadata.get("doc_type") == CLASSES_DOC_TYPE and d.metadata.get("iri")
-            }
-            docs += OntologyProfilesLoader(
-                endpoint["endpoint_url"],
-                term_map=term_map,
-                shape_map=shape_map,
-                converter=converter,
-                skip_iris=covered,
-            ).load()
-
-        docs += load_schemaorg_description(endpoint)
-
-        # NOTE: Manually add infos for UniProt since we cant retrieve it for now. Taken from https://www.uniprot.org/help/about
-        if "sparql.uniprot.org" in endpoint["endpoint_url"]:
-            uniprot_description_question = "What is the SIB resource UniProt about?"
-            docs.append(
-                Document(
-                    page_content=uniprot_description_question,
-                    metadata={
-                        "question": uniprot_description_question,
-                        "answer": """The Universal Protein Resource (UniProt) is a comprehensive resource for protein sequence and annotation data. The UniProt databases are the UniProt Knowledgebase (UniProtKB), the UniProt Reference Clusters (UniRef), and the UniProt Archive (UniParc). The UniProt consortium and host institutions EMBL-EBI, SIB and PIR are committed to the long-term preservation of the UniProt databases.
-
-UniProt is a collaboration between the European Bioinformatics Institute (EMBL-EBI), the SIB Swiss Institute of Bioinformatics and the Protein Information Resource (PIR). Across the three institutes more than 100 people are involved through different tasks such as database curation, software development and support.
-
-EMBL-EBI and SIB together used to produce Swiss-Prot and TrEMBL, while PIR produced the Protein Sequence Database (PIR-PSD). These two data sets coexisted with different protein sequence coverage and annotation priorities. TrEMBL (Translated EMBL Nucleotide Sequence Data Library) was originally created because sequence data was being generated at a pace that exceeded Swiss-Prot's ability to keep up. Meanwhile, PIR maintained the PIR-PSD and related databases, including iProClass, a database of protein sequences and curated families. In 2002 the three institutes decided to pool their resources and expertise and formed the UniProt consortium.
-
-The UniProt consortium is headed by Alex Bateman, Alan Bridge and Cathy Wu, supported by key staff, and receives valuable input from an independent Scientific Advisory Board.
-""",
-                        "endpoint_url": endpoint["endpoint_url"],
-                        "iri": "http://www.uniprot.org/help/about",
-                        "doc_type": GENERAL_INFO_DOC_TYPE,
-                    },
-                )
-            )
-
-    # Add some documents for general information about the resources
-    docs += SparqlInfoLoader(
-        settings.endpoints,
-        source_iri="https://elites-suisses.lod4hss.org/",
-        service_label=settings.app_name,
-        org_label=f"from the {settings.app_org}",
-    ).load()
-
-    # SIB's Expasy resources catalogue is deliberately left out of this corpus.
+    for project in get_projects():
+        docs += build_project_docs(project)
+    docs += general_info_docs()
 
     print(f"Generating embeddings for {len(docs)} documents")
     start_time = time.time()

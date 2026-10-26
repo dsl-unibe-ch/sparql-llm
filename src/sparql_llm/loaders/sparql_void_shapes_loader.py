@@ -24,6 +24,23 @@ def ignore_namespaces(ns_to_ignore: list[str], cls: str) -> bool:
     return any(cls.startswith(ns) for ns in ns_to_ignore)
 
 
+def class_labels_query(class_iris: list[str]) -> str:
+    """Labels and comments of the given classes, however they are typed.
+
+    Accepts ``rdfs:label`` or ``skos:prefLabel``; English first, then untagged, then the rest,
+    so the first label seen per class is the one to use.
+    """
+    values = " ".join(f"<{iri}>" for iri in class_iris)
+    return f"""PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+SELECT DISTINCT ?cls ?label ?comment ?rank WHERE {{
+    VALUES ?cls {{ {values} }}
+    {{ ?cls rdfs:label ?label }} UNION {{ ?cls skos:prefLabel ?label }}
+    OPTIONAL {{ ?cls rdfs:comment ?comment }}
+    BIND(IF(LANGMATCHES(LANG(?label), "en"), 0, IF(LANG(?label) = "", 1, 2)) AS ?rank)
+}} ORDER BY ?cls ?rank"""
+
+
 def get_shex_dict_from_void(
     endpoint_url: str,
     prefix_map: dict[str, str] | None = None,
@@ -32,6 +49,7 @@ def get_shex_dict_from_void(
     examples_file: str | None = None,
     term_map: dict[str, dict] | None = None,
     shape_map: dict[str, dict] | None = None,
+    post: bool = False,
 ) -> dict[str, dict[str, str]]:
     """Get a dict of shex shapes from the VoID description.
 
@@ -90,28 +108,17 @@ def get_shex_dict_from_void(
     if len(shex_dict) == 0:
         return shex_dict
 
-    # Now get labels and comments for all classes
-    get_labels_query = f"""PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-PREFIX owl: <http://www.w3.org/2002/07/owl#>
-SELECT DISTINCT * WHERE {{
-    ?cls a owl:Class ;
-        rdfs:label ?label .
-    OPTIONAL {{
-        ?cls rdfs:comment ?comment .
-    }}
-    VALUES ?cls {{ <{"> <".join(shex_dict.keys())}> }}
-}}"""
-    void_dict = {}
+    # Now get labels and comments for all classes, with the endpoint's own method
     try:
-        label_res = query_sparql(get_labels_query, endpoint_url, post=True, check_service_desc=True)
+        label_res = query_sparql(class_labels_query(list(shex_dict)), endpoint_url, post=post, check_service_desc=True)
         for label_triple in label_res["results"]["bindings"]:
             cls = label_triple["cls"]["value"]
             if cls not in shex_dict:
                 continue
-            shex_dict[cls]["label"] = label_triple["label"]["value"]
+            # Rows come best language first: keep the first label and comment seen.
+            shex_dict[cls].setdefault("label", label_triple["label"]["value"])
             if "comment" in label_triple:
-                # shex_dict[cls]["label"] += f": {label_triple['comment']['value']}"
-                shex_dict[cls]["comment"] = label_triple["comment"]["value"]
+                shex_dict[cls].setdefault("comment", label_triple["comment"]["value"])
     except Exception as e:
         logger.warning(f"Could not retrieve labels for classes in endpoint {endpoint_url}: {e}")
 
@@ -185,6 +192,7 @@ class SparqlVoidShapesLoader(BaseLoader):
         prefix_map: dict[str, str] | None = None,
         term_map: dict[str, dict] | None = None,
         shape_map: dict[str, dict] | None = None,
+        method: str = "GET",
     ):
         """
         Initialize the SparqlVoidShapesLoader.
@@ -201,6 +209,7 @@ class SparqlVoidShapesLoader(BaseLoader):
         self.namespaces_to_ignore = namespaces_to_ignore
         self.term_map = term_map
         self.shape_map = shape_map
+        self.method = method
 
     def load(self) -> list[Document]:
         """Load and return documents from the SPARQL endpoint."""
@@ -213,6 +222,7 @@ class SparqlVoidShapesLoader(BaseLoader):
             self.examples_file,
             term_map=self.term_map,
             shape_map=self.shape_map,
+            post=self.method == "POST",
         )
 
         for cls_uri, shex_shape in shex_dict.items():

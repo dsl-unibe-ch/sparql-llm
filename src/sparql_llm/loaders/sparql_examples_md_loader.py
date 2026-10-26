@@ -1,10 +1,8 @@
 """Loader for SPARQL examples stored as Markdown (natural-language question + ```sparql block).
 
-Stopgap for the Elites Suisses dataset, whose
-``elites_suisses_data/llm_documentation/SPARQL_queries_examples/query_examples.md``
-follows a plain-Markdown convention rather than the SHACL `.ttl` format that
-``SparqlExamplesLoader`` consumes. Once LESSH migrates to SHACL, swap usage for
-the upstream loader.
+Curators write example queries in plain Markdown rather than the SHACL `.ttl` format
+that ``SparqlExamplesLoader`` consumes; this loader reads that convention. A project's
+``prefix_repairs`` fix known prefix typos in those files before indexing.
 """
 
 from __future__ import annotations
@@ -17,21 +15,6 @@ from langchain_core.documents import Document
 from rdflib.plugins.sparql import prepareQuery
 
 from sparql_llm.utils import logger
-
-# Verified live against https://swiss-elites.lod4hss.cloud/wisski/endpoint/default
-# on 2026-05-18. Two known typos in the upstream query_examples.md:
-#   1. `sdh-so:` is undefined — should be `sdh-short:`. The endpoint returns
-#      `400 MALFORMED QUERY: QName 'sdh-so:P1' uses an undefined prefix`.
-#   2. The `sdh-slc:` prefix is declared as `.../social-life/` but the actual
-#      namespace is `.../social-life-core/`. Class IRIs like `sdh-slc:C11` would
-#      otherwise resolve to a non-existent URI and silently match nothing.
-# Both are simple substring replacements (no clash with `social-life-core/`
-# since "social-life/" is not a substring of "social-life-core/"). Remove once
-# LESSH patches the source.
-PREFIX_TYPO_FIXES: dict[str, str] = {
-    "sdh-so:": "sdh-short:",
-    "https://sdhss.org/ontology/social-life/": "https://sdhss.org/ontology/social-life-core/",
-}
 
 _SECTION_PATTERN = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
 _SPARQL_BLOCK_PATTERN = re.compile(r"```\s*sparql\s*\n(.*?)```", re.DOTALL)
@@ -61,9 +44,10 @@ class SparqlExamplesMdLoader(BaseLoader):
     extension and otherwise stay unchanged.
     """
 
-    def __init__(self, file_path: str | Path, endpoint_url: str):
+    def __init__(self, file_path: str | Path, endpoint_url: str, prefix_repairs: dict[str, str] | None = None):
         self.file_path = Path(file_path)
         self.endpoint_url = endpoint_url
+        self.prefix_repairs = prefix_repairs or {}
 
     def load(self) -> list[Document]:
         if not self.file_path.exists():
@@ -121,9 +105,8 @@ class SparqlExamplesMdLoader(BaseLoader):
         starts.append(len(text))
         return [text[starts[i] : starts[i + 1]] for i in range(len(starts) - 1)]
 
-    @staticmethod
-    def _normalize_query(query: str) -> str:
-        """Apply known prefix-typo fixes before the query reaches the index."""
-        for typo, correct in PREFIX_TYPO_FIXES.items():
+    def _normalize_query(self, query: str) -> str:
+        """Apply the project's prefix repairs before the query reaches the index."""
+        for typo, correct in self.prefix_repairs.items():
             query = query.replace(typo, correct)
         return query
