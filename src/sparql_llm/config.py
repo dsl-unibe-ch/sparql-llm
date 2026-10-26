@@ -10,6 +10,7 @@ from typing import Annotated, Any, Required, TypeVar
 
 from dotenv import load_dotenv
 from langchain_core.runnables import RunnableConfig, ensure_config
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import TypedDict
 
@@ -36,25 +37,17 @@ class SparqlEndpointLinks(TypedDict, total=False):
 class Settings(BaseSettings):
     """Define the service settings for the agent that can be set using environment variables."""
 
-    # The list of endpoints that will be indexed and supported by the service
-    endpoints: list[SparqlEndpointLinks] = [
-        {
-            "label": "Elites Suisses",
-            "endpoint_url": "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter",
-            "description": (
-                "Swiss elites knowledge graph (~58,700 persons; biographical data, "
-                "education, marriages, family relations, organisations, mandates) — "
-                "CIDOC CRM + SDHSS (social-life-core, shortcuts) ontologies."
-            ),
-            "void_file": "data/elites-suisses-void.ttl",
-            "examples_file": "data/elites-suisses-examples.md",
-            "homepage_url": "https://elites-suisses.lod4hss.org/",
-        },
-    ]
+    # Folder holding this instance's data: one sub-folder per project, the vector store,
+    # users, logs and job files. A second instance on the same host uses its own folder.
+    data_dir: str = "data"
+
+    # Ids of the projects this instance serves; each is described by <data_dir>/<id>/project.json
+    projects: list[str] = []
 
     # Settings for the vector store and embeddings
     # ⚠️ changing the embedding model or backend requires reindexing the data
-    vectordb_url: str = "data/vectordb"
+    # Left empty, it defaults to <data_dir>/vectordb
+    vectordb_url: str = ""
 
     # Embedding backend: "openai" (remote, e.g. GPUStack) or "local" (fastembed/ONNX in-process).
     # "openai" offloads inference to the GPU server, freeing ~1.5 GB RAM on the VM.
@@ -82,7 +75,7 @@ class Settings(BaseSettings):
 
     # Sparse embeddings are only used for the entities resolution
     sparse_embedding_model: str = "Qdrant/bm25"
-    docs_collection_name: str = "swiss-elites"
+    docs_collection_name: str = "docs"
     entities_collection_name: str = "entities"
 
     # Default settings for the agent that can be changed at runtime
@@ -108,25 +101,24 @@ class Settings(BaseSettings):
     default_seed: int = 42
 
     # Example questions shown in the chat UI, chosen to return results on the current data.
-    example_questions: list[str] = [
-        "How many persons are in the database?",
-        "List 20 persons with their names",
-        "How many birth events are recorded?",
-        "Find persons whose name contains 'Ogi'",
-        "Who are the recorded parents of person X? (give a swel: URI)",
-        "How many persons of each SDHSS class are there?",
-    ]
+    example_questions: list[str] = []
 
-    app_name: str = "Elites Suisses Chat"
+    app_name: str = "SPARQL Chat"
     """The name of the application used for display purposes"""
 
-    app_topics: str = "Swiss elites: biographies, education, family relations, marriages, organisations, mandates"
+    app_topics: str = ""
     """The topics of the SPARQL endpoints indexed by this system, used for MCP tool description."""
 
-    app_org: str = "LESSH — Université de Lausanne / Universität Bern"
+    app_org: str = ""
     """The organization responsible for the application."""
 
-    app_public_host: str = "vm7.dsl.unibe.ch"
+    app_intro: str = ""
+    """Short intro paragraph shown on the chat page (plain text or simple Markdown)."""
+
+    app_homepage_url: str = ""
+    """Homepage of the project behind this instance."""
+
+    app_public_host: str = ""
     """The public host name where the application is deployed, used for MCP transport security settings."""
 
     # Public API key used by the frontend to access the chatbot and prevent abuse from bots
@@ -136,16 +128,17 @@ class Settings(BaseSettings):
     # Optional Sentry error report API key
     sentry_url: str = ""
 
-    logs_folder: str = "./data/logs"
-    logs_filepath: str = "./data/logs/user_questions.log"
+    # Left empty, these default to <data_dir>/logs and <data_dir>/logs/user_questions.log
+    logs_folder: str = ""
+    logs_filepath: str = ""
 
     # Auth settings
     auth_enabled: bool = True
     """Set to False to disable login (useful for local dev without auth)."""
     auth_secret: str = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING"
     """JWT signing secret — override via AUTH_SECRET env var."""
-    auth_db_path: str = "./data/users.db"
-    """Path to the SQLite database file for user accounts."""
+    auth_db_path: str = ""
+    """Path to the SQLite database file for user accounts. Left empty, it defaults to <data_dir>/users.db."""
     admin_email: str = ""
     """Email for the initial admin account created on first run (set via ADMIN_EMAIL env var)."""
     admin_password: str = ""
@@ -159,6 +152,22 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="allow",
     )
+
+    @model_validator(mode="after")
+    def _paths_under_data_dir(self) -> Settings:
+        data_dir = self.data_dir.rstrip("/\\") or "."
+        self.vectordb_url = self.vectordb_url or f"{data_dir}/vectordb"
+        self.auth_db_path = self.auth_db_path or f"{data_dir}/users.db"
+        self.logs_folder = self.logs_folder or f"{data_dir}/logs"
+        self.logs_filepath = self.logs_filepath or f"{self.logs_folder}/user_questions.log"
+        return self
+
+    @property
+    def endpoints(self) -> list[SparqlEndpointLinks]:
+        """The endpoints served by this instance, one per project file."""
+        from sparql_llm.project import get_projects
+
+        return [p.as_endpoint_links() for p in get_projects()]
 
     @property
     def server_url(self) -> str:
@@ -177,11 +186,18 @@ class Settings(BaseSettings):
         Args:
             filepath: The path to the file.
         """
-        path = Path(filepath)  # your JSON file path
-        if not path.exists():
-            return Settings()
-        with path.open("r") as f:
-            return Settings(**json.load(f))
+        path = Path(filepath)
+        if not path.is_file():
+            raise SettingsError(f"The settings file {path} (SETTINGS_FILEPATH) does not exist.")
+        try:
+            content = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError) as e:
+            raise SettingsError(f"The settings file {path} (SETTINGS_FILEPATH) is not valid JSON: {e}") from e
+        return Settings(**content)
+
+
+class SettingsError(Exception):
+    """The install settings file is missing or unreadable; the app refuses to start."""
 
 
 settings_filepath = os.getenv("SETTINGS_FILEPATH")

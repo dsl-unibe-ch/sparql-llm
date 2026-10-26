@@ -8,7 +8,6 @@ endpoint configured, an unknown URL can only mean that endpoint.
 
 import pytest
 
-from sparql_llm import mcp_server
 from sparql_llm.mcp_server import resolve_endpoint_url
 
 ENDPOINT = "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter"
@@ -16,8 +15,8 @@ OTHER = "https://sparql.uniprot.org/sparql/"
 
 
 @pytest.fixture
-def one_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(mcp_server.settings, "endpoints", [{"label": "Swiss Elites", "endpoint_url": ENDPOINT}])
+def one_endpoint(use_projects) -> None:
+    use_projects({"id": "swiss-elites", "label": "Swiss Elites", "endpoint_url": ENDPOINT})
 
 
 def test_corrupted_url_falls_back_to_the_only_endpoint(one_endpoint):
@@ -35,11 +34,7 @@ def test_configured_url_is_kept(one_endpoint):
     assert resolve_endpoint_url(ENDPOINT) == ENDPOINT
 
 
-def test_unknown_url_is_kept_when_several_endpoints_are_configured(monkeypatch: pytest.MonkeyPatch):
+def test_unknown_url_is_kept_when_several_endpoints_are_configured(use_projects):
     # With more than one endpoint there is no safe guess.
-    monkeypatch.setattr(
-        mcp_server.settings,
-        "endpoints",
-        [{"label": "A", "endpoint_url": ENDPOINT}, {"label": "B", "endpoint_url": OTHER}],
-    )
+    use_projects({"id": "a", "label": "A", "endpoint_url": ENDPOINT}, {"id": "b", "label": "B", "endpoint_url": OTHER})
     assert resolve_endpoint_url("https://example.org/sparql") == "https://example.org/sparql"
