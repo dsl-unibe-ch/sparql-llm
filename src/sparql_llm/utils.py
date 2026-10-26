@@ -233,8 +233,19 @@ EndpointsSchemaDict = dict[str, SchemaDict]
 def get_schema_for_endpoint(endpoint_url: str, void_file: str | None = None) -> SchemaDict:
     """Get a dict of VoID description of a SPARQL endpoint directly from the endpoint or from a VoID description URL.
 
-    Formatted as: dict[subject_cls][predicate] = list[object_cls/datatype]"""
+    Formatted as: dict[subject_cls][predicate] = list[object_cls/datatype]
+
+    Raises ValueError when ``void_file`` is given but cannot be read: an unreadable schema
+    must stop a rebuild rather than leave the assistant without one. An endpoint that
+    simply has no VoID description only logs a warning.
+    """
     void_dict: SchemaDict = {}
+    if void_file:
+        try:
+            rdflib.Graph().parse(void_file, format="turtle")
+        except Exception as e:
+            reason = str(e).splitlines()[0][:200] if str(e) else type(e).__name__
+            raise ValueError(f"The schema file {void_file} could not be read: {reason}") from e
     try:
         for void_triple in query_sparql(GET_VOID_DESC, endpoint_url, use_file=void_file, check_service_desc=True)[
             "results"
