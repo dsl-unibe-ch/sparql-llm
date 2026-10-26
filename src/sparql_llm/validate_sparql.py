@@ -16,12 +16,24 @@ from sparql_llm.utils import (
     compress_list,
     get_prefix_converter,
     get_prefixes_for_endpoint,
-    get_schema_for_endpoint,
     logger,
 )
 
 queries_pattern = re.compile(r"```sparql(.*?)```", re.DOTALL)
 endpoint_pattern = re.compile(r"#\+ endpoint:\s*(https?://\S+)", re.MULTILINE)
+
+#: String literals and comments, removed before looking for keywords in a query.
+_LITERALS_AND_COMMENTS = re.compile(r'<[^<>\s]*>|"""[\s\S]*?"""|\'\'\'[\s\S]*?\'\'\'|"(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\'|#[^\n]*')
+_SERVICE = re.compile(r"\bSERVICE\b", re.IGNORECASE)
+SERVICE_NOT_ALLOWED = (
+    "SERVICE clauses are not allowed: queries only run on the configured endpoint. "
+    "Write the query without SERVICE."
+)
+
+
+def uses_service(query: str) -> bool:
+    """Whether the query has a SERVICE clause (federation, which this assistant never runs)."""
+    return bool(_SERVICE.search(_LITERALS_AND_COMMENTS.sub(" ", query)))
 
 
 def extract_sparql_queries(md_resp: str) -> list[dict[str, str | None]]:
@@ -269,9 +281,9 @@ def validate_sparql_with_void(
 
     # Go through the query BGPs and check if they match the VoID description
     for endpoint, subj_dict in query_dict.items():
-        void_dict = (
-            endpoints_void_dict[endpoint] if endpoint in endpoints_void_dict else get_schema_for_endpoint(endpoint)
-        )
+        # Only the cached schemas of configured endpoints: never fetch one for a URL the
+        # query happens to name, or validation itself would reach an unconfigured endpoint.
+        void_dict = endpoints_void_dict.get(endpoint, {})
 
         if len(void_dict) == 0:
             continue
@@ -353,6 +365,10 @@ def validate_sparql(
                 ]
             else:
                 validation_output["errors"] = list(str(e).splitlines())
+
+    # Federation is out of scope: a SERVICE clause would reach an endpoint nobody configured.
+    if uses_service(query):
+        validation_output["errors"] = [SERVICE_NOT_ALLOWED, *validation_output["errors"]]
 
     # 2. Validate the SPARQL query based on schema from VoID description if no syntactic errors
     if endpoint_url and not validation_output["errors"]:

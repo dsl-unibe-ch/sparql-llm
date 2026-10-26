@@ -67,13 +67,12 @@ WHERE {
         ?ratOrganism obo:RO_0002162 taxon:10116 .
     }
 }"""
-    issues = validate_sparql_with_void(sparql_query, "https://sparql.omabrowser.org/sparql/")
-    print("\n".join(issues))
-    # The query uses genex:expressedIn, which Bgee's schema does not define (it
-    # has genex:isExpressedIn). Assert on that rather than on a count: the count
-    # follows the live OMA and Bgee schemas, and went from 3 issues to 1 without
-    # any change on our side.
-    assert any("genex:expressedIn" in issue for issue in issues)
+    # Federation is out of scope: the validator no longer fetches schemas for the endpoints a
+    # query names (only cached, configured ones), and validate_sparql refuses SERVICE.
+    from sparql_llm.validate_sparql import SERVICE_NOT_ALLOWED, validate_sparql
+
+    assert validate_sparql_with_void(sparql_query, "https://sparql.omabrowser.org/sparql/") == set()
+    assert SERVICE_NOT_ALLOWED in validate_sparql(sparql_query, "https://sparql.omabrowser.org/sparql/", {})["errors"]
 
 
 # def test_sparql_examples_loader_error_nextprot():
