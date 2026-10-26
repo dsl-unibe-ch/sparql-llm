@@ -30,5 +30,9 @@
   "schema_classes": {"min_instances": 50, "exclude": ["http://ldf.fi/norssit/titles/"]},
   "curator_examples": null,
   "prefix_repairs": {},
-  "ontology_from_endpoint": false
+  "ontology_from_endpoint": false,
+  "intro": "A natural-language interface to **Norssit**, the alumni register of the Helsinki Normal Lyceum (1867–1992), published by [Aalto University's Semantic Computing Research Group](http://www.ldf.fi/dataset/norssit). Ask about the alumni: their births and deaths, families, titles, employers and hobbies.",
+  "example_questions": ["How many persons are in the register?", "How many women are in the register?", "When was Mika Waltari born and when did he die?", "Which organisations employed the most alumni?", "How many alumni were professors?", "What are the most popular hobbies among the alumni?"],
+  "topics": "alumni of the Helsinki Normal Lyceum, their families, titles, employers and hobbies",
+  "org": "Aalto University, Semantic Computing Research Group (SeCo)"
 }

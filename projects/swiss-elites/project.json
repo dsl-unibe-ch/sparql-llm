@@ -47,5 +47,9 @@
     "sdh-so:": "sdh-short:",
     "https://sdhss.org/ontology/social-life/": "https://sdhss.org/ontology/social-life-core/"
   },
-  "ontology_from_endpoint": true
+  "ontology_from_endpoint": true,
+  "intro": "A natural-language interface to the **Elites Suisses** knowledge graph of the [LESSH project](https://elites-suisses.lod4hss.org/) (Université de Lausanne / Universität Bern). Ask in English or French about Swiss political, economic, academic and military figures of the 19th–20th centuries: their mandates and memberships, studies, families and marriages.",
+  "example_questions": ["How many persons are in the database?", "List 20 persons with their names", "How many birth events are recorded?", "Find persons whose name contains 'Ogi'", "Who are the recorded parents of a given person?", "How many persons of each SDHSS class are there?"],
+  "topics": "Swiss elites, political figures, historical persons, social networks, and prosopographical data",
+  "org": "University of Lausanne - Swiss Elites project"
 }

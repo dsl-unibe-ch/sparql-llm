@@ -78,6 +78,12 @@ class Project(BaseModel):
     curator_examples: CuratorExamples | None = None
     prefix_repairs: dict[str, str] = {}
     ontology_from_endpoint: bool = False
+    #: Shown on the chat page above the conversation (Markdown).
+    intro: str = ""
+    example_questions: list[str] = []
+    #: What the dataset is about, and who publishes it: they go into the prompts and MCP texts.
+    topics: str = ""
+    org: str = ""
 
     _data_dir: Path = PrivateAttr(default=Path("data"))
     #: A candidate reads uploaded files over live ones and writes generated files to next/.

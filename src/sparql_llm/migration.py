@@ -6,8 +6,11 @@ overwrites a file that already exists in the project folder.
 
 from __future__ import annotations
 
+import json
+import os
 import shutil
 from pathlib import Path
+from typing import Any
 
 from sparql_llm.utils import logger
 
@@ -57,6 +60,31 @@ def seed_projects(data_dir: Path, project_ids: list[str], seeds_dir: Path = SEED
     return seeded
 
 
+#: project.json field <- install setting it used to be, before each dataset had its own texts.
+PROJECT_TEXTS = {"intro": "app_intro", "example_questions": "example_questions", "topics": "app_topics", "org": "app_org"}
+
+
+def fill_project_texts(project_dir: Path, settings: Any) -> bool:
+    """Copy the install's intro, examples, topics and organisation into a live project.json that has none.
+
+    Only when all four are absent, so a curator's later edit is never overwritten.
+    """
+    path = Path(project_dir) / "project.json"
+    try:
+        content = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not isinstance(content, dict) or any(field in content for field in PROJECT_TEXTS):
+        return False
+    for field, setting in PROJECT_TEXTS.items():
+        content[field] = getattr(settings, setting)
+    tmp = path.with_name(f"project.json.tmp{os.getpid()}")
+    tmp.write_text(json.dumps(content, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+    logger.info(f"Copied the install's intro, examples and topics into {path}")
+    return True
+
+
 def migrate_configured() -> list[str]:
     """Seed the dataset list and missing projects, then move the flat legacy files into the first project."""
     from sparql_llm.config import settings
@@ -67,4 +95,6 @@ def migrate_configured() -> list[str]:
     if not project_ids:
         return []
     seed_projects(Path(settings.data_dir), project_ids)
+    # The install's texts described the one dataset there was: the first.
+    fill_project_texts(Path(settings.data_dir) / project_ids[0], settings)
     return migrate_legacy_data(Path(settings.data_dir), project_ids[0])

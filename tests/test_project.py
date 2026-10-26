@@ -103,3 +103,17 @@ def test_urls_must_be_http(tmp_path: Path, field: str):
     write_project(tmp_path, "norssit", {**NORSSIT, field: "javascript:alert(1)"})
     with pytest.raises(ProjectError, match=field):
         load_project(tmp_path, "norssit")
+
+
+def test_project_texts_default_empty():
+    from sparql_llm.project import Project
+
+    project = Project.model_validate(NORSSIT)
+    assert (project.intro, project.example_questions, project.topics, project.org) == ("", [], "", "")
+
+
+def test_swiss_seed_has_its_texts():
+    project = load_project(Path(__file__).parent.parent / "projects", "swiss-elites")
+    assert project.topics.startswith("Swiss elites")
+    assert len(project.example_questions) == 6
+    assert project.intro and project.org

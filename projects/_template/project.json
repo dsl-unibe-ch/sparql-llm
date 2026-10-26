@@ -26,5 +26,9 @@
   "schema_classes": {"min_instances": 1, "exclude": []},
   "curator_examples": null,
   "prefix_repairs": {},
-  "ontology_from_endpoint": false
+  "ontology_from_endpoint": false,
+  "intro": "One paragraph shown above the chat: what the dataset is and what users can ask about.",
+  "example_questions": ["How many persons are in the dataset?"],
+  "topics": "the subjects of the dataset, e.g. persons, their careers and families",
+  "org": "The organisation that publishes the dataset"
 }

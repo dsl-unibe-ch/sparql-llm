@@ -64,3 +64,34 @@ def test_reading_the_projects_migrates_first(tmp_path: Path, monkeypatch):
     finally:
         monkeypatch.undo()
         reload_projects()
+
+
+def test_upgrade_fills_texts_once(tmp_path: Path):
+    import json
+    from types import SimpleNamespace
+
+    from sparql_llm.migration import fill_project_texts
+
+    install = SimpleNamespace(
+        app_intro="Ask about Swiss elites.",
+        example_questions=["How many persons?"],
+        app_topics="Swiss elites",
+        app_org="UNIL",
+    )
+    (tmp_path / "project.json").write_text(
+        json.dumps({"id": "swiss-elites", "label": "S", "endpoint_url": "https://x/sparql"}), encoding="utf-8"
+    )
+
+    assert fill_project_texts(tmp_path, install) is True
+    content = json.loads((tmp_path / "project.json").read_text(encoding="utf-8"))
+    assert (content["intro"], content["example_questions"], content["topics"], content["org"]) == (
+        "Ask about Swiss elites.",
+        ["How many persons?"],
+        "Swiss elites",
+        "UNIL",
+    )
+
+    content["intro"] = "Edited by a curator."
+    (tmp_path / "project.json").write_text(json.dumps(content), encoding="utf-8")
+    assert fill_project_texts(tmp_path, install) is False
+    assert json.loads((tmp_path / "project.json").read_text(encoding="utf-8"))["intro"] == "Edited by a curator."
