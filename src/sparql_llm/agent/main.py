@@ -824,6 +824,8 @@ async def _noop() -> None:
 
 
 require_user = current_active_user if settings.auth_enabled else _noop
+# The user database only exists with auth enabled; routes use the session only in that case.
+db_session = get_async_session if settings.auth_enabled else _noop
 
 
 class Message(BaseModel):
@@ -1005,7 +1007,7 @@ def tool_capable_models() -> list[str]:
 async def chat(
     request: Request,
     _user: Any = Depends(require_user),
-    session: "AsyncSession" = Depends(get_async_session),
+    session: "AsyncSession" = Depends(db_session),
 ) -> StreamingResponse | JSONResponse:
     """Chat with the assistant main endpoint."""
     chat_request = ChatCompletionRequest(**await request.json())
@@ -1152,7 +1154,7 @@ async def post_feedback(
 async def get_models(
     request: Request,
     _user: Any = Depends(require_user),
-    session: "AsyncSession" = Depends(get_async_session),
+    session: "AsyncSession" = Depends(db_session),
 ) -> JSONResponse:
     """Return the models offered in the chat UI's picker.
 
