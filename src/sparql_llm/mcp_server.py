@@ -8,6 +8,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
 from sparql_llm.config import settings
 from sparql_llm.entity_resolver import describe_for_tool, get_resolver
 from sparql_llm.indexing.index_resources import embedding_model, endpoints_metadata, init_vectordb, qdrant_client
+from sparql_llm.indexing.rebuild import collection_for
 from sparql_llm.project import Project, allowed_endpoint, get_projects, post_for
 from sparql_llm.utils import compress_list, get_prefix_converter, logger, query_sparql
 from sparql_llm.validate_sparql import validate_sparql
@@ -129,7 +130,7 @@ Returns:
                 doc
                 for doc in qdrant_client.query_points(
                     query=search_embeddings,
-                    collection_name=settings.docs_collection_name,
+                    collection_name=collection_for(_first_project()),
                     limit=settings.default_number_of_retrieved_docs,
                     query_filter=Filter(
                         must=[
@@ -153,7 +154,7 @@ Returns:
                 doc
                 for doc in qdrant_client.query_points(
                     query=search_embeddings,
-                    collection_name=settings.docs_collection_name,
+                    collection_name=collection_for(_first_project()),
                     limit=settings.default_number_of_retrieved_docs,
                     query_filter=Filter(
                         must_not=[
@@ -190,7 +191,7 @@ Returns:
                 doc
                 for doc in qdrant_client.query_points(
                     query=search_embeddings,
-                    collection_name=settings.docs_collection_name,
+                    collection_name=collection_for(_first_project()),
                     limit=settings.default_number_of_retrieved_docs,
                     query_filter=Filter(
                         must_not=[
@@ -227,7 +228,7 @@ Returns:
             """
             search_embeddings = next(iter(embedding_model.embed_query([question])))
             relevant_docs = qdrant_client.query_points(
-                collection_name=settings.docs_collection_name,
+                collection_name=collection_for(_first_project()),
                 query=search_embeddings,
                 limit=settings.default_number_of_retrieved_docs,
                 query_filter=Filter(

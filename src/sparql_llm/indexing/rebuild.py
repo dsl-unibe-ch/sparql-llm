@@ -124,6 +124,46 @@ def _live_alias() -> str:
     return settings.docs_collection_name
 
 
+def alias_for(project: Project) -> str:
+    """The name readers query for this dataset's index; its own rebuild swaps it."""
+    return f"{project.id}__docs"
+
+
+def versioned_collection(project: Project, version: str) -> str:
+    return f"{version_prefix(project)}{version}"
+
+
+def version_prefix(project: Project) -> str:
+    """What every versioned collection of this dataset starts with, and no other's.
+
+    Ids cannot contain "_", so "a__v" never prefixes a collection of "a-v2" and vice versa.
+    """
+    return f"{project.id}__v"
+
+
+def _aliases() -> set[str]:
+    return {a.alias_name for a in qdrant_client.get_aliases().aliases}
+
+
+def collection_for(project: Project) -> str:
+    """The collection to search for this dataset.
+
+    Its own alias once a per-dataset rebuild made one. Until then the first dataset is
+    still served by the index of the single-dataset install (``docs_collection_name``),
+    so an upgrade needs no rebuild.
+    """
+    alias = alias_for(project)
+    aliases = _aliases()
+    if alias in aliases:
+        return alias
+    from sparql_llm.datasets import list_dataset_ids
+
+    ids = list_dataset_ids()
+    if ids and ids[0] == project.id:
+        return settings.docs_collection_name
+    return alias
+
+
 def _collections() -> list[str]:
     return [c.name for c in qdrant_client.get_collections().collections]
 
@@ -269,7 +309,8 @@ def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any
     triples = sum(fp.triples for fp in fingerprints.values())
     class_count = sum(len(fp.classes) for fp in fingerprints.values())
 
-    doc_count = init_vectordb(collection_name=target, projects=projects, prefixes_map=metadata.prefixes_map)
+    # Each project's docs use its own prefixes.json from next/, written by the refresh above.
+    doc_count = init_vectordb(collection_name=target, projects=projects)
     if not doc_count:
         raise RebuildStopped("Indexing produced 0 documents — refusing to swap the alias.")
 

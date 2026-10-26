@@ -177,7 +177,8 @@ def build_project_docs(project: Project, prefixes_map: dict[str, str] | None = N
     # The OWL application profiles + SHACL shapes (the designed schema behind an SDHSS
     # mapping), served by the endpoint alongside the data. They supply the human
     # definitions and property cardinalities the VoID statistics don't carry. Optional.
-    prefixes_map = endpoints_metadata.prefixes_map if prefixes_map is None else prefixes_map
+    # This project's prefixes only: another dataset may bind the same prefix elsewhere.
+    prefixes_map = endpoints_metadata.prefixes_for(project) if prefixes_map is None else prefixes_map
     converter = get_prefix_converter(prefixes_map)
     term_map: dict = {}
     shape_map: dict = {}
@@ -223,14 +224,18 @@ def build_project_docs(project: Project, prefixes_map: dict[str, str] | None = N
 
 
 def general_info_docs(projects: list[Project] | None = None) -> list[Document]:
-    """The 'which resources does this service cover' doc, linking to the project homepage."""
+    """The 'which resources does this service cover' doc, linking to the project homepage.
+
+    Built per dataset index: its homepage and organisation, never another dataset's.
+    """
     projects = get_projects() if projects is None else projects
-    homepage = settings.app_homepage_url or (projects[0].homepage_url if projects else None)
+    homepage = next((p.homepage_url for p in projects if p.homepage_url), None) or settings.app_homepage_url
+    orgs = list(dict.fromkeys(p.org for p in projects if p.org))
     return SparqlInfoLoader(
         [p.as_endpoint_links() for p in projects],
         source_iri=homepage or None,
         service_label=settings.app_name,
-        org_label=f"from the {settings.app_org}" if settings.app_org else "",
+        org_label=f"from the {' and '.join(orgs)}" if orgs else "",
     ).load()
 
 

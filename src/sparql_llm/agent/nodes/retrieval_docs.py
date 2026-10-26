@@ -4,10 +4,12 @@ from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
 
+from sparql_llm.agent.request_project import project_of
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.agent.utils import latest_user_question
 from sparql_llm.config import Configuration, settings
 from sparql_llm.indexing.index_resources import embedding_model, qdrant_client
+from sparql_llm.indexing.rebuild import collection_for
 
 # TODO: use grouping? https://qdrant.tech/documentation/concepts/search/#grouping-api
 # Which tools can I use for enrichment analysis?
@@ -29,6 +31,8 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
         containing a list of retrieved ScoredPoint objects.
     """
     configuration = Configuration.from_runnable_config(config)
+    # Only the selected dataset's index: another dataset's examples must never reach the model.
+    collection = collection_for(project_of(configuration))
     user_question = latest_user_question(state.messages)
     docs: list[ScoredPoint] = []
 
@@ -57,7 +61,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
                     doc
                     for doc in qdrant_client.query_points(
                         query=search_embedding,
-                        collection_name=settings.docs_collection_name,
+                        collection_name=collection,
                         limit=limit,
                         query_filter=search_filter,
                     ).points
@@ -69,7 +73,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
                     doc
                     for doc in qdrant_client.query_points(
                         query=search_embedding,
-                        collection_name=settings.docs_collection_name,
+                        collection_name=collection,
                         limit=limit,
                     ).points
                     if doc.payload
@@ -85,7 +89,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
             doc
             for doc in qdrant_client.query_points(
                 query=search_embedding,
-                collection_name=settings.docs_collection_name,
+                collection_name=collection,
                 limit=limit,
                 query_filter=Filter(
                     must=[
@@ -120,7 +124,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
             doc
             for doc in qdrant_client.query_points(
                 query=search_embedding,
-                collection_name=settings.docs_collection_name,
+                collection_name=collection,
                 limit=limit,
                 query_filter=Filter(
                     must_not=[
