@@ -84,6 +84,10 @@ class OpenAIEmbedding:
             for item in sorted(response.data, key=lambda d: d.index):
                 yield item.embedding
 
+    def embed_query(self, texts: Iterable[str], **kwargs) -> Iterable[list[float]]:
+        """Embed search queries. The served models take no query instruction, so same as ``embed``."""
+        return self.embed(texts, **kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Local backend — wraps fastembed (loads ONNX model into RAM)
@@ -100,15 +104,27 @@ class LocalEmbedding:
         from fastembed import TextEmbedding  # noqa: E402
 
         logger.info("Local fastembed backend: model=%s", model)
+        self.model = model
         self._inner = TextEmbedding(model, **kwargs)
 
     @property
     def embedding_size(self) -> int:
         return self._inner.embedding_size  # type: ignore[return-value]
 
+    def _prefixed(self, texts: Iterable[str], prefix: str) -> Iterable[str]:
+        # The e5 models are trained with "query: " / "passage: " prefixes, and fastembed does
+        # not add them. Without them e5 retrieved the right example less often in our tests.
+        if "e5" not in self.model.lower():
+            return texts
+        return [prefix + t for t in texts]
+
     def embed(self, texts: Iterable[str], **kwargs) -> Iterable[np.ndarray]:
-        """Delegate to the fastembed model."""
-        return self._inner.embed(texts, **kwargs)
+        """Embed documents (the indexed side) with the fastembed model."""
+        return self._inner.embed(self._prefixed(texts, "passage: "), **kwargs)
+
+    def embed_query(self, texts: Iterable[str], **kwargs) -> Iterable[np.ndarray]:
+        """Embed search queries (the user's side) with the fastembed model."""
+        return self._inner.embed(self._prefixed(texts, "query: "), **kwargs)
 
 
 # ---------------------------------------------------------------------------

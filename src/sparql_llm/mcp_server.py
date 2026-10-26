@@ -122,7 +122,7 @@ Returns:
     @mcp.tool(description=search_sparql_docs_tool_desc)
     async def search_sparql_docs(question: str, potential_classes: list[str], steps: list[str]) -> str:
         relevant_docs: list[ScoredPoint] = []
-        for search_embeddings in embedding_model.embed([question, *steps, *potential_classes]):
+        for search_embeddings in embedding_model.embed_query([question, *steps, *potential_classes]):
             # Get SPARQL example queries
             relevant_docs.extend(
                 doc
@@ -183,7 +183,7 @@ Returns:
             Relevant classes schemas in ShEx format
         """
         relevant_docs: list[ScoredPoint] = []
-        for search_embeddings in embedding_model.embed(classes):
+        for search_embeddings in embedding_model.embed_query(classes):
             # Get other relevant documentation (classes schemas, general information)
             relevant_docs.extend(
                 doc
@@ -224,7 +224,7 @@ Returns:
             Returns:
                 str: Information about the resources.
             """
-            search_embeddings = next(iter(embedding_model.embed([question])))
+            search_embeddings = next(iter(embedding_model.embed_query([question])))
             relevant_docs = qdrant_client.query_points(
                 collection_name=settings.docs_collection_name,
                 query=search_embeddings,

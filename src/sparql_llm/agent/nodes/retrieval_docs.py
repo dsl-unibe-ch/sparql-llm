@@ -49,7 +49,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
         limit = configuration.search_kwargs.get("k", settings.default_number_of_retrieved_docs)
 
         # Generate embeddings for all queries at once
-        for search_embedding in embedding_model.embed(search_queries):
+        for search_embedding in embedding_model.embed_query(search_queries):
             try:
                 docs.extend(
                     doc
@@ -79,7 +79,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
             limit = max(1, limit // 2)
 
         # Get relevant query examples
-        for search_embedding in embedding_model.embed([user_question, *state.structured_question.question_steps]):
+        for search_embedding in embedding_model.embed_query([user_question, *state.structured_question.question_steps]):
             docs.extend(
                 doc
                 for doc in qdrant_client.query_points(
@@ -114,7 +114,7 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
         limit = configuration.search_kwargs.get("k", settings.default_number_of_retrieved_docs)
         if len(schema_queries) > 3:
             limit = max(1, limit // 2)
-        for search_embedding in embedding_model.embed(schema_queries):
+        for search_embedding in embedding_model.embed_query(schema_queries):
             docs.extend(
                 doc
                 for doc in qdrant_client.query_points(
