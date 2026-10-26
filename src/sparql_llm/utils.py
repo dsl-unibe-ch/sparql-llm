@@ -409,6 +409,10 @@ class EndpointsMetadataManager:
 
         self._cache(*self._fetch())
 
+    def reload(self) -> None:
+        """Read the cached metadata files again on next use, e.g. after a rebuild promoted them."""
+        self._initialized = False
+
     def refresh(self) -> None:
         """Rebuild the metadata from its sources, replacing the cached file.
 

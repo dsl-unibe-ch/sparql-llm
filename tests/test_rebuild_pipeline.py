@@ -13,8 +13,16 @@ def pipeline(norssit_project, monkeypatch: pytest.MonkeyPatch):
     calls: list[str] = []
 
     class FakeMetadata:
+        prefixes_map: dict = {}
+
+        def __init__(self, projects=None, auto_init=False):
+            pass
+
         def refresh(self):
             calls.append("refresh")
+
+        def reload(self):
+            calls.append("metadata reload")
 
     class FakeQdrant:
         def delete_collection(self, name):
@@ -37,6 +45,7 @@ def pipeline(norssit_project, monkeypatch: pytest.MonkeyPatch):
         "generate_void",
         record("void", {"triples": 9, "entities": 3, "classes_total": 330, "classes_kept": 40, "predicates": 5}),
     )
+    monkeypatch.setattr(rebuild, "EndpointsMetadataManager", FakeMetadata)
     monkeypatch.setattr(rebuild, "endpoints_metadata", FakeMetadata())
     monkeypatch.setattr(rebuild, "build_entity_names", record("entities", {"entities": 12, "error": ""}))
     monkeypatch.setattr(
@@ -54,8 +63,7 @@ def pipeline(norssit_project, monkeypatch: pytest.MonkeyPatch):
 
 def test_pipeline_runs_in_order(pipeline):
     rebuild.rebuild_index_with_alias()
-    # The uploaded project files are read first, then checked.
-    assert pipeline[:5] == ["reload", "preflight", "sync", "void", "refresh"]
+    assert pipeline[:4] == ["preflight", "sync", "void", "refresh"]
     last_reload = max(i for i, call in enumerate(pipeline) if call == "reload")
     assert pipeline.index("entities") < pipeline.index("index") < pipeline.index("swap") < last_reload
 

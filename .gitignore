@@ -15,15 +15,10 @@ __pycache__/
 .files
 # uv.lock
 
-# Data: ignore generated content; track the install settings and each project's own files
+# Data: everything a server writes. Project files ship in projects/ and are copied here
+# on first start; the install settings file is the only tracked file.
 data/*
 !data/swiss-elites-settings.json
-!data/swiss-elites/
-data/swiss-elites/*
-!data/swiss-elites/project.json
-!data/swiss-elites/dataset.md
-!data/swiss-elites/examples.md
-!data/_template/
 .fastembed_cache/
 notebooks/*.csv
 notebooks/*.txt

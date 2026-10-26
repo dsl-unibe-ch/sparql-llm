@@ -12,7 +12,7 @@ The three files of a project are:
 | `dataset.md` | What the assistant must know about the data, in your own words: prefixes, classes, how names and dates are stored, rules. |
 | `examples.md` | 5–10 example questions with the SPARQL query that answers each. The assistant copies their shape. |
 
-Start from the template files in [`data/_template/`](../data/_template/). Keep the file names `project.json`, `dataset.md` and `examples.md`: the admin page manages exactly these three.
+Start from the template files in [`projects/_template/`](../projects/_template/). Keep the file names `project.json`, `dataset.md` and `examples.md`: the admin page manages exactly these three.
 
 ## 1. What you need from the dataset
 
@@ -43,7 +43,7 @@ The new instance starts even before its project files exist: its admin page show
 
 ## 3. Filling in `project.json`
 
-Copy `data/_template/project.json` and fill in each field. Every field except `id`, `label` and `endpoint_url` has a default.
+Copy `projects/_template/project.json` and fill in each field. Every field except `id`, `label` and `endpoint_url` has a default.
 
 | Field | What it is | Norssit | Swiss Elites |
 |---|---|---|---|
@@ -108,13 +108,13 @@ SELECT ?person ?name WHERE { ?person a foaf:Person ; skos:prefLabel ?name }
 
 On the admin page (`/admin`), in the **Project files** card:
 
-1. For each file: choose it, press **Upload**. A file with a problem is refused with a message, and the old file stays. **Download** gives you the current version; **Undo** puts back the previous one.
+1. For each file: choose it, press **Upload**. A file with a problem is refused with a message. An accepted file **waits**: the card shows it as "waiting for the next Rebuild", and the assistant keeps using the file in service, even after a server restart. **Download** gives you the waiting file if there is one, else the one in service. **Discard upload** drops a waiting file.
 2. Press **Check configuration** in the **Search index** card. Each check shows ✓ (fine), ⚠ (a warning; the rebuild still runs) or ✗ (an error; fix it first).
-3. Press **Rebuild index**. It checks again, then describes the endpoint's schema, collects the names, builds the search index and switches the assistant to it. The assistant keeps answering from the old index until the new one is ready. If anything fails, the old one stays.
+3. Press **Rebuild index**. It checks again, then describes the endpoint's schema, collects the names and builds the search index, all from the waiting files. Only when everything succeeded does it put the files and the new index in service together. If anything fails, nothing changes: the assistant keeps the old files and index, and your uploads keep waiting.
 
 A rebuild takes a few minutes. When it finishes, the status line reads like: *"Norssit: Person 10,137 · Group 2,368 · 330 → 40 classes · 6/6 examples OK."*
 
-Uploaded files take effect only at the next Rebuild.
+Uploaded files take effect only when a Rebuild succeeds.
 
 ### What the messages mean
 
@@ -181,4 +181,5 @@ When an answer is wrong, the fix is usually one of these:
 
 - **The data changed** (the endpoint was reloaded): press **Rebuild index**. The Search index card says when the data no longer matches the index.
 - **You improved a file**: Download, edit, Upload, Check, Rebuild.
-- **A file broke something**: **Undo** puts back the previous version; then Rebuild.
+- **A file broke something**: **Undo** queues the version it replaced; then Rebuild.
+- **Files shipped with the code** (`projects/<id>/`) are copied to the server only when the project has no files there yet. After that the files in service are the ones uploaded on the admin page, so a change in the repository reaches the server only by uploading it.

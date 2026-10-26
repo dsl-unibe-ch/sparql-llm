@@ -169,7 +169,7 @@ def run_preflight(project: Project, fetch: Callable[..., Any] = query_sparql) ->
 
 def run_checks() -> dict[str, list[dict[str, Any]]]:
     """Preflight every project of this instance as its files are on disk now (Check button)."""
-    projects, problems = read_projects()
+    projects, problems = read_projects(candidates=True)
     results = {pid: [asdict(CheckResult("project", "error", message))] for pid, message in problems.items()}
     for project in projects:
         results[project.id] = [asdict(r) for r in run_preflight(project)]

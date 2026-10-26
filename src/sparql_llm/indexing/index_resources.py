@@ -152,7 +152,7 @@ def dataset_description_docs(project: Project) -> list[Document]:
     return docs
 
 
-def build_project_docs(project: Project) -> list[Document]:
+def build_project_docs(project: Project, prefixes_map: dict[str, str] | None = None) -> list[Document]:
     """Every retrieval doc for one project: examples, schema, optional ontology, descriptions."""
     endpoint_url = project.endpoint_url
     print(f"\n  🔎 Getting metadata for {project.label} at {endpoint_url}")
@@ -165,9 +165,9 @@ def build_project_docs(project: Project) -> list[Document]:
         # endpoint-tested by sync_examples at the start of every rebuild. A separate
         # gitignored file so a rebuild never dirties the server's working tree; absent
         # on a first run or when their repository was unreachable, which is not fatal.
-        if project.curator_examples and project.synced_examples_path.exists():
+        if project.curator_examples and project.synced_examples_source.exists():
             synced_docs = SparqlExamplesMdLoader(
-                project.synced_examples_path, endpoint_url, prefix_repairs=project.prefix_repairs
+                project.synced_examples_source, endpoint_url, prefix_repairs=project.prefix_repairs
             ).load()
             print(f"  📥 {len(synced_docs)} example doc(s) synced from the curators' repo")
             docs += synced_docs
@@ -177,7 +177,8 @@ def build_project_docs(project: Project) -> list[Document]:
     # The OWL application profiles + SHACL shapes (the designed schema behind an SDHSS
     # mapping), served by the endpoint alongside the data. They supply the human
     # definitions and property cardinalities the VoID statistics don't carry. Optional.
-    converter = get_prefix_converter(endpoints_metadata.prefixes_map)
+    prefixes_map = endpoints_metadata.prefixes_map if prefixes_map is None else prefixes_map
+    converter = get_prefix_converter(prefixes_map)
     term_map: dict = {}
     shape_map: dict = {}
     if project.ontology_from_endpoint:
@@ -189,7 +190,7 @@ def build_project_docs(project: Project) -> list[Document]:
     if project.void_path.is_file():
         void_docs = SparqlVoidShapesLoader(
             endpoint_url,
-            prefix_map=endpoints_metadata.prefixes_map,
+            prefix_map=prefixes_map,
             void_file=str(project.void_path),
             term_map=term_map,
             shape_map=shape_map,
@@ -221,9 +222,9 @@ def build_project_docs(project: Project) -> list[Document]:
     return docs
 
 
-def general_info_docs() -> list[Document]:
+def general_info_docs(projects: list[Project] | None = None) -> list[Document]:
     """The 'which resources does this service cover' doc, linking to the project homepage."""
-    projects = get_projects()
+    projects = get_projects() if projects is None else projects
     homepage = settings.app_homepage_url or (projects[0].homepage_url if projects else None)
     return SparqlInfoLoader(
         [p.as_endpoint_links() for p in projects],
@@ -233,7 +234,11 @@ def general_info_docs() -> list[Document]:
     ).load()
 
 
-def init_vectordb(collection_name: str | None = None) -> int:
+def init_vectordb(
+    collection_name: str | None = None,
+    projects: list[Project] | None = None,
+    prefixes_map: dict[str, str] | None = None,
+) -> int:
     """Build the retrieval index from the SPARQL endpoints.
 
     Args:
@@ -247,9 +252,11 @@ def init_vectordb(collection_name: str | None = None) -> int:
     target = collection_name or settings.docs_collection_name
     docs: list[Document] = []
 
-    for project in get_projects():
-        docs += build_project_docs(project)
-    docs += general_info_docs()
+    # A rebuild passes the candidate projects and the prefixes it just generated.
+    projects = get_projects() if projects is None else projects
+    for project in projects:
+        docs += build_project_docs(project, prefixes_map)
+    docs += general_info_docs(projects)
 
     print(f"Generating embeddings for {len(docs)} documents")
     start_time = time.time()

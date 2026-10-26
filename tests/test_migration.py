@@ -38,7 +38,7 @@ def test_migration_never_overwrites(tmp_path: Path):
 
 
 def test_swiss_project_file_loads():
-    project = load_project(Path("data"), "swiss-elites")
+    project = load_project(Path(__file__).parent.parent / "projects", "swiss-elites")
     assert len(project.entities.types) == 5
     assert project.prefixes["swel"] == "https://elites-suisses.lod4hss.org/resource/"
 

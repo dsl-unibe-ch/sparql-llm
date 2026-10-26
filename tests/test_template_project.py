@@ -7,7 +7,7 @@ from sparql_llm.indexing.sync_examples import parse_examples
 from sparql_llm.project_files import validate_upload
 
 ROOT = Path(__file__).parent.parent
-TEMPLATE = ROOT / "data" / "_template"
+TEMPLATE = ROOT / "projects" / "_template"
 NORSSIT = ROOT / "docs" / "examples" / "norssit"
 
 

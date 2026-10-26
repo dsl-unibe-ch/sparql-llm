@@ -1,8 +1,8 @@
 """A project's three curator files, uploaded and downloaded from the admin page.
 
-An upload is validated before it replaces anything, and the previous version is kept as
-``<file>.prev`` for a one-step undo. Saving does not reload the project: the next
-Rebuild does, after checking the configuration against the endpoint.
+An upload is validated, then kept in ``<id>/uploaded/`` until a Rebuild has checked it
+and promotes it to the live folder (keeping the replaced file as ``<file>.prev``). Nothing
+uploaded is served before that, not even after a restart.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from sparql_llm.indexing.sync_examples import parse_examples
-from sparql_llm.project import Project
+from sparql_llm.project import UPLOADED_DIR, Project
 
 FILE_NAMES = ("project.json", "dataset.md", "examples.md")
 MAX_UPLOAD_BYTES = 1_000_000
@@ -102,46 +102,49 @@ def _read_log(project_id: str) -> list[dict[str, str]]:
         return []
 
 
-def save_upload(project_id: str, name: str, content: bytes, user_email: str) -> None:
-    """Replace the file atomically, keeping the previous version as ``<name>.prev``."""
+def _log(project_id: str, name: str, user_email: str, action: str) -> None:
     directory = _project_dir(project_id)
-    directory.mkdir(parents=True, exist_ok=True)
-    target = directory / name
-    tmp = directory / f"{name}.tmp{os.getpid()}"
-    tmp.write_bytes(content)
-    if target.exists():
-        os.replace(target, directory / f"{name}.prev")
-    os.replace(tmp, target)
     log = _read_log(project_id)
-    log.append({"file": name, "by": user_email, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    log.append(
+        {"file": name, "by": user_email, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "action": action}
+    )
     (directory / UPLOAD_LOG).write_text(json.dumps(log[-200:], indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def restore_previous(project_id: str, name: str) -> None:
-    """Swap the file with its previous version, so an undo can itself be undone."""
+def save_upload(project_id: str, name: str, content: bytes, user_email: str) -> None:
+    """Keep the upload pending in ``uploaded/``; the next successful Rebuild makes it live."""
+    staged = _project_dir(project_id) / UPLOADED_DIR
+    staged.mkdir(parents=True, exist_ok=True)
+    tmp = staged / f"{name}.tmp{os.getpid()}"
+    tmp.write_bytes(content)
+    os.replace(tmp, staged / name)
+    _log(project_id, name, user_email, "upload")
+
+
+def restore_previous(project_id: str, name: str, user_email: str = "") -> None:
+    """Undo: drop a pending upload, or else stage the previous live version for the next Rebuild."""
     if name not in FILE_NAMES or not _served(project_id):
         raise ProjectFileError(f"'{name}' of project '{project_id}' is not a project file.")
     directory = _project_dir(project_id)
+    pending = directory / UPLOADED_DIR / name
+    if pending.is_file():
+        pending.unlink()
+        _log(project_id, name, user_email, "discard upload")
+        return
     previous = directory / f"{name}.prev"
     if not previous.exists():
         raise ProjectFileError(f"There is no previous version of {name} to restore.")
-    current = directory / name
-    swap = directory / f"{name}.swap{os.getpid()}"
-    if current.exists():
-        os.replace(current, swap)
-    os.replace(previous, current)
-    if swap.exists():
-        os.replace(swap, previous)
+    save_upload(project_id, name, previous.read_bytes(), user_email)
 
 
 def file_path(project_id: str, name: str) -> Path:
-    """The path of a project file, for download. Raises for anything that is not one."""
+    """The file to download: the pending upload if there is one, else the live file."""
     if name not in FILE_NAMES or not _served(project_id):
         raise ProjectFileError(f"'{name}' of project '{project_id}' is not a project file.")
-    path = _project_dir(project_id) / name
-    if not path.is_file():
-        raise ProjectFileError(f"{name} has not been uploaded yet.")
-    return path
+    for path in (_project_dir(project_id) / UPLOADED_DIR / name, _project_dir(project_id) / name):
+        if path.is_file():
+            return path
+    raise ProjectFileError(f"{name} has not been uploaded yet.")
 
 
 def list_files(project_id: str) -> list[dict[str, Any]]:
@@ -166,6 +169,8 @@ def list_files(project_id: str) -> list[dict[str, Any]]:
                 "uploaded_by": last_upload.get(name, {}).get("by"),
                 "uploaded_at": last_upload.get(name, {}).get("at"),
                 "has_previous": (directory / f"{name}.prev").exists(),
+                # Uploaded and not live yet: the next successful Rebuild makes it live.
+                "pending": (directory / UPLOADED_DIR / name).is_file(),
             }
         )
     return files

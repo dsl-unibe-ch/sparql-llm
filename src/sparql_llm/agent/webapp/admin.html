@@ -173,9 +173,9 @@
         <div class="card-header">Project files</div>
         <div class="idx-body">
           <p class="idx-note">
-            Download a file, edit it, and upload it again. An upload is checked before it replaces
-            anything, and the previous version is kept for Undo. Uploaded files take effect at the
-            next <strong>Rebuild index</strong>; press <strong>Check configuration</strong> first.
+            Download a file, edit it, and upload it again. An uploaded file waits: press
+            <strong>Check configuration</strong>, then <strong>Rebuild index</strong>. Only a rebuild that
+            succeeds puts it in service; the version it replaces is kept for Undo.
           </p>
           <div id="pf-list" class="pf-list">Loading&hellip;</div>
           <ul id="pf-errors" class="idx-checks" hidden></ul>
@@ -333,16 +333,19 @@
             html += '<div class="pf-project">' + esc(pid) + '</div>';
             projects[pid].forEach(function (f) {
               var base = '/admin/project-files/' + encodeURIComponent(pid) + '/' + encodeURIComponent(f.name);
-              var meta = f.exists
-                ? 'changed ' + esc(f.modified) + (f.uploaded_by ? ' by ' + esc(f.uploaded_by) : '')
-                : 'not uploaded yet';
+              var meta = f.pending
+                ? '<strong>uploaded' + (f.uploaded_by ? ' by ' + esc(f.uploaded_by) : '') + ', waiting for the next Rebuild</strong>'
+                : f.exists ? 'in service since ' + esc(f.modified) : 'not uploaded yet';
               html += '<div class="pf-row">'
                 + '<span class="pf-name">' + esc(f.name) + '</span>'
                 + '<span class="pf-meta">' + meta + '</span>'
                 + (f.exists ? '<a href="' + base + '">Download</a>' : '')
                 + '<input type="file" data-url="' + base + '" />'
                 + '<button class="btn-reindex btn-check" data-upload="' + base + '">Upload</button>'
-                + (f.has_previous ? '<button class="btn-reindex btn-check" data-undo="' + base + '/undo">Undo</button>' : '')
+                + (f.pending || f.has_previous
+                  ? '<button class="btn-reindex btn-check" data-undo="' + base + '/undo">'
+                    + (f.pending ? 'Discard upload' : 'Undo') + '</button>'
+                  : '')
                 + '</div>';
             });
           });
@@ -358,7 +361,7 @@
 
         function afterSave(r) {
           return r.json().then(function (d) {
-            if (r.ok) { showMessages(['Saved. It takes effect at the next Rebuild.'], 'ck-ok'); return load(); }
+            if (r.ok) { showMessages(['Saved. Check, then Rebuild to put it in service.'], 'ck-ok'); return load(); }
             showMessages(d.errors || [d.error || 'The file was not saved.'], 'ck-error');
           });
         }

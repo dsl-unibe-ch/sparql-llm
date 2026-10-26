@@ -36,8 +36,8 @@ from sparql_llm.indexing.preflight import run_preflight
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.indexing.void_gen import VoidError, generate_void
 from sparql_llm.migration import migrate_configured
-from sparql_llm.project import Project, get_projects, project_problems, reload_projects, restore_projects
-from sparql_llm.utils import logger
+from sparql_llm.project import Project, discard_build, promote, read_projects, reload_projects
+from sparql_llm.utils import EndpointsMetadataManager, logger
 
 
 
@@ -162,28 +162,31 @@ def _project_headline(project: Project, report: dict[str, Any], fingerprint: Fin
 def rebuild_index_with_alias() -> dict[str, Any]:
     """Run the onboarding pipeline, build a new index, then swap the alias to it.
 
-    Blocking; call from a worker thread. Per project: preflight checks, curator example
-    sync, VoID generation, entity names; then once: the validator schema, the index, the
-    alias swap, the fingerprints and a reload of the project files. Any error raises
-    RebuildStopped before the swap, so the live index keeps serving.
+    Blocking; call from a worker thread. It runs on the candidate projects (uploaded files
+    over live ones) and writes everything it generates to each project's next/ folder. Per
+    project: preflight checks, curator example sync, VoID generation, validator schema,
+    entity names; then once: the index and the alias swap. Only then are next/ and the
+    uploaded files promoted to live and the projects reloaded. Any error raises
+    RebuildStopped before the swap; the live index and every live file stay as they were.
 
     An alias cannot share a name with a real collection, so the first run has to retire the
     original same-named collection. That is the one moment of downtime, and it lasts a
     single Qdrant call rather than the length of a rebuild.
     """
     migrate_configured()
-    # Run on the project files as uploaded; if the rebuild stops, serve the previous ones again.
-    previous, previous_problems = get_projects(), project_problems()
-    projects = reload_projects()
+    projects, problems = read_projects(candidates=True)
+    for project in projects:
+        discard_build(project)
+        project.build_dir.mkdir(parents=True, exist_ok=True)
     try:
-        return _rebuild(projects)
-    except Exception:
-        restore_projects(previous, previous_problems)
-        raise
+        return _rebuild(projects, problems)
+    finally:
+        # After a promotion next/ is already gone; after a failure this drops what was built.
+        for project in projects:
+            discard_build(project)
 
 
-def _rebuild(projects: list[Project]) -> dict[str, Any]:
-    problems = project_problems()
+def _rebuild(projects: list[Project], problems: dict[str, str]) -> dict[str, Any]:
     if problems:
         raise RebuildStopped(" ".join(problems.values()))
     if not projects:
@@ -233,10 +236,11 @@ def _rebuild(projects: list[Project]) -> dict[str, Any]:
                 f"{project.label}: the schema could not be generated from {project.endpoint_url} ({exc})."
             ) from exc
 
-    # 4. Refresh the query validator's schema and prefixes (each project's prefixes.json)
-    #    from the VoID just written, so it never validates against a stale copy.
+    # 4. The query validator's schema and prefixes (each project's prefixes.json), from the
+    #    VoID just written. Built aside; the live validator switches only after the swap.
+    metadata = EndpointsMetadataManager(projects, auto_init=False)
     try:
-        endpoints_metadata.refresh()
+        metadata.refresh()
     except Exception as exc:
         raise RebuildStopped(f"The query validator's schema could not be refreshed ({exc}).") from exc
 
@@ -265,7 +269,7 @@ def _rebuild(projects: list[Project]) -> dict[str, Any]:
     triples = sum(fp.triples for fp in fingerprints.values())
     class_count = sum(len(fp.classes) for fp in fingerprints.values())
 
-    doc_count = init_vectordb(collection_name=target)
+    doc_count = init_vectordb(collection_name=target, projects=projects, prefixes_map=metadata.prefixes_map)
     if not doc_count:
         raise RebuildStopped("Indexing produced 0 documents — refusing to swap the alias.")
 
@@ -309,8 +313,11 @@ def _rebuild(projects: list[Project]) -> dict[str, Any]:
             except Exception as exc:
                 logger.warning("Could not remove the superseded collection %s: %s", name, exc)
 
-    # The project files may have been uploaded since the last start: serve the new ones.
+    # The new index is live: make the files it was built from live too, then serve them.
+    for project in projects:
+        promote(project)
     reload_projects()
+    endpoints_metadata.reload()
 
     result = {
         "collection": target,

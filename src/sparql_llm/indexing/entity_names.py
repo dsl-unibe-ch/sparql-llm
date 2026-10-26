@@ -99,7 +99,8 @@ def build_entity_names(project: Project, fetch: Callable[..., Any] = query_sparq
         rows = fetch_entities(project, fetch)
         if not rows:
             raise ValueError("the endpoint returned no entities")
-        previous = _previous_count(path, _source(project))
+        # The baseline is the list in service, not what an earlier attempt left in next/.
+        previous = _previous_count(project.live_entity_names_path, _source(project))
         if previous and len(rows) < MIN_KEPT_FRACTION * previous:
             # A short page is read as "done", so an endpoint row cap would truncate the list
             # without an error. A large drop is far likelier to be that than real deletions.

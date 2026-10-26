@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from sparql_llm.agent import main
 from sparql_llm.indexing.rebuild import lock_file
-from sparql_llm.project_files import list_files, restore_previous, save_upload, validate_upload
+from sparql_llm.project_files import file_path, list_files, restore_previous, save_upload, validate_upload
 
 ADMIN = SimpleNamespace(id=1, email="stephen@example.org", is_superuser=False, is_curator=True, is_active=True)
 USER = SimpleNamespace(id=2, email="user@example.org", is_superuser=False, is_curator=False, is_active=True)
@@ -86,16 +86,23 @@ def test_unknown_file_name_rejected(norssit_project, client_as):
     assert validate_upload("norssit", "users.db", b"x")
 
 
-def test_save_keeps_prev_and_undo_restores(norssit_project):
+def test_save_keeps_the_upload_pending_and_undo_restores_a_promoted_file(norssit_project):
+    from sparql_llm.project import load_project, promote
+
     old = norssit_project.dataset_path.read_text(encoding="utf-8")
     save_upload("norssit", "dataset.md", "## New\n\nVäkkärä.\n".encode("utf-8"), "stephen@example.org")
-    assert norssit_project.dataset_path.read_text(encoding="utf-8") == "## New\n\nVäkkärä.\n"
-    assert (norssit_project.dir / "dataset.md.prev").read_text(encoding="utf-8") == old
+    assert norssit_project.dataset_path.read_text(encoding="utf-8") == old  # not live yet
     listed = {f["name"]: f for f in list_files("norssit")}
     assert listed["dataset.md"]["uploaded_by"] == "stephen@example.org"
+    assert listed["dataset.md"]["pending"] is True
 
-    restore_previous("norssit", "dataset.md")
-    assert norssit_project.dataset_path.read_text(encoding="utf-8") == old
+    promote(load_project(norssit_project.dir.parent, "norssit", candidate=True))  # what a rebuild does
+    assert norssit_project.dataset_path.read_text(encoding="utf-8") == "## New\n\nVäkkärä.\n"
+    assert (norssit_project.dir / "dataset.md.prev").read_text(encoding="utf-8") == old
+
+    restore_previous("norssit", "dataset.md")  # stages the previous version for the next rebuild
+    assert {f["name"]: f for f in list_files("norssit")}["dataset.md"]["pending"] is True
+    assert file_path("norssit", "dataset.md").read_text(encoding="utf-8") == old
 
 
 def test_upload_route_saves_and_download_returns_it(norssit_project, client_as):

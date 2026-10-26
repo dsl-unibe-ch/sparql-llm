@@ -9,11 +9,11 @@ from pathlib import Path
 import pytest
 
 FIXTURES = Path(__file__).parent / "fixtures"
-REPO_DATA = Path(__file__).parent.parent / "data"
+REPO_SEEDS = Path(__file__).parent.parent / "projects"
 
 SWISS_ENDPOINT = "https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter"
 
-# A minimal SDHSS-like project, used until data/swiss-elites/ exists in the repo.
+# A minimal SDHSS-like project, used if the shipped Swiss seed is missing.
 MINIMAL_SWISS = {
     "id": "swiss-elites",
     "label": "Swiss Elites",
@@ -64,7 +64,7 @@ NORSSIT = {
 def _write_swiss(data_dir: Path) -> None:
     target = data_dir / "swiss-elites"
     target.mkdir(parents=True, exist_ok=True)
-    source = REPO_DATA / "swiss-elites"
+    source = REPO_SEEDS / "swiss-elites"
     if (source / "project.json").is_file():
         for name in ("project.json", "dataset.md", "examples.md"):
             if (source / name).is_file():
