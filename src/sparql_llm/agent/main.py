@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from sparql_llm.agent.graph import get_graph, graph
+from sparql_llm.agent.request_project import ProjectRefused, resolve_request_project
 from sparql_llm.agent.roles import (
     ROLE_LABELS,
     USER,
@@ -848,6 +849,8 @@ class ChatCompletionRequest(BaseModel):
     max_tool_iterations: int = settings.default_max_tool_iterations
     headers: dict[str, str] = {}
     session_id: str | None = None
+    #: The selected dataset's id; empty = the first one the user may ask.
+    project: str = ""
 
 
 def convert_chunk_to_dict(obj: Any) -> Any:
@@ -1022,14 +1025,24 @@ async def chat(
     if not question:
         raise ValueError("No question provided")
 
+    # The dataset is the user's selection, checked here; nothing downstream may change it.
+    refusal = ""
+    try:
+        project = resolve_request_project(chat_request.project, _user)
+    except ProjectRefused as e:
+        refusal = str(e)
+
     # MCP tools mode needs tool calling, which some GPUStack deployments (e.g. qwen3-vl)
     # reject. Say so up front rather than failing mid-stream.
-    if chat_request.use_tools and chat_request.model in settings.tool_incapable_models:
+    if not refusal and chat_request.use_tools and chat_request.model in settings.tool_incapable_models:
         selected_name = chat_request.model.split("/", 1)[-1]
-        msg = (
+        refusal = (
             f"⚠️ The model **{selected_name}** does not support tool calling, so it can't be used in "
             f"**MCP tools** mode.\n\nEither turn MCP tools off, or pick a different tool-capable model."
         )
+
+    if refusal:
+        msg = refusal
 
         async def _reject() -> AsyncGenerator[str, Any]:
             payload = {
@@ -1086,6 +1099,7 @@ async def chat(
             "max_try_fix_sparql": max_try,
             "max_tool_iterations": max_tool_iterations,
             "natural_language_only": chat_request.natural_language_only,
+            "project": project.id,
         },
         metadata=langfuse_metadata,
         recursion_limit=recursion_limit,

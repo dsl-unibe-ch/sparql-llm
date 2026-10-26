@@ -238,6 +238,14 @@ class Configuration:
         },
     )
 
+    project: str = field(
+        default="",
+        metadata={
+            "description": "The id of the dataset this request is answered from, checked by the chat endpoint. "
+            "Empty = the first dataset."
+        },
+    )
+
     natural_language_only: bool = field(
         default=False,
         metadata={
