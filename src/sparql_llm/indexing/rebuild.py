@@ -63,9 +63,17 @@ def _now() -> str:
 def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     """Write via a temp file + replace so a reader never sees a half-written file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
+    tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}-{threading.get_ident()}")
     tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    # On Windows the replace is refused while a reader (the status poll) has the file open.
+    for attempt in range(10):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 9:
+                raise
+            time.sleep(0.1)
 
 
 def read_job() -> dict[str, Any]:

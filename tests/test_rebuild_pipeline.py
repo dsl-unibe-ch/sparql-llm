@@ -90,3 +90,21 @@ def test_rebuild_reloads_projects_after_success(pipeline):
     assert job["state"] == "done"
     assert "Norssit: Person 10,137 · 330 → 40 classes" in job["message"]
     assert job["projects"]["norssit"]["void"]["classes_kept"] == 40
+
+
+def test_job_status_write_retries_a_briefly_locked_file(norssit_project, monkeypatch: pytest.MonkeyPatch):
+    # On Windows, replacing a file that a status poll has open is refused for a moment.
+    real_replace = rebuild.os.replace
+    attempts = []
+
+    def flaky(src, dst):
+        attempts.append(dst)
+        if len(attempts) == 1:
+            raise PermissionError(5, "Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(rebuild.os, "replace", flaky)
+    monkeypatch.setattr(rebuild.time, "sleep", lambda s: None)
+    rebuild._set_job("running", "Checking…")
+    assert len(attempts) == 2
+    assert rebuild.read_job()["message"] == "Checking…"
