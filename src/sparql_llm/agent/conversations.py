@@ -54,6 +54,8 @@ class StoredMessage(BaseModel):
 
 class SaveRequest(BaseModel):
     messages: list[StoredMessage]
+    #: The dataset the chat asks about, as the page sends it; empty (an older page) = the first.
+    project: str = ""
 
 
 class RenameRequest(BaseModel):
@@ -115,7 +117,17 @@ def _filename(title: str, extension: str) -> str:
 
 
 def _summary(conv: Conversation) -> dict[str, Any]:
-    return {"id": conv.id, "title": conv.title, "updated_at": conv.updated_at.isoformat()}
+    return {"id": conv.id, "title": conv.title, "updated_at": conv.updated_at.isoformat(), "project": conv.project}
+
+
+def _dataset(requested: str) -> str:
+    """The dataset a chat is saved under: the one named if it exists, else the first."""
+    from sparql_llm.datasets import list_dataset_ids
+
+    ids = list_dataset_ids()
+    if requested in ids:
+        return requested
+    return ids[0] if ids else ""
 
 
 async def _owned(session: AsyncSession, conversation_id: str, user: User) -> Conversation:
@@ -136,16 +148,15 @@ async def delete_conversations_of(session: AsyncSession, user_id: uuid.UUID) -> 
 
 @router.get("")
 async def list_conversations(
+    project: str | None = Query(None),
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ) -> list[dict[str, Any]]:
-    """The user's chats for the sidebar, most recently active first."""
-    result = await session.execute(
-        select(Conversation)
-        .where(Conversation.user_id == user.id)
-        .order_by(Conversation.updated_at.desc())
-        .limit(LIST_LIMIT)
-    )
+    """The user's chats for the sidebar, most recently active first; only one dataset's with ``project``."""
+    query = select(Conversation).where(Conversation.user_id == user.id)
+    if project is not None:
+        query = query.where(Conversation.project == project)
+    result = await session.execute(query.order_by(Conversation.updated_at.desc()).limit(LIST_LIMIT))
     return [_summary(conv) for conv in result.scalars()]
 
 
@@ -183,10 +194,15 @@ async def save_conversation(
     if conv is not None and conv.user_id != user.id:
         raise HTTPException(status_code=404, detail="Conversation not found")
     if conv is None:
-        conv = Conversation(id=conversation_id, user_id=user.id, title=title_from(messages))
+        conv = Conversation(
+            id=conversation_id, user_id=user.id, title=title_from(messages), project=_dataset(payload.project)
+        )
         session.add(conv)
     elif not conv.title:
         conv.title = title_from(messages)
+    # A chat stays with the dataset it started on.
+    if not conv.project:
+        conv.project = _dataset(payload.project)
     conv.messages = messages
     conv.updated_at = now_utc()
     await session.commit()

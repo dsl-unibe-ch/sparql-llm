@@ -83,9 +83,11 @@ if settings.auth_enabled:
         cookie_transport,
         create_db_and_tables,
         current_active_user,
+        engine,
         fastapi_users,
         get_async_session,
         get_jwt_strategy,
+        migrate_conversation_project,
     )
     from sparql_llm.agent.conversations import delete_conversations_of
     from sparql_llm.agent.conversations import router as conversations_router
@@ -122,6 +124,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.auth_enabled:
         pathlib.Path(settings.auth_db_path).parent.mkdir(parents=True, exist_ok=True)
         await create_db_and_tables()
+        # Chats saved before there were several datasets belong to the first one.
+        dataset_ids = list_dataset_ids()
+        if dataset_ids:
+            await migrate_conversation_project(engine, dataset_ids[0])
         # Create the initial admin account when one is configured and missing.
         if settings.admin_email and settings.admin_password:
             async with async_session_maker() as session:

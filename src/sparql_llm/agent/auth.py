@@ -50,6 +50,8 @@ class Conversation(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(GUID, ForeignKey("user.id"), nullable=False)
     title: Mapped[str] = mapped_column(String(120), default="", nullable=False)
     messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
+    #: The dataset the chat asked about; the history lists only the selected dataset's chats.
+    project: Mapped[str] = mapped_column(String(64), default="", server_default="", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
 
@@ -77,6 +79,28 @@ async def create_db_and_tables() -> None:
         # create_all never alters an existing table, so a database created before the
         # curator role existed gets the column added here.
         await conn.run_sync(ensure_role_column)
+
+
+async def migrate_conversation_project(engine: Any, first_project_id: str) -> bool:
+    """Give every chat saved before datasets existed to the first dataset. Idempotent.
+
+    ``create_all`` never alters an existing table, so the column is added here; then each
+    chat without a dataset gets the first one. Returns whether anything changed.
+    """
+    async with engine.begin() as conn:
+        rows = (await conn.exec_driver_sql('PRAGMA table_info("conversation")')).fetchall()
+        columns = {row[1] for row in rows}
+        if not columns:
+            return False
+        added = "project" not in columns
+        if added:
+            await conn.exec_driver_sql(
+                "ALTER TABLE conversation ADD COLUMN project VARCHAR(64) NOT NULL DEFAULT ''"
+            )
+        updated = await conn.exec_driver_sql(
+            "UPDATE conversation SET project = ? WHERE project = ''", (first_project_id,)
+        )
+        return added or bool(updated.rowcount)
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession, None]:

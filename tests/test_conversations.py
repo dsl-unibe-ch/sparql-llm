@@ -85,6 +85,7 @@ def client(tmp_path):
     test_client = TestClient(app)
     test_client.login_as = lambda user: current.__setitem__("user", user)  # type: ignore[attr-defined]
     test_client.session_maker = session_maker  # type: ignore[attr-defined]
+    test_client.engine = engine  # type: ignore[attr-defined]
     return test_client
 
 
@@ -244,3 +245,50 @@ def test_removing_a_user_removes_their_chats(client):
     assert [c["id"] for c in client.get("/conversations").json()] == ["bob-chat"]
     client.login_as(ALICE)
     assert client.get("/conversations").json() == []
+
+
+TWO = (
+    {"id": "swiss-elites", "label": "Swiss", "endpoint_url": "https://s.example/sparql"},
+    {"id": "norssit", "label": "Norssit", "endpoint_url": "https://n.example/sparql"},
+)
+
+
+def test_old_chats_belong_to_the_first_dataset_after_upgrade(client, use_projects):
+    from sparql_llm.agent.auth import migrate_conversation_project
+
+    use_projects(*TWO)
+    _save(client, "old1")
+    _save(client, "old2")
+
+    async def downgrade():
+        # The database as it is on the server today: no project column.
+        async with client.engine.begin() as conn:
+            await conn.exec_driver_sql("ALTER TABLE conversation DROP COLUMN project")
+
+    asyncio.run(downgrade())
+    assert asyncio.run(migrate_conversation_project(client.engine, "swiss-elites")) is True
+    assert asyncio.run(migrate_conversation_project(client.engine, "swiss-elites")) is False
+
+    listed = client.get("/conversations?project=swiss-elites").json()
+    assert sorted(c["id"] for c in listed) == ["old1", "old2"]
+    assert client.get("/conversations?project=norssit").json() == []
+
+
+def test_history_is_filtered_by_dataset(client, use_projects):
+    use_projects(*TWO)
+    _save(client, "s1", project="swiss-elites")
+    _save(client, "n1", project="norssit")
+
+    assert [c["id"] for c in client.get("/conversations?project=norssit").json()] == ["n1"]
+    assert [c["id"] for c in client.get("/conversations?project=swiss-elites").json()] == ["s1"]
+    assert sorted(c["id"] for c in client.get("/conversations").json()) == ["n1", "s1"]
+
+
+def test_saving_records_the_dataset(client, use_projects):
+    use_projects(*TWO)
+    _save(client, "n1", project="norssit")
+    _save(client, "s1")
+
+    assert client.get("/conversations/n1").json()["project"] == "norssit"
+    # A save without a dataset (an older page) belongs to the first one.
+    assert client.get("/conversations/s1").json()["project"] == "swiss-elites"
