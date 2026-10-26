@@ -181,8 +181,9 @@ def build_project_docs(project: Project) -> list[Document]:
     term_map: dict = {}
     shape_map: dict = {}
     if project.ontology_from_endpoint:
-        term_map = fetch_ontology_terms(endpoint_url, converter)
-        shape_map = fetch_shacl_shapes(endpoint_url, converter)
+        post = project.method == "POST"
+        term_map = fetch_ontology_terms(endpoint_url, converter, post=post)
+        shape_map = fetch_shacl_shapes(endpoint_url, converter, post=post)
 
     void_docs: list[Document] = []
     if project.void_path.is_file():

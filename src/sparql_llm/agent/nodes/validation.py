@@ -10,7 +10,7 @@ from sparql_llm.agent.prompts import FIX_QUERY_PROMPT
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration
 from sparql_llm.indexing.index_resources import endpoints_metadata
-from sparql_llm.project import allowed_endpoint
+from sparql_llm.project import allowed_endpoint, post_for
 from sparql_llm.utils import logger, query_sparql, strip_think_blocks
 from sparql_llm.validate_sparql import validate_sparql_in_msg
 
@@ -115,7 +115,7 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
                         endpoint_url,
                         timeout=10,
                         check_service_desc=False,
-                        post=False,
+                        post=post_for(endpoint_url),
                     )
                     res_bindings = res.get("results", {}).get("bindings", [])
                     if len(res_bindings) == 0:

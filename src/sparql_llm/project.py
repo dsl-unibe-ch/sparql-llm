@@ -272,6 +272,11 @@ def allowed_endpoint(url: str | None) -> tuple[str | None, str]:
     return None, f"Unknown endpoint {url}. Use one of: {', '.join(urls)}."
 
 
+def post_for(endpoint_url: str | None) -> bool:
+    """Whether queries to this endpoint go by POST, as its project says (GET when unknown)."""
+    return any(p.endpoint_url == endpoint_url and p.method == "POST" for p in get_projects())
+
+
 def get_project(project_id: str) -> Project:
     for project in get_projects():
         if project.id == project_id:

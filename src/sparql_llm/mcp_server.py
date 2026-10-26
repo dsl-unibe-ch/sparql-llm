@@ -8,7 +8,7 @@ from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
 from sparql_llm.config import settings
 from sparql_llm.entity_resolver import describe_for_tool, get_resolver
 from sparql_llm.indexing.index_resources import embedding_model, endpoints_metadata, init_vectordb, qdrant_client
-from sparql_llm.project import allowed_endpoint
+from sparql_llm.project import allowed_endpoint, post_for
 from sparql_llm.utils import compress_list, get_prefix_converter, logger, query_sparql
 from sparql_llm.validate_sparql import validate_sparql
 
@@ -275,7 +275,7 @@ Returns:
             return resp_msg
         # Execute the SPARQL query
         try:
-            res = query_sparql(sparql_query, endpoint_url, timeout=10, post=True)
+            res = query_sparql(sparql_query, endpoint_url, timeout=10, post=post_for(endpoint_url))
             bindings = res.get("results", {}).get("bindings")
             if not bindings:
                 # If no results, return a message to ask fix the query

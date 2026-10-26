@@ -114,11 +114,11 @@ def _int_or_none(value: str | None) -> int | None:
         return None
 
 
-def fetch_ontology_terms(endpoint_url: str, converter: curies.Converter) -> dict[str, dict]:
+def fetch_ontology_terms(endpoint_url: str, converter: curies.Converter, post: bool = True) -> dict[str, dict]:
     """Query the endpoint's OWL graphs into ``{curie -> {label, comment, notation, kind}}``."""
     term_map: dict[str, dict] = {}
     try:
-        res = query_sparql(GET_ONTOLOGY_TERMS_QUERY, endpoint_url, post=True, check_service_desc=True)
+        res = query_sparql(GET_ONTOLOGY_TERMS_QUERY, endpoint_url, post=post, check_service_desc=True)
     except Exception as e:
         logger.warning(f"Could not retrieve ontology terms from {endpoint_url}: {e}")
         return term_map
@@ -142,7 +142,7 @@ def fetch_ontology_terms(endpoint_url: str, converter: curies.Converter) -> dict
     return term_map
 
 
-def fetch_shacl_shapes(endpoint_url: str, converter: curies.Converter) -> dict[str, dict]:
+def fetch_shacl_shapes(endpoint_url: str, converter: curies.Converter, post: bool = True) -> dict[str, dict]:
     """Query the endpoint's SHACL graph into ``{class_curie -> {name, properties:[...]}}``.
 
     Property nodes are shared between shapes in this endpoint (the generic
@@ -153,7 +153,7 @@ def fetch_shacl_shapes(endpoint_url: str, converter: curies.Converter) -> dict[s
     """
     shape_map: dict[str, dict] = {}
     try:
-        res = query_sparql(GET_SHACL_SHAPES_QUERY, endpoint_url, post=True, check_service_desc=True)
+        res = query_sparql(GET_SHACL_SHAPES_QUERY, endpoint_url, post=post, check_service_desc=True)
     except Exception as e:
         logger.warning(f"Could not retrieve SHACL shapes from {endpoint_url}: {e}")
         return shape_map

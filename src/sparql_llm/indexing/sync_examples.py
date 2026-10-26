@@ -137,7 +137,7 @@ def normalise_query(query: str, repairs: dict[str, str]) -> str:
     return query
 
 
-def validate(examples: list[Example], endpoint: str) -> tuple[list[Example], list[Example]]:
+def validate(examples: list[Example], endpoint: str, post: bool = False) -> tuple[list[Example], list[Example]]:
     """Execute each query. Returns (accepted, rejected).
 
     A query that errors is rejected — it would poison the corpus. A query that runs but
@@ -148,7 +148,7 @@ def validate(examples: list[Example], endpoint: str) -> tuple[list[Example], lis
     rejected: list[Example] = []
     for example in examples:
         try:
-            rows = query_sparql(example.query, endpoint, timeout=120)["results"]["bindings"]
+            rows = query_sparql(example.query, endpoint, timeout=120, post=post)["results"]["bindings"]
         except Exception as exc:
             example.error = f"{type(exc).__name__}: {exc}"[:300]
             rejected.append(example)
@@ -309,7 +309,7 @@ def sync_curator_examples(
     parsed, already_ours = drop_already_curated(parsed, curated)
     report["skipped_as_curated"] = [e.title for e in already_ours]
 
-    accepted, rejected = validate(parsed, endpoint)
+    accepted, rejected = validate(parsed, endpoint, post=project.method == "POST")
     report["accepted"] = len(accepted)
     report["rejected"] = [
         {"title": e.title, "source": Path(e.source).name, "reason": e.error} for e in rejected
