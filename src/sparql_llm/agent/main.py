@@ -45,7 +45,7 @@ from markupsafe import Markup
 from sparql_llm.config import settings, settings_filepath
 from sparql_llm.datasets import list_dataset_ids
 from sparql_llm.indexing.drift import load_fingerprint
-from sparql_llm.mcp_server import get_mcp_app
+from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
 from sparql_llm.project import get_projects
 from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
@@ -65,7 +65,8 @@ if settings.sentry_url:
 # Initialize Langfuse logs tracing CallbackHandler for Langchain https://langfuse.com/docs/integrations/langchain/example-python-langgraph
 langfuse_handler = [CallbackHandler(update_trace=True)] if os.getenv("LANGFUSE_SECRET_KEY") else []
 
-mcp = get_mcp_app()
+# One MCP app per dataset, made on first use: /mcp/<id>, and bare /mcp for the first dataset.
+mcp_dispatcher = McpDispatcher()
 
 # Login, the users database and the admin pages exist only when auth is enabled.
 if settings.auth_enabled:
@@ -142,7 +143,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     )
                     await session.commit()
                     logger.info(f"🔐 Created initial admin user: {settings.admin_email}")
-    async with mcp.session_manager.run():
+    async with mcp_dispatcher.running():
         yield
 
 
@@ -160,7 +161,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-app.mount("/mcp", mcp.streamable_http_app(), name="mcp")
+app.mount("/mcp", mcp_dispatcher, name="mcp")
 
 
 app.add_middleware(

@@ -1,15 +1,30 @@
-import argparse
-import json
+"""The MCP tools, served per dataset: ``/mcp/<id>``, and bare ``/mcp`` for the first dataset.
 
+Every tool of an app works on the dataset the app was created for: its index, entity
+names, prefixes, schema, endpoint and method. No tool argument can change the dataset.
+The MCP server has no login, so an unpublished dataset's address answers only requests
+carrying the in-memory ``INTERNAL_TOKEN``: the app's own tools agent, serving a curator.
+"""
+
+import argparse
+import contextlib
+import json
+import secrets
+from collections.abc import AsyncIterator, Callable
+from typing import Any
+
+import anyio
+import anyio.abc
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
+from starlette.responses import JSONResponse
 
 from sparql_llm.config import settings
 from sparql_llm.entity_resolver import describe_for_tool, get_resolver
-from sparql_llm.indexing.index_resources import embedding_model, endpoints_metadata, init_vectordb, qdrant_client
+from sparql_llm.indexing.index_resources import embedding_model, endpoints_metadata, qdrant_client
 from sparql_llm.indexing.rebuild import collection_for
-from sparql_llm.project import Project, allowed_endpoint, get_projects, post_for
+from sparql_llm.project import Project, allowed_endpoint, get_project, get_projects, post_for
 from sparql_llm.utils import compress_list, get_prefix_converter, logger, query_sparql
 from sparql_llm.validate_sparql import validate_sparql
 
@@ -45,6 +60,12 @@ the query is probably too restrictive: use a broader, case-insensitive string ma
 prefixes, or break the query into smaller parts."""
 
 
+#: Lets the app's own tools agent use an unpublished dataset's MCP address. Held in memory
+#: only, new at every start: nothing outside this process can know it.
+INTERNAL_TOKEN = secrets.token_urlsafe(32)
+INTERNAL_TOKEN_HEADER = "X-Internal-Token"
+
+
 def _first_project() -> Project:
     return get_projects()[0]
 
@@ -58,8 +79,17 @@ def resolve_endpoint_url(endpoint_url: str, project: Project | None = None) -> t
     return allowed_endpoint(endpoint_url, project or _first_project())
 
 
-def get_mcp_app(enable_resources_info_tool: bool = True) -> FastMCP:
-    """Get the MCP server instance."""
+def get_mcp_app(project_id: str = "", enable_resources_info_tool: bool = True) -> FastMCP:
+    """The MCP server of one dataset (the first one when ``project_id`` is empty).
+
+    Every tool reads the dataset when it runs, so a rebuild's reloaded project is used at
+    once; the server's name, instructions and tool descriptions are fixed when it is made.
+    """
+
+    def _project() -> Project:
+        return get_project(project_id) if project_id else _first_project()
+
+    project = _project()
 
     transport_security = (
         TransportSecuritySettings(
@@ -72,11 +102,12 @@ def get_mcp_app(enable_resources_info_tool: bool = True) -> FastMCP:
     )
 
     # Create MCP server https://github.com/modelcontextprotocol/python-sdk
+    topics = f" ({project.topics})" if project.topics else ""
     mcp = FastMCP(
-        name=f"{settings.app_org} MCP",
+        name=f"{project.org or project.label} MCP",
         debug=True,
         dependencies=["mcp", "qdrant_client", "fastembed", "sparql-llm"],
-        instructions=f"Provide tools to query the {settings.app_name} knowledge graph ({settings.app_topics}) via SPARQL.",
+        instructions=f"Provide tools to query the {project.label} knowledge graph{topics} via SPARQL.",
         json_response=True,
         stateless_http=True,
         streamable_http_path="/",
@@ -84,33 +115,18 @@ def get_mcp_app(enable_resources_info_tool: bool = True) -> FastMCP:
         transport_security=transport_security,
     )
 
-    # Check if the docs collection exists and has data, initialize if not
-    # In prod with multiple workers, auto_init should be set to False to avoid race conditions
+    # A dataset's index is only ever built by its Rebuild (admin page), from checked files.
+    # Building one here would create a plain collection under the name its alias needs.
     try:
-        collection_needs_init = (
-            settings.force_index
-            or not qdrant_client.collection_exists(settings.docs_collection_name)
-            or not qdrant_client.get_collection(settings.docs_collection_name).points_count
-        )
-        if settings.auto_init and collection_needs_init:
-            logger.info("📊 Initializing vectordb...")
-            init_vectordb()
-        elif not settings.auto_init and collection_needs_init:
-            logger.warning(
-                f"⚠️ Collection '{settings.docs_collection_name}' does not exist or is empty. Run the following command to initialize it:\n"
-                "docker compose -f compose.prod.yml exec api uv run src/sparql_llm/indexing/index_resources.py"
-            )
-        else:
-            logger.info(
-                f"✅ Collection '{settings.docs_collection_name}' exists with {qdrant_client.get_collection(settings.docs_collection_name).points_count} points. Skipping initialization."
-            )
+        collection = collection_for(project)
+        if not qdrant_client.collection_exists(collection):
+            logger.warning(f"⚠️ {project.label} has no search index '{collection}' yet: run its Rebuild on the admin page.")
     except Exception as e:
-        logger.error(f"⚠️ Error checking or initializing vectordb: {e}")
-        # Continue without initialization to avoid blocking the app startup
+        logger.error(f"⚠️ Error checking the search index of {project.label}: {e}")
 
     # potential_entities: Potential entities and instances of classes
 
-    search_sparql_docs_tool_desc = f"""Retrieve relevant SPARQL query examples and classes schema to write queries to answer user questions related to {settings.app_topics}
+    search_sparql_docs_tool_desc = f"""Retrieve relevant SPARQL query examples and classes schema to write queries to answer user questions related to {project.topics or project.label}
 
 Args:
     question: The question to be answered with a SPARQL query
@@ -130,7 +146,7 @@ Returns:
                 doc
                 for doc in qdrant_client.query_points(
                     query=search_embeddings,
-                    collection_name=collection_for(_first_project()),
+                    collection_name=collection_for(_project()),
                     limit=settings.default_number_of_retrieved_docs,
                     query_filter=Filter(
                         must=[
@@ -154,7 +170,7 @@ Returns:
                 doc
                 for doc in qdrant_client.query_points(
                     query=search_embeddings,
-                    collection_name=collection_for(_first_project()),
+                    collection_name=collection_for(_project()),
                     limit=settings.default_number_of_retrieved_docs,
                     query_filter=Filter(
                         must_not=[
@@ -191,7 +207,7 @@ Returns:
                 doc
                 for doc in qdrant_client.query_points(
                     query=search_embeddings,
-                    collection_name=collection_for(_first_project()),
+                    collection_name=collection_for(_project()),
                     limit=settings.default_number_of_retrieved_docs,
                     query_filter=Filter(
                         must_not=[
@@ -228,7 +244,7 @@ Returns:
             """
             search_embeddings = next(iter(embedding_model.embed_query([question])))
             relevant_docs = qdrant_client.query_points(
-                collection_name=collection_for(_first_project()),
+                collection_name=collection_for(_project()),
                 query=search_embeddings,
                 limit=settings.default_number_of_retrieved_docs,
                 query_filter=Filter(
@@ -254,7 +270,7 @@ Returns:
         Returns:
             The query results in JSON format
         """
-        project = _first_project()
+        project = _project()
         endpoint_url, _ = resolve_endpoint_url(endpoint_url, project)
         resp_msg = ""
         # First check if query valid based on classes schema and known prefixes
@@ -320,7 +336,7 @@ Returns:
             hints on how to fix it, and includes the auto-fixed query when
             prefix corrections were applied.
         """
-        project = _first_project()
+        project = _project()
         endpoint_url, _ = resolve_endpoint_url(endpoint_url, project)
         validation_output = validate_sparql(
             sparql_query,
@@ -401,7 +417,7 @@ Returns:
             A numbered list of all class names (in compact prefix:LocalName
             form) together with the predicates each class supports.
         """
-        project = _first_project()
+        project = _project()
         endpoint_url, _ = resolve_endpoint_url(endpoint_url, project)
         void_dict = endpoints_metadata.schema_for(project).get(endpoint_url, {})
 
@@ -454,7 +470,7 @@ Returns:
             source endpoint — or a message if no entity index is available.
         """
         # One endpoint, so endpoint_url is accepted for compatibility and ignored.
-        project = _first_project()
+        project = _project()
         return describe_for_tool(get_resolver(project), entity_name, project, entity_type, limit)
 
     @mcp.tool()
@@ -620,6 +636,90 @@ def cli() -> None:
         mcp.run(transport="streamable-http")
     else:
         mcp.run()
+
+
+class McpDispatcher:
+    """The ASGI app mounted at ``/mcp``: ``/mcp/<id>/…`` to that dataset's app, bare ``/mcp/…`` to the first.
+
+    Each dataset's app is made on first use and kept. Its session manager runs in a task of
+    its own inside the task group ``running()`` holds for the app's lifetime: a task group
+    must be left by the task that entered it, never by a request. An unknown id is a 404;
+    an unpublished dataset answers only requests carrying ``INTERNAL_TOKEN``.
+    """
+
+    def __init__(self, app_factory: Callable[[str], tuple[Any, Any]] | None = None) -> None:
+        self._factory = app_factory or self._fastmcp_app
+        self._apps: dict[str, Any] = {}
+        self._tasks: anyio.abc.TaskGroup | None = None
+        self._lock = anyio.Lock()
+
+    @staticmethod
+    def _fastmcp_app(project_id: str) -> tuple[Any, Any]:
+        mcp = get_mcp_app(project_id)
+        return mcp.streamable_http_app(), mcp.session_manager.run()
+
+    @contextlib.asynccontextmanager
+    async def running(self) -> AsyncIterator[None]:
+        async with anyio.create_task_group() as tasks:
+            self._tasks = tasks
+            try:
+                yield
+            finally:
+                self._tasks = None
+                self._apps.clear()
+                tasks.cancel_scope.cancel()
+
+    async def _app(self, project_id: str) -> Any:
+        async with self._lock:
+            if project_id not in self._apps:
+                if self._tasks is None:
+                    raise RuntimeError("The MCP apps are not running (McpDispatcher.running() was not entered).")
+                app, session = self._factory(project_id)
+
+                async def serve(*, task_status: anyio.abc.TaskStatus[None] = anyio.TASK_STATUS_IGNORED) -> None:
+                    async with session:
+                        task_status.started()
+                        await anyio.sleep_forever()
+
+                await self._tasks.start(serve)
+                self._apps[project_id] = app
+            return self._apps[project_id]
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        from sparql_llm.datasets import dataset_state, list_dataset_ids
+
+        if scope["type"] != "http":
+            return
+        # A Mount keeps the full path and extends root_path; route on what is left.
+        root_path = scope.get("root_path", "")
+        path = scope.get("path", "/")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path) :]
+        first, _, rest = path.lstrip("/").partition("/")
+        ids = list_dataset_ids()
+        served = {p.id for p in get_projects()}
+        if not first:
+            project_id, subpath = (ids[0] if ids else ""), path
+        elif first in ids:
+            project_id, subpath = first, "/" + rest
+        else:
+            await JSONResponse({"error": f"There is no dataset '{first}'."}, status_code=404)(scope, receive, send)
+            return
+        if project_id not in served:
+            await JSONResponse({"error": f"The dataset '{project_id}' is not available."}, status_code=404)(
+                scope, receive, send
+            )
+            return
+        if dataset_state(project_id) != "published":
+            headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope.get("headers", [])}
+            token = headers.get(INTERNAL_TOKEN_HEADER.lower(), "")
+            if not secrets.compare_digest(token, INTERNAL_TOKEN):
+                await JSONResponse({"error": "This dataset is not published."}, status_code=403)(scope, receive, send)
+                return
+        if subpath != path:
+            scope = {**scope, "root_path": f"{root_path}/{project_id}"}
+        app = await self._app(project_id)
+        await app(scope, receive, send)
 
 
 # if __name__ == "__main__":

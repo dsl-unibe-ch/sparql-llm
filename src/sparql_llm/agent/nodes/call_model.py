@@ -15,6 +15,7 @@ from sparql_llm.agent.request_project import project_of
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.agent.utils import count_tool_rounds, fenced, get_msg_text, load_chat_model
 from sparql_llm.config import Configuration, settings
+from sparql_llm.mcp_server import INTERNAL_TOKEN, INTERNAL_TOKEN_HEADER
 from sparql_llm.utils import extract_think_blocks, strip_think_blocks
 
 
@@ -39,12 +40,17 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     final_turn = configuration.use_tools and count_tool_rounds(state.messages) >= configuration.max_tool_iterations
 
     # Set up MCP client (experimental — enabled per-request via configuration.use_tools)
+    project = project_of(configuration)
     if configuration.use_tools:
+        # The selected dataset's own MCP address: every tool there works on that dataset only.
+        # The token lets this agent use it before the dataset is published (curators trying it).
+        mcp_url = f"{settings.server_url}/mcp/{project.id}"
         mcp_client = MultiServerMCPClient(
             {
                 "expasy-mcp": {
-                    "url": f"{settings.server_url}/mcp",
+                    "url": mcp_url,
                     "transport": "streamable_http",
+                    "headers": {INTERNAL_TOKEN_HEADER: INTERNAL_TOKEN},
                 }
             }
         )
@@ -53,9 +59,7 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
         except Exception as exc:
             # If the MCP server is unreachable or returns tools we can't load,
             # surface a clear message instead of crashing the whole request.
-            raise RuntimeError(
-                f"Could not load MCP tools from {settings.server_url}/mcp ({type(exc).__name__}: {exc})"
-            ) from exc
+            raise RuntimeError(f"Could not load MCP tools from {mcp_url} ({type(exc).__name__}: {exc})") from exc
 
     model = load_chat_model(configuration).bind_tools(tools) if tools else load_chat_model(configuration)
 
@@ -65,7 +69,6 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
         "messages": [*state.messages, HumanMessage(content=FINAL_TURN_PROMPT)] if final_turn else state.messages,
     }
 
-    project = project_of(configuration)
     if configuration.use_tools:
         sys_prompt = configuration.system_prompt_tools or tools_resolution_prompt(project)
     else:
