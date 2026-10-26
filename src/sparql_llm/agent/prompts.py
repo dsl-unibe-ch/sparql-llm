@@ -1,85 +1,140 @@
-"""Default prompts used by the agent."""
+"""Prompts used by the agent.
+
+The rules are generic and live here. Everything about a dataset (its endpoint, graphs,
+prefixes, quirks and dataset-specific rules) comes from the settings and from each
+project's dataset.md, assembled at call time so a reloaded project takes effect at once.
+Every prompt goes through ChatPromptTemplate, so user-written text is brace-escaped.
+"""
+
+from __future__ import annotations
+
+from sparql_llm.project import Project, get_projects, label_property_names, shorten
 
 FIX_QUERY_PROMPT = """Please fix the query, and try again.
 We suggest you to make the query less restricted, e.g. use a broader regex for string matching instead of exact match, ignore case, make sure you are not overriding an existing variable with BIND.
 or break down your query in smaller parts and check them one by one."""
 
 
-INTRODUCTION_PROMPT = """You are an assistant for the Elites Suisses knowledge graph — an RDF dataset of approximately 58,700 Swiss elites (political, economic, academic, military) curated by the LESSH project. The data covers biographical facts, education, marriages, family relations, organisational memberships, and mandates. Many labels are in French.\n
-Do not answer general knowledge or personal questions; only help with questions that can be answered against this knowledge graph.\n
-"""
+def escape_braces(text: str) -> str:
+    """Make text safe to embed in a ChatPromptTemplate: literal braces are doubled."""
+    return text.replace("{", "{{").replace("}", "}}")
 
 
-EXTRACTION_PROMPT = (
-    INTRODUCTION_PROMPT
-    + """Extract the user's question into a JSON object with EXACTLY these fields (use these field names verbatim, do not paraphrase):
+def _labels(projects: list[Project]) -> str:
+    return " and ".join(p.label for p in projects) or "this"
+
+
+def dataset_section(projects: list[Project]) -> str:
+    """Per project: its endpoint and graphs, then its dataset.md (escaped)."""
+    parts = []
+    for project in projects:
+        lines = []
+        if len(projects) > 1:
+            lines.append(f"### {escape_braces(project.label)}")
+        lines.append(f"Endpoint: {project.endpoint_url} ({project.method} only)")
+        if len(project.graphs) == 1:
+            lines.append(f"Primary named graph: <{project.graphs[0]}> — target it explicitly.")
+        elif project.graphs:
+            graphs = ", ".join(f"<{g}>" for g in project.graphs)
+            lines.append(f"Named graphs holding the data: {graphs} — target them explicitly.")
+        if project.dataset_path.is_file():
+            lines.append("")
+            lines.append(escape_braces(project.dataset_path.read_text(encoding="utf-8").strip()))
+        parts.append("\n".join(lines))
+    return "\n\n".join(parts)
+
+
+def introduction_prompt() -> str:
+    from sparql_llm.config import settings
+
+    projects = get_projects()
+    topics = f" ({escape_braces(settings.app_topics)})" if settings.app_topics else ""
+    return (
+        f"You are an assistant for the {escape_braces(_labels(projects))} knowledge graph{topics}.\n\n"
+        "Do not answer general knowledge or personal questions; only help with questions that can be answered "
+        "against this knowledge graph.\n\n"
+    )
+
+
+def _example_classes(projects: list[Project]) -> str:
+    examples = [
+        f'"{shorten(entity_type.class_iri, project.prefixes)}" ({escape_braces(type_name)})'
+        for project in projects
+        if project.entities
+        for type_name, entity_type in project.entities.types.items()
+    ]
+    return f" Examples: {', '.join(examples)}." if examples else ""
+
+
+def extraction_prompt() -> str:
+    projects = get_projects()
+    return (
+        introduction_prompt()
+        + """Extract the user's question into a JSON object with EXACTLY these fields (use these field names verbatim, do not paraphrase):
 
 - "intent" (string): one of "access_resources" or "general_information".
-    * "access_resources" = the user wants to query the knowledge graph to answer a factual question about Swiss elites. This includes every count or statistic over the data ("how many persons", "how many marriages", "persons per canton"): those are answered by a query.
+    * "access_resources" = the user wants to query the knowledge graph to answer a factual question about its data. This includes every count or statistic over the data ("how many persons", "how many marriages", "persons per place"): those are answered by a query.
     * "general_information" = the user is asking about the project or the service itself, answerable without a query (who made it, which sources and ontologies it uses, what it can do).
-- "extracted_classes" (list of strings): potential RDF class names relevant to the question, in their prefixed form. Examples: "crm:E21" (Person), "crm:E67" (Birth), "crm:E74" (Group), "sdh-slc:C11" (Gender), "sdh-slc:C5" (Membership), "sdh-slc:C3" (Social Relationship, incl. marriages), "sdh-sls:C7" (Obtaining a Study Title), "sdh:C13" (Geographical Place). Empty list if no class is obvious.
+- "extracted_classes" (list of strings): potential RDF class names relevant to the question, in their prefixed form."""
+        + _example_classes(projects)
+        + """ Empty list if no class is obvious.
 - "extracted_entities" (list of strings): names the user mentioned — persons, organisations, places — written as the user wrote them. Not years or numbers. These are looked up in the knowledge graph downstream. Empty list if none.
 - "question_steps" (list of strings): the question decomposed into smaller standalone sub-questions for semantic retrieval. Empty list if the question is already a single step.
 
-Be tolerant of French input — names of people, places, and organisations are commonly written in French.
+Be tolerant of input in other languages — names of people, places, and organisations are often written in the language of the data.
 
 Return ONLY the JSON object, with no surrounding prose and no markdown fences.
 """
-)
+    )
 
 
-RESOLUTION_PROMPT = (
-    INTRODUCTION_PROMPT
-    + """Answer the user's question. If a SPARQL query is needed, produce one — exactly one — and explain it briefly.
+def _entities_rule(projects: list[Project]) -> str:
+    if not any(p.entities for p in projects):
+        return ""
+    return (
+        "- If an ENTITIES FOUND block gives a URI for a name, use that URI in the query (with VALUES); "
+        f"a label filter on {label_property_names(projects)} is only the fallback when no match is listed.\n"
+    )
 
-Endpoint: https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter (GET only)
-Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target it explicitly.
 
-Prefixes:
-- crm:       <http://www.cidoc-crm.org/cidoc-crm/>           — E21 (Person), E67 (Birth), E69 (Death), E74 (Group); P96 (by mother), P97 (from father), P98 (brought into life)
-- sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — note the "-core/" suffix. C5 (Membership — 64k, the largest class: a person's mandate/role in a group), C3 (Social Relationship — this is where marriages/unions live), C4 (Social Relationship Type), C11 (Gender); P1 (membership → person), P2 (membership → group), P15 (relationship → partner, two per relationship), P16 (has relationship type), P23 (has gender). There is NO C9 and NO P20 in this namespace.
-- sdh-sls:   <https://sdhss.org/ontology/social-life-specific/> — social-life-SPECIFIC (NOT "-core/"). C7 (Obtaining a Study Title — the *event*; the title itself is C8), C8 (Study title), C9 (Academic Discipline), C3 (Taking Care of a Person Type — unrelated to education); P9 (was obtained by), P10 (is obtention of), P11 (has academic supervisor), P17 (is delivered by), P19 (is obtained at), P25 (is obtention in)
-- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P9 (has standard label — THE name predicate, a plain literal on Person/Group/Place; person names are stored "Surname, Firstname", e.g. "Brenner, Ernst"), P1 (at some time within — on events), P2 (has birth date — literal directly on the Person), P13 (has death date), P4 / P7 (membership start / end year), P11 (has description), P14 (geo point, WKT literal)
-- sdh:       <https://sdhss.org/ontology/core/>              — C13 (Geographical Place), C51 (Geographical Place Kind); P6 (event took place at), P99
-- swel:      <https://elites-suisses.lod4hss.org/resource/>  — entity URIs (e.g. swel:p12345). NOTE: entity URIs use elites-suisses.lod4hss.org, while the named graph is still swiss-elites.lod4hss.cloud/resource/.
-- xsd:       <http://www.w3.org/2001/XMLSchema#>
+def resolution_prompt() -> str:
+    projects = get_projects()
+    return (
+        introduction_prompt()
+        + "Answer the user's question. If a SPARQL query is needed, produce one — exactly one — and explain it briefly.\n\n"
+        + dataset_section(projects)
+        + """
 
 Rules:
 - Derive answers ONLY from the provided context. Do not invent classes, predicates, or URIs.
-- If an ENTITIES FOUND block gives a URI for a name, use that URI in the query (with VALUES); a label filter on sdh-short:P9 is only the fallback when no match is listed.
-- A query you write has not run yet: never state, guess or tabulate an answer before you have received the results. Write the query and one sentence on what it retrieves; the answer comes once the results are given to you.
+"""
+        + _entities_rule(projects)
+        + """- A query you write has not run yet: never state, guess or tabulate an answer before you have received the results. Write the query and one sentence on what it retrieves; the answer comes once the results are given to you.
 - Put the SPARQL inside a markdown ```sparql codeblock with `#+ endpoint: <URL>` as the first line of the block.
 - Use DISTINCT where helpful and LIMIT 100 unless the user asks for everything.
-- Use the bare class name `crm:E21` (not `crm:E21_Person`) — match the form in the graph.
 - Be concise. Answer the user's question and stop. Do not propose alternative queries, do not enumerate related questions, do not lecture about dataset limitations unless the user asks. If the data needed is not available, say so in one sentence.
 """
-)
+    )
 
 
-# System prompt for the experimental MCP tools (ReAct) mode. Unlike RESOLUTION_PROMPT,
+# System prompt for the experimental MCP tools (ReAct) mode. Unlike the resolution prompt,
 # written for the one-shot pipeline, it drives an agentic loop: the model must use the
 # tools and run its queries before answering, and stop as soon as it has the answer
 # rather than verifying or exploring until the "Max steps" budget runs out.
-TOOLS_RESOLUTION_PROMPT = (
-    INTRODUCTION_PROMPT
-    + """You are an agent that answers questions by USING TOOLS to explore the Elites Suisses knowledge graph. You have these tools:
+def tools_resolution_prompt() -> str:
+    projects = get_projects()
+    return (
+        introduction_prompt()
+        + f"""You are an agent that answers questions by USING TOOLS to explore the {escape_braces(_labels(projects))} knowledge graph. You have these tools:
 - search_sparql_docs: retrieve relevant SPARQL query examples and class schemas for a question.
 - get_classes_schema: get the schema (properties) of specific RDF classes.
 - get_resources_info: look up information about specific resources/URIs.
 - execute_sparql_query: RUN a SPARQL query against the endpoint and get back real results.
 - resolve_entity_uri: find the URI of a person, organisation or place from its name (tolerates word order, accents and typos).
 
-Endpoint: https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter (GET only)
-Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target it explicitly.
-
-Prefixes:
-- crm:       <http://www.cidoc-crm.org/cidoc-crm/>           — E21 (Person), E67 (Birth), P96, P97, P98
-- sdh-slc:   <https://sdhss.org/ontology/social-life-core/>  — C5 (Membership, largest class), C3 (Social Rel. — marriages live here), C4 (Social Rel. Type), C11 (Gender); P1, P2, P15 (partner), P16, P23. No C9, no P20 (note the "-core/" suffix)
-- sdh-sls:   <https://sdhss.org/ontology/social-life-specific/> — social-life-SPECIFIC (NOT "-core/"); education/study per the R2RML mapping: C7 (study/degree title), C9 (study discipline), C3
-- sdh-short: <https://sdhss.org/ontology/shortcuts/>         — P9 (label — THE name predicate; person names are stored "Surname, Firstname", e.g. "Brenner, Ernst"), P1/P2 (dates on events), P4/P7 (membership start/end year), P14 (geo WKT)
-- sdh:       <https://sdhss.org/ontology/core/>              — C13 (Geographical Place), C51 (Place Kind); P6 (took place at)
-- swel:      <https://elites-suisses.lod4hss.org/resource/>  — entity URIs (e.g. swel:p12345). NOTE: entity URIs use elites-suisses.lod4hss.org, while the named graph is still swiss-elites.lod4hss.cloud/resource/.
-- xsd:       <http://www.w3.org/2001/XMLSchema#>
+"""
+        + dataset_section(projects)
+        + """
 
 HOW TO WORK:
 1. ALWAYS call search_sparql_docs first, before writing any query. It returns the real schema and curated example queries: reuse the example closest to the question instead of inventing a pattern. Do not invent classes, predicates, or URIs.
@@ -91,11 +146,10 @@ HOW TO WORK:
 
 Rules:
 - Derive answers ONLY from tool results and the provided schema. Do not invent facts, classes, predicates, or URIs.
-- Use the bare class name `crm:E21` (not `crm:E21_Person`) — match the form in the graph.
 - Use DISTINCT where helpful and LIMIT 100 unless the user asks for everything.
 - If the data needed is not available after a reasonable search, say so in one or two sentences and mention what you tried.
 """
-)
+    )
 
 
 # Sent as the last message of the model's final turn, once the tool-call rounds have
@@ -104,4 +158,3 @@ FINAL_TURN_PROMPT = (
     "Step budget reached: do not call any more tools. Write your final answer now, based only on the tool "
     "results above. If they do not fully answer the question, give what you found and say briefly what is missing."
 )
-

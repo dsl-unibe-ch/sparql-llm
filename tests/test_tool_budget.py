@@ -130,4 +130,4 @@ def test_natural_language_mode_does_not_ask_for_think_blocks(fake_model: _FakeMo
 def test_tools_prompt_renders_as_a_template():
     # The system prompt goes through ChatPromptTemplate, so a stray brace in the
     # prompt text would be read as a template variable and fail every request.
-    ChatPromptTemplate.from_messages([("system", prompts.TOOLS_RESOLUTION_PROMPT)]).invoke({})
+    ChatPromptTemplate.from_messages([("system", prompts.tools_resolution_prompt())]).invoke({})

@@ -17,13 +17,12 @@ schema that cannot be read must stop the rebuild, not leave the assistant with n
 from __future__ import annotations
 
 import os
-import re
 from collections.abc import Callable
 from typing import Any
 
 import rdflib
 
-from sparql_llm.project import Project, SchemaClasses, graph_pattern
+from sparql_llm.project import Project, SchemaClasses, graph_pattern, shorten
 from sparql_llm.utils import logger, query_sparql
 
 
@@ -49,23 +48,6 @@ _OWN_PREFIXES = {
     "xsd": "http://www.w3.org/2001/XMLSchema#",
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
 }
-
-#: A Turtle local name we can write safely: no slash, no trailing dot.
-_LOCAL_NAME = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_.%-]*[A-Za-z0-9_%-])?$")
-
-
-def shorten(iri: str, prefixes: dict[str, str]) -> str:
-    """A prefixed name when the longest matching namespace leaves a valid local name, else <iri>."""
-    best = ""
-    best_ns = ""
-    for prefix, ns in prefixes.items():
-        if iri.startswith(ns) and len(ns) > len(best_ns):
-            best, best_ns = prefix, ns
-    local = iri[len(best_ns) :]
-    if best_ns and _LOCAL_NAME.match(local):
-        return f"{best}:{local}"
-    return f"<{iri}>"
-
 
 def keep_class(iri: str, count: int, cfg: SchemaClasses) -> bool:
     """Whether a class belongs in the schema: not a service class, enough instances, not excluded."""

@@ -7,6 +7,7 @@ Every module asks this registry for the endpoint entries instead of hard-coding 
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -117,6 +118,34 @@ class Project(BaseModel):
             "void_file": str(self.void_path),
             "examples_file": str(self.examples_path),
         }
+
+
+#: A Turtle local name we can write safely: no slash, no trailing dot.
+_LOCAL_NAME = re.compile(r"^[A-Za-z0-9_](?:[A-Za-z0-9_.%-]*[A-Za-z0-9_%-])?$")
+
+
+def shorten(iri: str, prefixes: dict[str, str]) -> str:
+    """A prefixed name when the longest matching namespace leaves a valid local name, else <iri>."""
+    best = ""
+    best_ns = ""
+    for prefix, ns in prefixes.items():
+        if iri.startswith(ns) and len(ns) > len(best_ns):
+            best, best_ns = prefix, ns
+    local = iri[len(best_ns) :]
+    if best_ns and _LOCAL_NAME.match(local):
+        return f"{best}:{local}"
+    return f"<{iri}>"
+
+
+def label_property_names(projects: list[Project] | None = None) -> str:
+    """The configured name/label properties as prefixed names, for prompts and fallback hints."""
+    names = []
+    for project in get_projects() if projects is None else projects:
+        if project.entities:
+            name = shorten(project.entities.label_property, project.prefixes)
+            if name not in names:
+                names.append(name)
+    return " or ".join(names) or "the label property (rdfs:label)"
 
 
 def graph_pattern(graphs: list[str], pattern: str) -> str:

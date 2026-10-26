@@ -2,10 +2,6 @@
 
 The Elites Suisses knowledge graph is an RDF dataset of approximately 58,700 Swiss elites (political, economic, academic, military) curated by the LESSH project. The data covers biographical facts, education, marriages, family relations, organisational memberships, and mandates. Many labels are in French.
 
-## Endpoint and graph
-
-Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target it explicitly.
-
 ## Prefixes
 
 - crm:       <http://www.cidoc-crm.org/cidoc-crm/>           — E21 (Person), E67 (Birth), E69 (Death), E74 (Group); P96 (by mother), P97 (from father), P98 (brought into life)
@@ -18,5 +14,4 @@ Primary named graph: <https://swiss-elites.lod4hss.cloud/resource/> — target i
 
 ## Rules for this dataset
 
-- If an ENTITIES FOUND block gives a URI for a name, use that URI in the query (with VALUES); a label filter on sdh-short:P9 is only the fallback when no match is listed.
 - Use the bare class name `crm:E21` (not `crm:E21_Person`) — match the form in the graph.

@@ -11,7 +11,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from pydantic import BaseModel, Field
 
-from sparql_llm.agent.prompts import EXTRACTION_PROMPT
+from sparql_llm.agent.prompts import extraction_prompt
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.agent.utils import get_msg_text, load_chat_model
 from sparql_llm.config import Configuration
@@ -59,7 +59,7 @@ async def extract_user_question(
 
     prompt_template = ChatPromptTemplate.from_messages(
         [
-            ("system", EXTRACTION_PROMPT),
+            ("system", extraction_prompt()),
             ("placeholder", "{messages}"),
         ]
     )

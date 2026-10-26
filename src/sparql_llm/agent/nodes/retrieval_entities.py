@@ -8,9 +8,10 @@ from langchain_core.runnables import RunnableConfig
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration
 from sparql_llm.entity_resolver import Resolution, get_resolver
+from sparql_llm.project import label_property_names
 from sparql_llm.utils import logger
 
-ENTITIES_PREAMBLE = """--- ENTITIES FOUND ---
+_ENTITIES_PREAMBLE = """--- ENTITIES FOUND ---
 Names from the question, matched against the labels in the knowledge graph. Each candidate says how it matched:
 "exact" (same words), "contains the name" (all its words, plus more such as a first name), "similar spelling",
 or "partial" (the label is only part of the name, e.g. the city "Bern" for "University of Bern" — usually a different entity).
@@ -18,12 +19,16 @@ or "partial" (the label is only part of the name, e.g. the city "Bern" for "Univ
 - If several candidates fit and the question does not say which one, do not guess: tell the user there are several and list them with their years.
 - If candidates share the same label and nothing tells them apart, use all of them in VALUES.
 - Ignore a candidate whose label does not denote the name in the question (a different person or place that merely looks similar).
-- If a name has no match, or you ignore every candidate for it, treat it as not found: fall back to a label filter on sdh-short:P9 and tell the user the name was not found exactly.
+- If a name has no match, or you ignore every candidate for it, treat it as not found: fall back to a label filter on {label} and tell the user the name was not found exactly.
 """
 
 
+def entities_preamble() -> str:
+    return _ENTITIES_PREAMBLE.replace("{label}", label_property_names())
+
+
 def format_entities_message(resolutions: list[Resolution]) -> str:
-    parts = [ENTITIES_PREAMBLE]
+    parts = [entities_preamble()]
     for res in resolutions:
         if not res.candidates:
             parts.append(f'\n"{res.name}": no match.')

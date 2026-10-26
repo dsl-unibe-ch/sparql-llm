@@ -138,7 +138,8 @@ def test_tool_text_without_file_points_to_the_fallback(tmp_path):
     from sparql_llm.entity_resolver import describe_for_tool
 
     text = describe_for_tool(EntityResolver(tmp_path / "absent.json"), "Ernst Brenner")
-    assert "not been built" in text and "Surname, Firstname" in text
+    # The name format is the dataset's business (dataset.md); the hint names the label property.
+    assert "not been built" in text and "sdh-short:P9" in text
 
 
 def test_a_label_that_is_only_part_of_the_name_does_not_hide_the_others(resolver):

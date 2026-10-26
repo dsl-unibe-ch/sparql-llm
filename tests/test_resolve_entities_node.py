@@ -88,31 +88,31 @@ def test_retrieve_question_ignores_node_messages():
 
 
 def test_extraction_no_longer_asks_for_dates():
-    from sparql_llm.agent.prompts import EXTRACTION_PROMPT
+    from sparql_llm.agent.prompts import extraction_prompt
 
-    line = next(l for l in EXTRACTION_PROMPT.splitlines() if '"extracted_entities"' in l)
+    line = next(l for l in extraction_prompt().splitlines() if '"extracted_entities"' in l)
     assert "dates" not in line
 
 
-def test_pipeline_prompt_prefers_resolved_uris():
-    from sparql_llm.agent.prompts import RESOLUTION_PROMPT
+def test_pipeline_prompt_prefers_resolved_uris(swiss_project):
+    from sparql_llm.agent.prompts import resolution_prompt
 
-    assert "ENTITIES FOUND" in RESOLUTION_PROMPT
-    assert "Surname, Firstname" in RESOLUTION_PROMPT
+    assert "ENTITIES FOUND" in resolution_prompt()
+    assert "Surname, Firstname" in resolution_prompt()  # from the Swiss dataset.md
 
 
 def test_tools_prompt_resolves_names_first():
-    from sparql_llm.agent.prompts import TOOLS_RESOLUTION_PROMPT
+    from sparql_llm.agent.prompts import tools_resolution_prompt
 
-    assert "resolve_entity_uri" in TOOLS_RESOLUTION_PROMPT
+    assert "resolve_entity_uri" in tools_resolution_prompt()
 
 
 def test_query_turn_must_not_state_results_before_they_exist():
     # The query-writing turn is streamed to the user before execution; with a resolved URI
     # in hand the model filled in invented spouses ("Emma Bär") as if it had the results.
-    from sparql_llm.agent.prompts import RESOLUTION_PROMPT
+    from sparql_llm.agent.prompts import resolution_prompt
 
-    assert "before you have received the results" in RESOLUTION_PROMPT
+    assert "before you have received the results" in resolution_prompt()
 
 
 def test_values_example_survives_markdown_rendering():

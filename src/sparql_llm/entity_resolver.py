@@ -16,7 +16,7 @@ from pathlib import Path
 
 from rapidfuzz import fuzz, process
 
-from sparql_llm.project import get_projects
+from sparql_llm.project import get_projects, label_property_names
 from sparql_llm.utils import logger
 
 SCORE_CUTOFF = 86
@@ -162,7 +162,7 @@ def describe_for_tool(resolver: EntityResolver, name: str, entity_type: str = ""
     if not resolver.available:
         return (
             "The entity index has not been built yet (admin → Rebuild index). Use a label filter on "
-            'sdh-short:P9 instead; person names are stored "Surname, Firstname".'
+            f"{label_property_names()} instead."
         )
     resolution = resolver.resolve(name, limit=max(limit, 1) * 4)
     candidates = [
@@ -170,7 +170,7 @@ def describe_for_tool(resolver: EntityResolver, name: str, entity_type: str = ""
     ][:limit]
     if not candidates:
         return (
-            f"No entity matching '{name}' was found. Fall back to a label filter on sdh-short:P9 "
+            f"No entity matching '{name}' was found. Fall back to a label filter on {label_property_names()} "
             "and tell the user the name was not found exactly."
         )
     lines = [f"Found {len(candidates)} candidate(s) for '{name}' (a \"partial\" one is only part of the name):"]

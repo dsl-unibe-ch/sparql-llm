@@ -14,7 +14,6 @@ from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing_extensions import TypedDict
 
-from sparql_llm.agent import prompts
 
 # Load .env into the process environment as well, not just into the Settings
 # instance. agent/utils.py reads OPENAI_API_KEY / OPENAI_BASE_URL via os.getenv()
@@ -244,15 +243,15 @@ class Configuration:
     )
 
     system_prompt: str = field(
-        default=prompts.RESOLUTION_PROMPT,
+        default="",
         metadata={
             "description": "The system prompt to use for the agent's interactions."
-            "This prompt sets the context and behavior for the agent."
+            "This prompt sets the context and behavior for the agent. Empty = assembled from the projects."
         },
     )
 
     system_prompt_tools: str = field(
-        default=prompts.TOOLS_RESOLUTION_PROMPT,
+        default="",
         metadata={
             "description": "System prompt used in MCP tools mode (use_tools=True). Unlike system_prompt it "
             "instructs the model to actually execute queries and iterate with the tools rather than "

@@ -10,7 +10,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from sparql_llm.agent.prompts import FINAL_TURN_PROMPT
+from sparql_llm.agent.prompts import FINAL_TURN_PROMPT, resolution_prompt, tools_resolution_prompt
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.agent.utils import count_tool_rounds, fenced, get_msg_text, load_chat_model
 from sparql_llm.config import Configuration, settings
@@ -64,7 +64,10 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
         "messages": [*state.messages, HumanMessage(content=FINAL_TURN_PROMPT)] if final_turn else state.messages,
     }
 
-    sys_prompt = configuration.system_prompt_tools if configuration.use_tools else configuration.system_prompt
+    if configuration.use_tools:
+        sys_prompt = configuration.system_prompt_tools or tools_resolution_prompt()
+    else:
+        sys_prompt = configuration.system_prompt or resolution_prompt()
     if configuration.natural_language_only:
         # The user sees only the prose answer: stream_response strips SPARQL blocks
         # from it, and the queries the model ran are shown in the "Thought process"
