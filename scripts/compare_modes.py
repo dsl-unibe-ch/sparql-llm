@@ -297,6 +297,7 @@ def report(paths: list[Path]) -> None:
 
 
 def main() -> None:
+    global ENDPOINT, EXAMPLES, QUESTIONS, CHAT_URL
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="cmd", required=True)
     common = argparse.ArgumentParser(add_help=False)
@@ -313,7 +314,6 @@ def main() -> None:
     rep = sub.add_parser("report")
     rep.add_argument("paths", type=Path, nargs="+")
     args = parser.parse_args()
-    global ENDPOINT, EXAMPLES, QUESTIONS, CHAT_URL
     CHAT_URL = getattr(args, "chat_url", CHAT_URL)
     project_id = getattr(args, "project", None)
     project = get_project(project_id) if project_id else get_projects()[0]
