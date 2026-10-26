@@ -15,8 +15,8 @@ EXTRACTION_PROMPT = (
     + """Extract the user's question into a JSON object with EXACTLY these fields (use these field names verbatim, do not paraphrase):
 
 - "intent" (string): one of "access_resources" or "general_information".
-    * "access_resources" = the user wants to query the knowledge graph to answer a factual question about Swiss elites.
-    * "general_information" = the user is asking a meta-question about the dataset itself (size, coverage, what's modelled, etc).
+    * "access_resources" = the user wants to query the knowledge graph to answer a factual question about Swiss elites. This includes every count or statistic over the data ("how many persons", "how many marriages", "persons per canton"): those are answered by a query.
+    * "general_information" = the user is asking about the project or the service itself, answerable without a query (who made it, which sources and ontologies it uses, what it can do).
 - "extracted_classes" (list of strings): potential RDF class names relevant to the question, in their prefixed form. Examples: "crm:E21" (Person), "crm:E67" (Birth), "crm:E74" (Group), "sdh-slc:C11" (Gender), "sdh-slc:C5" (Membership), "sdh-slc:C3" (Social Relationship, incl. marriages), "sdh-sls:C7" (Obtaining a Study Title), "sdh:C13" (Geographical Place). Empty list if no class is obvious.
 - "extracted_entities" (list of strings): names the user mentioned — persons, organisations, places — written as the user wrote them. Not years or numbers. These are looked up in the knowledge graph downstream. Empty list if none.
 - "question_steps" (list of strings): the question decomposed into smaller standalone sub-questions for semantic retrieval. Empty list if the question is already a single step.

@@ -36,7 +36,9 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
     search_queries: list[str] = []
 
     if state.structured_question.intent == "general_information":
-        # For general information, search with user question
+        # Meta questions also get the general-information docs. Every question then gets the
+        # examples and schema below: the extraction model labels counting questions ("how many
+        # marriages") as general_information, and the query it then writes needs examples too.
         search_queries.append(user_question)
         search_filter = Filter(
             must=[
@@ -72,68 +74,67 @@ async def retrieve(state: State, config: RunnableConfig) -> dict[str, list[StepO
                     ).points
                     if doc.payload
                 )
-    else:
-        limit = configuration.search_kwargs.get("k", settings.default_number_of_retrieved_docs)
-        if len(state.structured_question.question_steps) > 3:
-            # If there are many steps, we reduce the number of retrieved docs per step to avoid too many docs
-            limit = max(1, limit // 2)
+    limit = configuration.search_kwargs.get("k", settings.default_number_of_retrieved_docs)
+    if len(state.structured_question.question_steps) > 3:
+        # If there are many steps, we reduce the number of retrieved docs per step to avoid too many docs
+        limit = max(1, limit // 2)
 
-        # Get relevant query examples
-        for search_embedding in embedding_model.embed_query([user_question, *state.structured_question.question_steps]):
-            docs.extend(
-                doc
-                for doc in qdrant_client.query_points(
-                    query=search_embedding,
-                    collection_name=settings.docs_collection_name,
-                    limit=limit,
-                    query_filter=Filter(
-                        must=[
-                            FieldCondition(
-                                key="doc_type",
-                                match=MatchValue(value="SPARQL endpoints query examples"),
-                            )
-                        ]
-                    ),
-                ).points
-                # Make sure we don't add duplicate docs
-                if doc.payload
-                and doc.payload.get("answer")
-                not in {existing_doc.payload.get("answer") if existing_doc.payload else None for existing_doc in docs}
-            )
+    # Get relevant query examples
+    for search_embedding in embedding_model.embed_query([user_question, *state.structured_question.question_steps]):
+        docs.extend(
+            doc
+            for doc in qdrant_client.query_points(
+                query=search_embedding,
+                collection_name=settings.docs_collection_name,
+                limit=limit,
+                query_filter=Filter(
+                    must=[
+                        FieldCondition(
+                            key="doc_type",
+                            match=MatchValue(value="SPARQL endpoints query examples"),
+                        )
+                    ]
+                ),
+            ).points
+            # Make sure we don't add duplicate docs
+            if doc.payload
+            and doc.payload.get("answer")
+            not in {existing_doc.payload.get("answer") if existing_doc.payload else None for existing_doc in docs}
+        )
 
-        # Get other relevant documentation (class schemas, general information), driven by
-        # the user's question and sub-steps: a bare extracted IRI like "crm:E21" embeds
-        # poorly, so the extracted classes are only an additional signal.
-        schema_queries: list[str] = [
-            user_question,
-            *state.structured_question.question_steps,
-            *state.structured_question.extracted_classes,
-        ]
-        _seen_queries: set[str] = set()
-        schema_queries = [q for q in schema_queries if q and not (q in _seen_queries or _seen_queries.add(q))]
-        limit = configuration.search_kwargs.get("k", settings.default_number_of_retrieved_docs)
-        if len(schema_queries) > 3:
-            limit = max(1, limit // 2)
-        for search_embedding in embedding_model.embed_query(schema_queries):
-            docs.extend(
-                doc
-                for doc in qdrant_client.query_points(
-                    query=search_embedding,
-                    collection_name=settings.docs_collection_name,
-                    limit=limit,
-                    query_filter=Filter(
-                        must_not=[
-                            FieldCondition(
-                                key="doc_type",
-                                match=MatchValue(value="SPARQL endpoints query examples"),
-                            )
-                        ]
-                    ),
-                ).points
-                if doc.payload
-                and doc.payload.get("answer")
-                not in {existing_doc.payload.get("answer") if existing_doc.payload else None for existing_doc in docs}
-            )
+    # Get other relevant documentation (class schemas, general information), driven by
+    # the user's question and sub-steps: a bare extracted IRI like "crm:E21" embeds
+    # poorly, so the extracted classes are only an additional signal.
+    schema_queries: list[str] = [
+        user_question,
+        *state.structured_question.question_steps,
+        *state.structured_question.extracted_classes,
+    ]
+    _seen_queries: set[str] = set()
+    schema_queries = [q for q in schema_queries if q and not (q in _seen_queries or _seen_queries.add(q))]
+    limit = configuration.search_kwargs.get("k", settings.default_number_of_retrieved_docs)
+    if len(schema_queries) > 3:
+        limit = max(1, limit // 2)
+    for search_embedding in embedding_model.embed_query(schema_queries):
+        docs.extend(
+            doc
+            for doc in qdrant_client.query_points(
+                query=search_embedding,
+                collection_name=settings.docs_collection_name,
+                limit=limit,
+                query_filter=Filter(
+                    must_not=[
+                        FieldCondition(
+                            key="doc_type",
+                            match=MatchValue(value="SPARQL endpoints query examples"),
+                        )
+                    ]
+                ),
+            ).points
+            if doc.payload
+            and doc.payload.get("answer")
+            not in {existing_doc.payload.get("answer") if existing_doc.payload else None for existing_doc in docs}
+        )
 
     # Sort docs by score (highest score first)
     docs.sort(key=lambda x: x.score, reverse=True)
