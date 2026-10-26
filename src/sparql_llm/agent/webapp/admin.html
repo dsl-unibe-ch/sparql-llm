@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Swiss Elites Chat — Admin</title>
+    <title>{{ app_name }} — Admin</title>
     <link rel="icon" type="image/png" href="/assets/sib-logo--jUM9mer.png" />
     <style>
       *, *::before, *::after { box-sizing: border-box; }
@@ -128,7 +128,7 @@
     <header class="site-header">
       <a href="/" class="header-brand">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Swiss Elites Chat
+        {{ app_name }}
         <span class="badge">Beta</span>
       </a>
       <div class="header-actions">
@@ -141,7 +141,7 @@
 
     <div class="main-layout">
       <h1>User management</h1>
-      <p class="subtitle">Manage who can access Swiss Elites Chat. Signed in as <strong>{{ current_user.email }}</strong> ({{ role_labels[current_role] }}).</p>
+      <p class="subtitle">Manage who can access {{ app_name }}. Signed in as <strong>{{ current_user.email }}</strong> ({{ role_labels[current_role] }}).</p>
 
       {% if flash_success %}
       <div class="flash flash-success">{{ flash_success }}</div>

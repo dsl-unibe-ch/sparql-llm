@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import html
 import json
 import logging
 import os
@@ -13,6 +14,8 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import quote_plus
 
+import httpx
+import openai
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, StreamingResponse
@@ -36,9 +39,13 @@ from sparql_llm.agent.roles import (
     role_flags,
     role_of,
 )
+from markupsafe import Markup
+
 from sparql_llm.config import settings, settings_filepath
+from sparql_llm.indexing.drift import load_fingerprint
 from sparql_llm.mcp_server import get_mcp_app
 from sparql_llm.migration import migrate_configured
+from sparql_llm.project import get_projects
 from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
 
 if settings.sentry_url:
@@ -137,12 +144,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         yield
 
 
+def _api_description() -> str:
+    """The OpenAPI description, from the settings and the projects served (F18)."""
+    endpoints = ", ".join(f"{e.get('label')} ({e['endpoint_url']})" for e in settings.endpoints)
+    text = f"Natural-language interface to {endpoints or 'SPARQL endpoints'}."
+    return f"{text} {settings.app_topics}".strip()
+
+
 app = FastAPI(
     title=settings.app_name,
-    description=f"""Natural-language interface to the Elites Suisses knowledge graph
-({settings.endpoints[0]['endpoint_url']}). Ask questions in English or French about
-~58,700 Swiss elites: biographical data, education, family relations, marriages,
-organisational memberships and mandates.""",
+    description=_api_description(),
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -158,7 +169,41 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp")
+def intro_html(text: str) -> Markup:
+    """The app intro as HTML: escaped text with **bold** and [links](https://…) only."""
+    escaped = html.escape(text)
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2" target="_blank">\1</a>', escaped)
+    return Markup(escaped)
+
+
+def project_stats() -> list[dict[str, Any]]:
+    """Entity counts per type from each project's last fingerprint; empty before the first rebuild."""
+    stats = []
+    for project in get_projects():
+        fingerprint = load_fingerprint(project)
+        if not fingerprint or not project.entities:
+            continue
+        for type_name, entity_type in project.entities.types.items():
+            if entity_type.class_iri in fingerprint.classes:
+                stats.append({"label": type_name, "count": fingerprint.classes[entity_type.class_iri]})
+    return stats
+
+
+def site_context(request: Request) -> dict[str, Any]:
+    """Values every page shows: this instance's name, intro, endpoints and counts."""
+    return {
+        "app_name": settings.app_name,
+        "app_intro": intro_html(settings.app_intro),
+        "app_description": re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", settings.app_intro).replace("**", "")
+        or f"Natural-language interface to {settings.app_name}.",
+        "app_homepage_url": settings.app_homepage_url,
+        "endpoints": [{"label": e.get("label"), "endpoint_url": e["endpoint_url"]} for e in settings.endpoints],
+        "stats": project_stats(),
+    }
+
+
+templates = Jinja2Templates(directory="src/sparql_llm/agent/webapp", context_processors=[site_context])
 
 # ── Auth routes ────────────────────────────────────────────────────────────────
 if settings.auth_enabled:
@@ -920,7 +965,6 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
             config.get("configurable", {}).get("model"),
             exc,
         )
-        reason = f"{type(exc).__name__}: {exc}".strip()
         hint = ""
         if use_tools:
             hint = (
@@ -931,13 +975,22 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
         error_msg = {
             "event": "messages",
             "data": [
-                {"content": f"⚠️ The request could not be completed.\n\n`{reason}`{hint}", "type": "AIMessageChunk"},
+                {"content": f"⚠️ {chat_error_message(exc)}{hint}", "type": "AIMessageChunk"},
                 {"langgraph_node": "call_model"},
             ],
         }
         yield f"data: {json.dumps(error_msg)}\n\n"
         await asyncio.sleep(0)
     yield "data: [DONE]"
+
+
+def chat_error_message(exc: Exception) -> str:
+    """What the user reads when answering failed: plain words, one line (F13)."""
+    if isinstance(exc, openai.APIConnectionError | httpx.TimeoutException | TimeoutError):
+        # APITimeoutError is an APIConnectionError: the model server did not answer.
+        return "The language model did not answer in time. Please try again, or pick another model."
+    reason = (str(exc).strip().splitlines() or [type(exc).__name__])[0].rstrip(".")
+    return f"Something went wrong while answering: {reason}."
 
 
 def tool_capable_models() -> list[str]:
@@ -1048,7 +1101,11 @@ async def chat(
             media_type="text/event-stream",
         )
 
-    response = await run_graph.ainvoke(inputs, config=config)
+    try:
+        response = await run_graph.ainvoke(inputs, config=config)
+    except Exception as exc:
+        error_logger.exception("Chat failed (model=%s): %s", chat_request.model, exc)
+        return JSONResponse(content={"messages": [{"role": "assistant", "content": chat_error_message(exc)}]})
     # Convert LangChain message objects to dicts for JSON serialization
     response_dict = convert_chunk_to_dict(response)
     if chat_request.natural_language_only:

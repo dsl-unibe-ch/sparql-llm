@@ -28,6 +28,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sparql_llm.agent.auth import Conversation, User, current_active_user, get_async_session
+from sparql_llm.config import settings
 
 #: A saved chat carries every tool result, SPARQL JSON included, so it is capped.
 MAX_BODY_BYTES = 2_000_000
@@ -79,7 +80,7 @@ def conversation_to_markdown(
     """
     parts = [f"# {title}"]
     if created_at:
-        parts.append(f"_Swiss Elites Chat · started {created_at:%Y-%m-%d %H:%M} UTC_")
+        parts.append(f"_{settings.app_name} · started {created_at:%Y-%m-%d %H:%M} UTC_")
     for msg in messages:
         if msg["role"] == "user":
             parts.append(f"## You\n\n{msg['content']}")

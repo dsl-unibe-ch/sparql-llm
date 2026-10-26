@@ -441,10 +441,10 @@ Returns:
         candidates, with birth and death years for persons.
 
         Args:
-            entity_name: The human-readable name or label to search for
-                (e.g. "Ernst Brenner", "Universität Bern").
-            entity_type: Optional type filter: "Person", "Group", "Place",
-                "Discipline" or "Study title".  Leave empty to search all types.
+            entity_name: The human-readable name or label to search for,
+                e.g. a person's full name, an organisation or a place.
+            entity_type: Optional type filter, one of the dataset's entity types
+                (e.g. "Person").  Leave empty to search all types.
             endpoint_url: Ignored (there is a single endpoint); kept for
                 compatibility.
             limit: Maximum number of candidate URIs to return (default 5).

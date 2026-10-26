@@ -3,10 +3,10 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Swiss Elites Chat</title>
+    <title>{{ app_name }}</title>
     <meta
       name="description"
-      content="Natural-language interface to the Elites Suisses knowledge graph — ~58,700 Swiss elites with biographical data, family relations, education, and organisational affiliations."
+      content="{{ app_description }}"
     />
     <link rel="icon" type="image/png" href="/assets/sib-logo--jUM9mer.png" />
     <style>
@@ -97,7 +97,7 @@
     <header class="site-header">
       <a href="/" class="header-brand">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-        Swiss Elites Chat
+        {{ app_name }}
         <span class="badge">Beta</span>
       </a>
       <div class="header-actions">
@@ -148,22 +148,16 @@
     <!-- Collapsible info banner -->
     <div class="info-banner" id="info-banner">
       <div class="info-banner-text">
-        A natural-language interface to the <strong>Elites Suisses</strong> knowledge graph of the
-        <a href="https://elites-suisses.lod4hss.org/" target="_blank">LESSH project</a>
-        (Université de Lausanne / Universität Bern). Ask in English or French about
-        <strong>~58,700 Swiss political, economic, academic and military figures</strong>
-        of the 19th–20th centuries: their mandates and memberships, studies, families and marriages.
+        {{ app_intro }}
         Every answer comes from a SPARQL query run on the
-        <a href="https://swiss-elites.lod4hss.cloud/wisski/endpoint/default_wisski_distillery_adapter" target="_blank">public endpoint</a>;
+        {% for ep in endpoints %}<a href="{{ ep.endpoint_url }}" target="_blank">{{ ep.label or "public endpoint" }} endpoint</a>{% if not loop.last %}, {% endif %}{% endfor %};
         the steps under each answer show the query and the examples it was built from.
+        {% if stats %}
         <div class="info-pills">
-          <span class="info-pill">58,729 persons</span>
-          <span class="info-pill">64,290 memberships &amp; mandates</span>
-          <span class="info-pill">16,572 study titles</span>
-          <span class="info-pill">5,631 relationships, incl. marriages</span>
-          <span class="info-pill">3,608 organisations · 3,290 places</span>
-          <span class="info-pill">CIDOC CRM · SDHSS ontologies</span>
+          {% for s in stats %}<span class="info-pill">{{ s.label }}: {{ "{:,}".format(s.count) }}</span>
+          {% endfor %}
         </div>
+        {% endif %}
       </div>
       <button class="info-toggle" onclick="toggleInfo()" title="Collapse info" id="info-toggle-btn">Hide ↑</button>
     </div>
