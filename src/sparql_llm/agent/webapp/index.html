@@ -185,14 +185,14 @@
         </div>
 
         {% if datasets | length > 1 %}
-        <nav id="dataset-picker" aria-label="Datasets" style="padding: 0.5rem 0.5rem 0.75rem; border-bottom: 1px solid #e2e8f0; margin-bottom: 0.5rem;">
-          <div style="font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; padding: 0.25rem 0.5rem;">Datasets</div>
-          {% for d in datasets %}
-          <a href="/?dataset={{ d.id }}"{% if dataset and d.id == dataset.id %} aria-current="page"{% endif %}
-             style="display: block; padding: 0.4rem 0.5rem; border-radius: 8px; font-size: 0.85rem; text-decoration: none; color: #1e293b;{% if dataset and d.id == dataset.id %} background: #e2e8f0; font-weight: 600;{% endif %}">
-            {{ d.label }}{% if not d.published %}<span style="display: block; font-size: 0.68rem; font-weight: 500; color: #b45309;">only visible to curators</span>{% endif %}
-          </a>
-          {% endfor %}
+        <nav id="dataset-picker" aria-label="Dataset" style="padding: 0.5rem 0.75rem 0.75rem; border-bottom: 1px solid #e2e8f0; margin-bottom: 0.5rem;">
+          <label for="dataset-select" style="display: block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; padding: 0.25rem 0 0.35rem;">Dataset</label>
+          <!-- A dropdown, so it takes the same room with two datasets or twenty. -->
+          <select id="dataset-select" style="width: 100%; padding: 0.45rem 0.5rem; font-size: 0.85rem; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #1e293b;">
+            {% for d in datasets %}
+            <option value="{{ d.id }}"{% if dataset and d.id == dataset.id %} selected{% endif %}>{{ d.label }}{% if not d.published %} (only visible to curators){% endif %}</option>
+            {% endfor %}
+          </select>
         </nav>
         {% endif %}
 
@@ -379,7 +379,8 @@
           // Also when it went to the header first: put its sidebar look back.
           picker.setAttribute("style", pickerStyle || "");
           picker.style.display = "block";
-          picker.querySelectorAll("div, span").forEach(function (el) { el.style.display = "block"; el.style.marginLeft = ""; });
+          picker.querySelector("label").style.display = "block";
+          picker.querySelector("select").style.width = "100%";
           aside.insertBefore(picker, aside.firstChild);
           placed = true;
         }
@@ -395,10 +396,17 @@
           var actions = document.querySelector(".header-actions");
           actions.insertBefore(picker, actions.firstChild);
           picker.removeAttribute("style");
-          picker.querySelectorAll("div").forEach(function (d) { d.style.display = "none"; });
-          picker.querySelectorAll("span").forEach(function (sp) { sp.style.display = "inline"; sp.style.marginLeft = "0.35rem"; });
+          picker.querySelector("label").style.display = "none";
+          picker.querySelector("select").style.width = "auto";
         }
       }, 3000);
+      // Switching dataset reloads the page on it: a new, empty chat for that dataset.
+      var select = document.getElementById("dataset-select");
+      if (select) {
+        select.addEventListener("change", function () {
+          location.href = "/?dataset=" + encodeURIComponent(select.value);
+        });
+      }
     })();
 
     // ── Fetch models and wire up the chat element ──

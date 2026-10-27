@@ -83,8 +83,8 @@ def test_user_does_not_see_unpublished_dataset_in_picker(datasets):
     curator_page = _client_as(CURATOR).get("/").text
 
     assert _selected(user_page) == "swiss"
-    assert '?dataset=norssit"' not in user_page
-    assert '?dataset=norssit"' in curator_page
+    assert '<option value="norssit"' not in user_page
+    assert '<option value="norssit"' in curator_page
     assert "only visible to curators" in curator_page
 
 

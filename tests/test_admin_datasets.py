@@ -101,5 +101,5 @@ def test_admin_cards_follow_the_selected_dataset(two, tmp_path: Path):
     assert 'data-selected-dataset="b"' in page
     assert "Alpha" in page and "published" in page
     assert "ready, not published" in page
-    assert "Gamma" in page and ">new<" in page
+    assert "Gamma — new" in page
     assert list(files["projects"]) == ["b"]
