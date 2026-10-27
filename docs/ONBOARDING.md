@@ -30,13 +30,15 @@ Collect these before you start. Ask the dataset's maintainers, or look at the en
 
 An **admin** adds the dataset; no restart, no developer and no server change is needed.
 
-1. On the admin page (`/admin`), in the **Datasets** card, fill in **id** (lowercase letters, digits and dashes, e.g. `norssit`) and **Name** (shown to users, e.g. `Norssit`), and press **New dataset**.
-2. The dataset appears in the picker as **new**. Every card below the picker (Project files, Search index) now works on the dataset you picked: click a dataset to switch.
+1. On the admin page (`/admin`), open the **Dataset** dropdown at the top of the dataset section and choose its last entry, **＋ Add a dataset…**. Fill in **Id** (lowercase letters, digits and dashes, e.g. `norssit`) and **Name** (shown to users, e.g. `Norssit`), and press **Add dataset**.
+2. The dataset is selected and shows 🔴 **new** in the dropdown. Every card of the dataset section (Project files, Search index) works on the dataset selected in that dropdown; the cards under **For all datasets** (Retrieval settings, Users) do not. The dots in the dropdown: 🟢 published, 🟡 ready, not published, 🔴 new.
 3. Upload its three files, then Check and Rebuild (section 6). Rebuilding one dataset never touches another dataset's files or index, and a failed rebuild changes nothing.
 4. After the first successful rebuild the dataset is **ready, not published**. Admins and curators see it in the chat's dataset list, marked "only visible to curators", and can try it there. Ordinary users don't see it.
 5. When it answers well, an admin presses **Publish**. Every user sees it from then on. **Unpublish** takes it out of their list again; nothing is deleted. A rebuild never publishes a dataset on its own.
 
-Datasets never share an endpoint: each `endpoint_url` belongs to one dataset. Deleting a dataset is a developer step, since it removes its index and the saved chats about it.
+Datasets never share an endpoint: each `endpoint_url` belongs to one dataset.
+
+**Removing a dataset** (admins): unpublish it, then press **Remove this dataset…** at the bottom of the dataset section and type its id to confirm. Its search index is deleted; its files are moved to `data/removed/` on the server, where a developer can restore them; users' saved chats about it are kept but hidden. The last dataset cannot be removed, nor one while a rebuild runs.
 
 Curators can upload, check and rebuild any dataset. Only admins add, publish and unpublish.
 
@@ -109,7 +111,7 @@ SELECT ?person ?name WHERE { ?person a foaf:Person ; skos:prefLabel ?name }
 
 ## 6. Upload, Check, Rebuild
 
-On the admin page (`/admin`), pick the dataset in the **Datasets** card, then, in the **Project files** card:
+On the admin page (`/admin`), pick the dataset in the **Dataset** dropdown, then, in the **Project files** card:
 
 1. For each file: choose it, press **Upload**. A file with a problem is refused with a message. An accepted file **waits**: the card shows it as "waiting for the next Rebuild", and the assistant keeps using the file in service, even after a server restart. **Download** gives you the waiting file if there is one, else the one in service. **Discard upload** drops a waiting file.
 2. Press **Check configuration** in the **Search index** card. Each check shows ✓ (fine), ⚠ (a warning; the rebuild still runs) or ✗ (an error; fix it first).
@@ -130,7 +132,7 @@ Uploaded files take effect only when a Rebuild succeeds.
 | `method: must be GET or POST` | Write `"GET"` or `"POST"`, in capitals. |
 | `id: must use lowercase letters, digits and dashes only…` | Change the id, e.g. `norssit`, not `Norssit Chat`. |
 | `id: is 'x', but this is the file of project 'y'…` | Keep the id of the project you upload to. |
-| `Project 'x' is not served by this instance.` | There is no dataset with that id; add it in the Datasets card first. |
+| `Project 'x' is not served by this instance.` | There is no dataset with that id; add it first (**＋ Add a dataset…** in the Dataset dropdown). |
 | `endpoint_url: is already used by dataset 'x'. Each dataset needs its own endpoint.` | Another dataset already queries that endpoint. Check `endpoint_url`; two datasets never share one. |
 | `examples.md has no example: …` | Each example needs a `## ` heading, a `Question:` line and a ` ```sparql ` block. |
 | `dataset.md is empty.` | Upload the file with its text. |
@@ -158,13 +160,13 @@ Uploaded files take effect only when a Rebuild succeeds.
 | `Rebuild failed: …` | Something unexpected. The old index is still serving. Send the message to the developers. |
 | `A rebuild of x is already running; try again when it finishes.` | One rebuild runs at a time, whichever dataset. Wait until the other one finishes. |
 
-**In the Datasets card and the chat:**
+**In the dataset section and the chat:**
 
 | Message | What to do |
 |---|---|
 | `The dataset 'x' has not been rebuilt successfully yet.` | Publish works only after a successful Rebuild of that dataset. |
 | `'x' is not a valid id…` / `A dataset with the id 'x' already exists.` | Pick another id for the new dataset. |
-| `The dataset 'x' is not available.` | In the chat: the dataset is not published (ordinary users), or does not exist. An admin publishes it in the Datasets card. |
+| `The dataset 'x' is not available.` | In the chat: the dataset is not published (ordinary users), or does not exist. An admin publishes it in the dataset section. |
 | `This dataset is not published.` | From an MCP client: the dataset's MCP address answers only once it is published. |
 
 ## 7. Testing with your questions

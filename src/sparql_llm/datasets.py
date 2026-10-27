@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -113,6 +115,38 @@ def set_published(dataset_id: str, published: bool) -> None:
         if entry["id"] == dataset_id:
             entry["published"] = published
     _write(_data_dir(), entries)
+
+
+#: Removed datasets' folders are moved here, not deleted: a developer can bring one back.
+REMOVED_DIR = "removed"
+
+
+def check_removable(dataset_id: str) -> None:
+    """Raise DatasetError unless the dataset may be removed: unpublished, and not the last one."""
+    entries = _entries()
+    if not any(entry["id"] == dataset_id for entry in entries):
+        raise DatasetError(f"There is no dataset '{dataset_id}'.")
+    if dataset_state(dataset_id) == "published":
+        raise DatasetError(f"Unpublish '{dataset_label(dataset_id)}' before removing it.")
+    if len(entries) == 1:
+        raise DatasetError("The last dataset cannot be removed.")
+
+
+def remove_dataset(dataset_id: str) -> Path | None:
+    """Take a dataset out of the list and move its folder to ``removed/<id>-<time>``.
+
+    Its search index is dropped separately (``rebuild.drop_index``). Saved chats about it
+    stay in the database, hidden: no page lists a dataset that is not in the list.
+    """
+    check_removable(dataset_id)
+    folder = _data_dir() / dataset_id
+    archived = None
+    if folder.exists():
+        archived = _data_dir() / REMOVED_DIR / f"{dataset_id}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(folder), str(archived))
+    _write(_data_dir(), [entry for entry in _entries() if entry["id"] != dataset_id])
+    return archived
 
 
 def datasets_for(user: Any) -> list[Project]:

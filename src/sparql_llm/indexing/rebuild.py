@@ -29,6 +29,7 @@ import traceback
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from qdrant_client import models
@@ -280,6 +281,28 @@ def _retire_legacy_index(project: Project) -> list[str]:
             removed.append(name)
     except Exception as exc:
         logger.warning("Could not remove the single-dataset index %s: %s", legacy, exc)
+    return removed
+
+
+def drop_index(project_id: str) -> list[str]:
+    """Delete a dataset's search index: its alias and its versioned collections, nothing else.
+
+    Call it before the dataset leaves the list: when it is the first dataset, the
+    single-dataset install's index goes too, or the next dataset, then first, would fall
+    back to it and answer from the removed dataset's documents.
+    """
+    project = SimpleNamespace(id=project_id)
+    removed = _retire_legacy_index(project)  # type: ignore[arg-type]
+    alias = alias_for(project)  # type: ignore[arg-type]
+    if alias in _aliases():
+        qdrant_client.update_collection_aliases(
+            change_aliases_operations=[models.DeleteAliasOperation(delete_alias=models.DeleteAlias(alias_name=alias))]
+        )
+        removed.append(alias)
+    for name in _collections():
+        if name.startswith(version_prefix(project)):  # type: ignore[arg-type]
+            qdrant_client.delete_collection(name)
+            removed.append(name)
     return removed
 
 

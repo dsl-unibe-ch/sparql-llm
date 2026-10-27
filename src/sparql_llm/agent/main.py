@@ -47,9 +47,11 @@ from sparql_llm.config import settings, settings_filepath
 from sparql_llm.datasets import (
     DatasetError,
     add_dataset,
+    check_removable,
     dataset_label,
     dataset_state,
     list_dataset_ids,
+    remove_dataset,
     set_published,
 )
 from sparql_llm.indexing.drift import load_fingerprint
@@ -426,6 +428,44 @@ if settings.auth_enabled:
         except DatasetError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
         return JSONResponse({"ok": True, "state": dataset_state(dataset_id)})
+
+    @app.post("/admin/datasets/{dataset_id}/remove", include_in_schema=False)
+    async def admin_remove_dataset(
+        dataset_id: str,
+        request: Request,
+        user: "User" = Depends(current_active_user),
+    ) -> JSONResponse:
+        """Remove an unpublished dataset: its index is deleted, its files archived. Admins only.
+
+        The admin types the dataset id to confirm. Runs under the rebuild lock, so no
+        rebuild of it can start (or be running) meanwhile.
+        """
+        from sparql_llm.indexing.rebuild import _acquire_lock, _release_lock, drop_index
+        from sparql_llm.project import reload_projects
+
+        if role_of(user) != ADMIN:
+            return JSONResponse({"error": "Only admins can remove a dataset."}, status_code=403)
+        if dataset_id not in list_dataset_ids():
+            return JSONResponse({"error": f"There is no dataset '{dataset_id}'."}, status_code=404)
+        body = await request.json()
+        if str(body.get("confirm", "")).strip() != dataset_id:
+            return JSONResponse({"error": f"Type the dataset id, {dataset_id}, to confirm."}, status_code=422)
+        if not _acquire_lock(dataset_id):
+            return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
+        try:
+            check_removable(dataset_id)
+            await run_in_threadpool(drop_index, dataset_id)
+            archived = remove_dataset(dataset_id)
+        except DatasetError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=409)
+        finally:
+            _release_lock()
+        from sparql_llm.indexing.index_resources import endpoints_metadata
+
+        reload_projects()
+        endpoints_metadata.reload()
+        logger.info("Dataset %s removed by %s; files archived in %s", dataset_id, getattr(user, "email", ""), archived)
+        return JSONResponse({"ok": True, "dataset": list_dataset_ids()[0]})
 
     @app.post("/admin/datasets/{dataset_id}/publish", include_in_schema=False)
     async def admin_publish_dataset(dataset_id: str, user: "User" = Depends(current_active_user)) -> JSONResponse:

@@ -91,8 +91,23 @@
       /* ── Dataset picker: moved into the top of the widget's history sidebar, above
          "New chat"; shown in the header instead when the widget has no sidebar
          (auth off). Inline styles, so it looks the same wherever it sits. ── */
-      #dataset-picker { display: none; }
-      .site-header #dataset-picker { display: flex; align-items: center; gap: 0.5rem; }
+      #dataset-picker { display: none; padding: 0.5rem 0.5rem 0.6rem; border-bottom: 1px solid #e2e8f0; margin-bottom: 0.5rem; }
+      #dataset-picker.dsp-placed { display: block; }
+      .dsp-toggle { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; width: 100%; padding: 0.35rem 0.5rem; border: none; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; color: #1e293b; }
+      .dsp-toggle:hover { background: #f1f5f9; }
+      .dsp-caption { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; }
+      .dsp-current { display: flex; align-items: center; gap: 0.35rem; font-size: 0.88rem; font-weight: 600; }
+      .dsp-arrow { display: inline-block; font-size: 0.7rem; color: #64748b; transition: transform 0.15s; }
+      .dsp-toggle[aria-expanded="true"] .dsp-arrow { transform: rotate(90deg); }
+      .dsp-list { margin-top: 0.25rem; max-height: 16rem; overflow-y: auto; }
+      .dsp-item { display: block; padding: 0.4rem 0.5rem 0.4rem 1.4rem; border-radius: 8px; font-size: 0.85rem; text-decoration: none; color: #1e293b; }
+      .dsp-item:hover { background: #f1f5f9; }
+      .dsp-selected { background: #e2e8f0; font-weight: 600; }
+      .dsp-note { display: block; font-size: 0.68rem; font-weight: 500; color: #b45309; }
+      /* No history sidebar (auth off): the same picker, in the header. */
+      .site-header #dataset-picker { display: block; position: relative; padding: 0; border: none; margin: 0; }
+      .site-header .dsp-caption { display: none; }
+      .site-header .dsp-list { position: absolute; top: 100%; left: 0; min-width: 14rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); padding: 0.25rem; z-index: 50; }
     </style>
     <script type="module" crossorigin src="/assets/index-CWm5W83b.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-V5TykCWV.css">
@@ -185,14 +200,19 @@
         </div>
 
         {% if datasets | length > 1 %}
-        <nav id="dataset-picker" aria-label="Dataset" style="padding: 0.5rem 0.75rem 0.75rem; border-bottom: 1px solid #e2e8f0; margin-bottom: 0.5rem;">
-          <label for="dataset-select" style="display: block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; padding: 0.25rem 0 0.35rem;">Dataset</label>
-          <!-- A dropdown, so it takes the same room with two datasets or twenty. -->
-          <select id="dataset-select" style="width: 100%; padding: 0.45rem 0.5rem; font-size: 0.85rem; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #1e293b;">
+        <nav id="dataset-picker" aria-label="Dataset">
+          <!-- Folded: only the current dataset, so the history keeps its room. Unfolded: all of them. -->
+          <button type="button" id="dataset-toggle" class="dsp-toggle" aria-expanded="false" aria-controls="dataset-list">
+            <span class="dsp-caption">Dataset</span>
+            <span class="dsp-current"><span class="dsp-arrow" aria-hidden="true">▸</span>{{ dataset.label if dataset else "" }}</span>
+          </button>
+          <div id="dataset-list" class="dsp-list" hidden>
             {% for d in datasets %}
-            <option value="{{ d.id }}"{% if dataset and d.id == dataset.id %} selected{% endif %}>{{ d.label }}{% if not d.published %} (only visible to curators){% endif %}</option>
+            <a href="/?dataset={{ d.id }}" class="dsp-item{% if dataset and d.id == dataset.id %} dsp-selected{% endif %}"{% if dataset and d.id == dataset.id %} aria-current="page"{% endif %}>
+              {{ d.label }}{% if not d.published %}<span class="dsp-note">only visible to curators</span>{% endif %}
+            </a>
             {% endfor %}
-          </select>
+          </div>
         </nav>
         {% endif %}
 
@@ -362,7 +382,6 @@
     (function () {
       var chatEl = document.getElementById("chat-element");
       var picker = document.getElementById("dataset-picker");
-      var pickerStyle = picker ? picker.getAttribute("style") : "";
       var placeholder = chatEl.getAttribute("data-placeholder");
       var placed = false;
 
@@ -376,11 +395,8 @@
         if (picker && !picker.isConnected) placed = false;
         var aside = root.querySelector('aside[aria-label="Saved conversations"]');
         if (picker && aside && picker.parentNode !== aside) {
-          // Also when it went to the header first: put its sidebar look back.
-          picker.setAttribute("style", pickerStyle || "");
-          picker.style.display = "block";
-          picker.querySelector("label").style.display = "block";
-          picker.querySelector("select").style.width = "100%";
+          // Also when it went to the header first (a slow first render): the sidebar wins.
+          picker.classList.add("dsp-placed");
           aside.insertBefore(picker, aside.firstChild);
           placed = true;
         }
@@ -395,16 +411,24 @@
         if (picker && !placed) {
           var actions = document.querySelector(".header-actions");
           actions.insertBefore(picker, actions.firstChild);
-          picker.removeAttribute("style");
-          picker.querySelector("label").style.display = "none";
-          picker.querySelector("select").style.width = "auto";
         }
       }, 3000);
-      // Switching dataset reloads the page on it: a new, empty chat for that dataset.
-      var select = document.getElementById("dataset-select");
-      if (select) {
-        select.addEventListener("change", function () {
-          location.href = "/?dataset=" + encodeURIComponent(select.value);
+
+      // Fold and unfold the list; the browser remembers which, for the next page.
+      var toggle = document.getElementById("dataset-toggle");
+      var list = document.getElementById("dataset-list");
+      function setOpen(open) {
+        toggle.setAttribute("aria-expanded", open ? "true" : "false");
+        list.hidden = !open;
+      }
+      if (toggle && list) {
+        var open = false;
+        try { open = localStorage.getItem("datasetListOpen") === "true"; } catch (e) {}
+        setOpen(open);
+        toggle.addEventListener("click", function () {
+          var next = toggle.getAttribute("aria-expanded") !== "true";
+          setOpen(next);
+          try { localStorage.setItem("datasetListOpen", next ? "true" : "false"); } catch (e) {}
         });
       }
     })();

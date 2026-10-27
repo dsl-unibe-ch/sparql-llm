@@ -130,16 +130,27 @@
       .ds-bar { position: sticky; top: 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: 0 -1rem 0.75rem; padding: 0.75rem 1rem; background: #fff; border-bottom: 1px solid #cbd5e1; border-radius: 14px 14px 0 0; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06); }
       .ds-bar-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; }
       .ds-bar select { min-width: 14rem; padding: 0.4rem 0.6rem; font-size: 0.88rem; font-weight: 600; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #0f172a; }
-      .ds-link { margin-left: auto; background: none; border: none; color: #2563eb; font-size: 0.82rem; font-weight: 600; cursor: pointer; padding: 0.3rem 0.4rem; border-radius: 6px; }
-      .ds-link:hover { background: #eff6ff; }
+      .ds-danger { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0 0 1rem; padding: 0.75rem 1rem; border: 1px solid #fecaca; border-radius: 12px; background: #fff; font-size: 0.8rem; color: #64748b; }
+      .btn-danger { background: #fff; color: #b91c1c; border: 1px solid #fca5a5; border-radius: 8px; padding: 0.5rem 1rem; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
+      .btn-danger:hover:not(:disabled) { background: #fef2f2; }
+      .btn-danger:disabled { opacity: 0.45; cursor: not-allowed; }
+      #ds-remove.btn-danger:not(:disabled) { background: #dc2626; color: #fff; border-color: #dc2626; }
+      .ds-dialog { border: none; border-radius: 14px; padding: 1.5rem; width: min(30rem, 92vw); box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25); }
+      .ds-dialog::backdrop { background: rgba(15, 23, 42, 0.35); }
+      .ds-dialog h3 { margin: 0 0 0.5rem; font-size: 1.05rem; }
+      .ds-dialog form { display: flex; flex-direction: column; gap: 0.6rem; }
+      .ds-dialog label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; font-weight: 600; color: #334155; }
+      .ds-dialog input { padding: 0.5rem 0.65rem; font-size: 0.88rem; border: 1px solid #cbd5e1; border-radius: 8px; }
+      .ds-hint { font-size: 0.72rem; color: #94a3b8; margin-top: -0.35rem; }
+      .ds-error { font-size: 0.8rem; color: #dc2626; min-height: 1em; }
+      .ds-consequences { margin: 0; padding-left: 1.1rem; font-size: 0.82rem; color: #475569; line-height: 1.6; }
+      .ds-dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 0.4rem; }
       .ds-note { margin: 0.5rem 0 1rem; }
       .section-title { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: #64748b; margin: 0 0 0.75rem; }
       .ds-state { font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #f1f5f9; }
       .ds-published { color: #15803d; }
       .ds-ready { color: #b45309; }
       .ds-new { color: #64748b; }
-      .ds-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
-      .ds-row input { padding: 0.4rem 0.6rem; font-size: 0.82rem; border: 1px solid #cbd5e1; border-radius: 8px; }
     </style>
   </head>
   <body>
@@ -173,10 +184,15 @@
         <div class="ds-bar">
           <label class="ds-bar-label" for="ds-select">Dataset</label>
           <!-- A dropdown, so it takes the same room with two datasets or twenty. -->
-          <select id="ds-select">
+          {% set dots = {"published": "🟢", "ready": "🟡", "new": "🔴"} %}
+          <select id="ds-select" title="🟢 published · 🟡 ready, not published · 🔴 new, not rebuilt yet">
             {% for d in datasets %}
-            <option value="{{ d.id }}"{% if dataset and d.id == dataset.id %} selected{% endif %}>{{ d.label }} — {{ d.state_label }}</option>
+            <option value="{{ d.id }}"{% if dataset and d.id == dataset.id %} selected{% endif %}>{{ dots[d.state] }} {{ d.label }}</option>
             {% endfor %}
+            {% if is_admin %}
+            <option disabled>──────────</option>
+            <option value="__add">＋ Add a dataset…</option>
+            {% endif %}
           </select>
           {% if dataset %}<span class="ds-state ds-{{ dataset.state }}">{{ dataset.state_label }}</span>{% endif %}
           {% if is_admin and dataset %}
@@ -186,15 +202,7 @@
             <button class="btn-reindex" data-dataset-action="/admin/datasets/{{ dataset.id }}/publish">Publish</button>
             {% endif %}
           {% endif %}
-          {% if is_admin %}<button type="button" id="ds-new-toggle" class="ds-link">+ New dataset</button>{% endif %}
         </div>
-        {% if is_admin %}
-        <div class="ds-row" id="ds-new-form" hidden>
-          <input id="ds-new-id" placeholder="id, e.g. norssit" pattern="[a-z0-9][a-z0-9-]*" />
-          <input id="ds-new-label" placeholder="Name, e.g. Norssit" />
-          <button id="ds-new" class="btn-reindex btn-check">Add dataset</button>
-        </div>
-        {% endif %}
         <span id="ds-status" class="idx-status"></span>
         <p class="idx-note ds-note">
           The cards below work on the dataset picked above: its files, its check and its rebuild.
@@ -234,7 +242,54 @@
             <ul id="idx-checks" class="idx-checks" hidden></ul>
           </div>
         </div>
+
+        {% if is_admin and dataset %}
+        <!-- Danger zone: removing the selected dataset -->
+        <div class="ds-danger">
+          <span>Remove {{ dataset.label }}: its search index is deleted and its files are archived.{% if dataset.state == "published" %} Unpublish it first.{% endif %}</span>
+          <button type="button" id="ds-remove-open" class="btn-danger"{% if dataset.state == "published" or datasets | length == 1 %} disabled{% endif %}>Remove this dataset…</button>
+        </div>
+        {% endif %}
       </section>
+
+      {% if is_admin %}
+      <!-- Add a dataset: opened from the last entry of the dataset dropdown -->
+      <dialog id="ds-add-dialog" class="ds-dialog">
+        <form method="dialog">
+          <h3>Add a dataset</h3>
+          <p class="idx-note">It starts empty and visible to no one. Upload its three files, then Check and Rebuild; publish it when it answers well.</p>
+          <label>Id <input id="ds-new-id" placeholder="e.g. norssit" pattern="[a-z0-9][a-z0-9-]*" required /></label>
+          <span class="ds-hint">Lowercase letters, digits and dashes. It cannot be changed later.</span>
+          <label>Name <input id="ds-new-label" placeholder="e.g. Norssit" required /></label>
+          <span id="ds-add-error" class="ds-error"></span>
+          <div class="ds-dialog-actions">
+            <button value="cancel" class="btn-reindex btn-check">Cancel</button>
+            <button type="button" id="ds-new" class="btn-reindex">Add dataset</button>
+          </div>
+        </form>
+      </dialog>
+
+      {% if dataset %}
+      <!-- Remove the selected dataset: the admin types its id to confirm -->
+      <dialog id="ds-remove-dialog" class="ds-dialog">
+        <form method="dialog">
+          <h3>Remove {{ dataset.label }}?</h3>
+          <ul class="ds-consequences">
+            <li>It disappears from the chat and the admin page, for everyone.</li>
+            <li>Its search index is deleted.</li>
+            <li>Its files are moved to <code>data/removed/</code> on the server; a developer can bring them back.</li>
+            <li>Users' saved chats about it are kept, but hidden.</li>
+          </ul>
+          <label>Type <strong>{{ dataset.id }}</strong> to confirm <input id="ds-remove-confirm" autocomplete="off" /></label>
+          <span id="ds-remove-error" class="ds-error"></span>
+          <div class="ds-dialog-actions">
+            <button value="cancel" class="btn-reindex btn-check">Cancel</button>
+            <button type="button" id="ds-remove" class="btn-danger" disabled>Remove</button>
+          </div>
+        </form>
+      </dialog>
+      {% endif %}
+      {% endif %}
 
       <h2 class="section-title">For all datasets</h2>
 
@@ -389,31 +444,71 @@
               .finally(function () { btn.disabled = false; });
           });
         });
+        // A dialog's request: on success, open the page on the dataset it names; else show why.
+        function inDialog(errorEl) {
+          return function (r) {
+            return r.json().then(function (d) {
+              if (!r.ok) { errorEl.textContent = d.error || 'That did not work.'; return; }
+              location.href = '/admin?dataset=' + encodeURIComponent(d.dataset || DATASET);
+            });
+          };
+        }
+
         var pick = document.getElementById('ds-select');
+        var addDialog = document.getElementById('ds-add-dialog');
         if (pick) {
           pick.addEventListener('change', function () {
+            if (pick.value === '__add') {
+              pick.value = DATASET;  // the dropdown keeps showing the current dataset
+              if (addDialog) { addDialog.showModal(); document.getElementById('ds-new-id').focus(); }
+              return;
+            }
             location.href = '/admin?dataset=' + encodeURIComponent(pick.value);
-          });
-        }
-        var toggle = document.getElementById('ds-new-toggle');
-        var newForm = document.getElementById('ds-new-form');
-        if (toggle && newForm) {
-          toggle.addEventListener('click', function () {
-            newForm.hidden = !newForm.hidden;
-            if (!newForm.hidden) document.getElementById('ds-new-id').focus();
           });
         }
         var add = document.getElementById('ds-new');
         if (add) {
+          var addError = document.getElementById('ds-add-error');
           add.addEventListener('click', function () {
-            var id = document.getElementById('ds-new-id').value.trim();
-            var label = document.getElementById('ds-new-label').value.trim();
+            addError.textContent = '';
             fetch('/admin/datasets', {
               method: 'POST',
               credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ id: id, label: label })
-            }).then(done).catch(function () { status.textContent = 'The dataset was not added.'; });
+              body: JSON.stringify({
+                id: document.getElementById('ds-new-id').value.trim(),
+                label: document.getElementById('ds-new-label').value.trim()
+              })
+            }).then(inDialog(addError)).catch(function () { addError.textContent = 'The dataset was not added.'; });
+          });
+        }
+
+        var removeDialog = document.getElementById('ds-remove-dialog');
+        var removeOpen = document.getElementById('ds-remove-open');
+        if (removeDialog && removeOpen) {
+          var confirmInput = document.getElementById('ds-remove-confirm');
+          var removeBtn = document.getElementById('ds-remove');
+          var removeError = document.getElementById('ds-remove-error');
+          removeOpen.addEventListener('click', function () {
+            confirmInput.value = '';
+            removeBtn.disabled = true;
+            removeError.textContent = '';
+            removeDialog.showModal();
+            confirmInput.focus();
+          });
+          // Remove stays disabled until the id is typed exactly.
+          confirmInput.addEventListener('input', function () {
+            removeBtn.disabled = confirmInput.value.trim() !== DATASET;
+          });
+          removeBtn.addEventListener('click', function () {
+            removeBtn.disabled = true;
+            fetch('/admin/datasets/' + encodeURIComponent(DATASET) + '/remove', {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ confirm: confirmInput.value.trim() })
+            }).then(inDialog(removeError)).catch(function () { removeError.textContent = 'The dataset was not removed.'; })
+              .finally(function () { removeBtn.disabled = confirmInput.value.trim() !== DATASET; });
           });
         }
       })();
