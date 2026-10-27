@@ -55,6 +55,7 @@ from sparql_llm.datasets import (
     set_published,
 )
 from sparql_llm.indexing.drift import load_fingerprint
+from sparql_llm.indexing.rebuild import recover_after_restart
 from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
 from sparql_llm.project import Project, get_projects
@@ -132,6 +133,8 @@ def is_valid_login_redirect(value: str):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan that initializes the MCP session manager and auth DB."""
     migrate_configured()
+    # One worker: no rebuild runs yet, so a lock or "running" job on disk was left by a killed process.
+    recover_after_restart()
     if settings.auth_enabled:
         check_auth_secret()
         pathlib.Path(settings.auth_db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -491,7 +494,8 @@ if settings.auth_enabled:
         body = await request.json()
         if str(body.get("confirm", "")).strip() != dataset_id:
             return JSONResponse({"error": f"Type the dataset id, {dataset_id}, to confirm."}, status_code=422)
-        if not _acquire_lock(dataset_id):
+        lock_token = _acquire_lock(dataset_id)
+        if not lock_token:
             return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
         try:
             check_removable(dataset_id)
@@ -500,7 +504,7 @@ if settings.auth_enabled:
         except DatasetError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
         finally:
-            _release_lock()
+            _release_lock(lock_token)
         from sparql_llm.indexing.index_resources import endpoints_metadata
 
         reload_projects()

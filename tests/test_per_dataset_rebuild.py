@@ -102,7 +102,7 @@ def test_second_rebuild_waits_for_the_first(two, monkeypatch: pytest.MonkeyPatch
     second = rebuild.start_rebuild("b")
 
     assert second == {**second, "started": False, "reason": "already-running", "dataset": "a"}
-    rebuild._release_lock()
+    rebuild.lock_file().unlink()
 
 
 def test_first_successful_rebuild_makes_a_new_dataset_ready_not_published(two):

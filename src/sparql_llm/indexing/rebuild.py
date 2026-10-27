@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import threading
 import time
 import traceback
@@ -54,11 +55,6 @@ def job_file(project_id: str) -> Path:
 def lock_file() -> Path:
     """Held for the duration of any rebuild: one at a time per instance, whichever dataset."""
     return Path(settings.data_dir) / "reindex.lock"
-
-
-#: A rebuild that has not reported progress for this long is presumed dead (worker killed,
-#: container restarted) and its lock may be broken.
-STALE_JOB_SECONDS = 3600
 
 
 def _now() -> str:
@@ -98,24 +94,21 @@ def _set_job(project_id: str, state: str, message: str, **extra: Any) -> None:
     logger.info("Reindex job %s: %s — %s", project_id, state, message)
 
 
-def _acquire_lock(project_id: str) -> bool:
-    """Take the rebuild lock for this dataset. Breaks a lock left behind by a dead job."""
+def _acquire_lock(project_id: str) -> str | None:
+    """Take the rebuild lock for this dataset: its owner token, or None while another job holds it.
+
+    A held lock is never broken here, however old: its job may still be running. A lock
+    left by a killed process is cleared at startup (:func:`recover_after_restart`).
+    """
     lock_file().parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(8)
     try:
         fd = os.open(lock_file(), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, f"{os.getpid()} {_now()} {project_id}".encode())
+        os.write(fd, f"{os.getpid()} {_now()} {project_id} {token}".encode())
         os.close(fd)
-        return True
+        return token
     except FileExistsError:
-        try:
-            age = time.time() - lock_file().stat().st_mtime
-        except OSError:
-            return False
-        if age > STALE_JOB_SECONDS:
-            logger.warning("Breaking a stale reindex lock (%.0fs old)", age)
-            _release_lock()
-            return _acquire_lock(project_id)
-        return False
+        return None
 
 
 def running_dataset() -> str:
@@ -127,11 +120,35 @@ def running_dataset() -> str:
     return parts[2] if len(parts) > 2 else ""
 
 
-def _release_lock() -> None:
+def _release_lock(token: str) -> None:
+    """Release the lock if ``token`` still owns it: a job never removes another job's lock."""
     try:
-        lock_file().unlink()
-    except FileNotFoundError:
-        pass
+        parts = lock_file().read_text(encoding="utf-8").split()
+    except OSError:
+        return
+    if len(parts) > 3 and parts[3] == token:
+        lock_file().unlink(missing_ok=True)
+
+
+def recover_after_restart() -> None:
+    """Clear what a killed process left: its rebuild lock, and jobs still marked running.
+
+    Called at startup. The app runs one worker and rebuilds in its threads, so none can
+    be running yet: a lock or a "running" job on disk belongs to a process that is gone.
+    """
+    from sparql_llm.datasets import list_dataset_ids
+
+    if lock_file().exists():
+        logger.warning("Clearing the rebuild lock left by a stopped process: %s", lock_file().read_text(encoding="utf-8"))
+        lock_file().unlink(missing_ok=True)
+    for project_id in list_dataset_ids():
+        if read_job(project_id).get("state") == "running":
+            _set_job(
+                project_id,
+                "failed",
+                "The rebuild was interrupted by a restart. Run Check, then Rebuild again.",
+                error="interrupted",
+            )
 
 
 def alias_for(project: Project) -> str:
@@ -467,8 +484,8 @@ def _rebuild(project: Project) -> dict[str, Any]:
     return result
 
 
-def run_rebuild_job(project_id: str) -> None:
-    """The body of a background rebuild: run it, record how it ended, release the lock."""
+def run_rebuild_job(project_id: str, lock_token: str = "") -> None:
+    """The body of a background rebuild: run it, record how it ended, release its lock (if it took one)."""
     try:
         rebuild_index_with_alias(project_id)
     except RebuildStopped as exc:
@@ -484,7 +501,7 @@ def run_rebuild_job(project_id: str) -> None:
             traceback=traceback.format_exc()[-2000:],
         )
     finally:
-        _release_lock()
+        _release_lock(lock_token)
 
 
 def start_rebuild(project_id: str) -> dict[str, Any]:
@@ -493,7 +510,8 @@ def start_rebuild(project_id: str) -> dict[str, Any]:
     Refuses while any rebuild is running (one at a time per instance: they share the
     embedding model) and says which dataset's; the caller surfaces that rather than queueing.
     """
-    if not _acquire_lock(project_id):
+    lock_token = _acquire_lock(project_id)
+    if not lock_token:
         running = running_dataset()
         return {
             "started": False,
@@ -503,5 +521,5 @@ def start_rebuild(project_id: str) -> dict[str, Any]:
         }
 
     _set_job(project_id, "running", "Starting rebuild…")
-    threading.Thread(target=run_rebuild_job, args=(project_id,), name=f"reindex-{project_id}", daemon=True).start()
+    threading.Thread(target=run_rebuild_job, args=(project_id, lock_token), name=f"reindex-{project_id}", daemon=True).start()
     return {"started": True, "job": read_job(project_id)}
