@@ -390,7 +390,9 @@ def _rebuild(project: Project) -> dict[str, Any]:
         "error": "; ".join(f"{label}: {r['error']}" for label, r in entity_reports.items() if r["error"]),
     }
     entities_warning = (
-        f" ⚠ Entity names not rebuilt ({entities_report['error']}); the previous list is still in use."
+        f" ⚠ Entity names not rebuilt ({entities_report['error']})."
+        if any(r.get("dropped") for r in entity_reports.values())
+        else f" ⚠ Entity names not rebuilt ({entities_report['error']}); the previous list is still in use."
         if entities_report["error"]
         else ""
     )

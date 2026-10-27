@@ -71,20 +71,39 @@ def _source(project: Project) -> dict[str, Any]:
     return {"endpoint": project.endpoint_url, "graphs": project.graphs, "entities": project.entities.model_dump()}
 
 
+def _same_source(payload: dict[str, Any], source: dict[str, Any]) -> bool:
+    """Whether a names file was built from ``source``."""
+    if "source" in payload:
+        return payload["source"] == source
+    # Older files record only the endpoint, or nothing: the same unless it differs.
+    return payload.get("endpoint", source["endpoint"]) == source["endpoint"]
+
+
 def _previous_count(path: Path, source: dict[str, Any]) -> int:
     """Entities in the current file if it was built from the same source; else 0."""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return 0
-    if "source" in payload:
-        same = payload["source"] == source
-    else:
-        # Older files record only the endpoint, or nothing: keep the guard unless it differs.
-        same = payload.get("endpoint", source["endpoint"]) == source["endpoint"]
-    if not same:
+    if not _same_source(payload, source):
         return 0
     return len(payload.get("entities", []))
+
+
+def _live_from_another_source(project: Project) -> bool:
+    """Whether the names in service were built from another endpoint, graphs or entity config."""
+    try:
+        payload = json.loads(project.live_entity_names_path.read_text(encoding="utf-8"))
+    except Exception:
+        return False
+    return not _same_source(payload, _source(project))
+
+
+def _write(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    os.replace(tmp, path)
 
 
 def build_entity_names(project: Project, fetch: Callable[..., Any] = query_sparql) -> dict[str, Any]:
@@ -105,20 +124,26 @@ def build_entity_names(project: Project, fetch: Callable[..., Any] = query_sparq
             # A short page is read as "done", so an endpoint row cap would truncate the list
             # without an error. A large drop is far likelier to be that than real deletions.
             raise ValueError(f"only {len(rows)} entities against {previous} in the previous list")
-        payload = {
-            "built_at": datetime.now(timezone.utc).isoformat(),
-            "endpoint": endpoint,
-            "source": _source(project),
-            "entities": rows,
-        }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(path.suffix + f".tmp{os.getpid()}")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
-        os.replace(tmp, path)
+        _write(
+            path,
+            {
+                "built_at": datetime.now(timezone.utc).isoformat(),
+                "endpoint": endpoint,
+                "source": _source(project),
+                "entities": rows,
+            },
+        )
         report["entities"] = len(rows)
     except Exception as exc:
         report["error"] = f"{type(exc).__name__}: {exc}"[:300]
-        logger.warning("Entity names not rebuilt, keeping the previous file: %s", report["error"])
+        if _live_from_another_source(project):
+            # Keeping them would resolve this dataset's names to another endpoint's URIs.
+            _write(path, {"built_at": datetime.now(timezone.utc).isoformat(), "endpoint": endpoint, "source": _source(project), "entities": []})
+            report["error"] += "; the previous names came from another source and are dropped: entity resolution is off until a rebuild fetches them"
+            report["dropped"] = True
+            logger.warning("Entity names not rebuilt, and the previous ones are from another source: %s", report["error"])
+        else:
+            logger.warning("Entity names not rebuilt, keeping the previous file: %s", report["error"])
     return report
 
 
