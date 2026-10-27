@@ -195,6 +195,11 @@ def _collections() -> list[str]:
     return [c.name for c in qdrant_client.get_collections().collections]
 
 
+def _alias_target(alias: str) -> str | None:
+    """The collection ``alias`` points at, or None."""
+    return next((a.collection_name for a in qdrant_client.get_aliases().aliases if a.alias_name == alias), None)
+
+
 def _point_alias(alias: str, collection: str) -> None:
     """Repoint ``alias`` at ``collection`` in a single operation."""
     ops: list[Any] = [
@@ -208,6 +213,10 @@ def _point_alias(alias: str, collection: str) -> None:
 
 class RebuildStopped(Exception):
     """A project failed a check: the rebuild stops before the alias swap. Plain message for the admin page."""
+
+
+class RebuildPartlyPublished(Exception):
+    """The new index is live but its files could not all be made live. Plain message for the admin page."""
 
 
 def _project_headline(project: Project, report: dict[str, Any], fingerprint: Fingerprint) -> str:
@@ -254,8 +263,9 @@ def rebuild_index_with_alias(project_id: str) -> dict[str, Any]:
     over live ones) and writes everything it generates to its next/ folder: preflight
     checks, curator example sync, VoID generation, validator schema, entity names, the
     index and the alias swap. Only then are next/ and the uploaded files promoted to live
-    and the projects reloaded. Any error raises RebuildStopped before the swap; the live
-    index and every live file stay as they were. No other dataset is read or written.
+    and the projects reloaded. Any error before the swap leaves the live index and every
+    live file as they were. A failure to promote after the swap raises RebuildPartlyPublished
+    and keeps next/ and uploaded/. No other dataset is read or written.
     """
     migrate_configured()
     project = load_candidate(project_id)
@@ -263,9 +273,12 @@ def rebuild_index_with_alias(project_id: str) -> dict[str, Any]:
     project.build_dir.mkdir(parents=True, exist_ok=True)
     try:
         return _rebuild(project)
-    finally:
-        # After a promotion next/ is already gone; after a failure this drops what was built.
+    except RebuildPartlyPublished:
+        # The live index was built from next/ and uploaded/: keep them for the rerun.
+        raise
+    except BaseException:
         discard_build(project)
+        raise
 
 
 def _legacy_collections(existing: list[str]) -> list[str]:
@@ -405,10 +418,23 @@ def _rebuild(project: Project) -> dict[str, Any]:
     triples = sum(fp.triples for fp in fingerprints.values())
     class_count = sum(len(fp.classes) for fp in fingerprints.values())
 
+    # Into next/ with the other generated files: promoted with them, discarded with them.
+    for project in projects:
+        save_fingerprint(fingerprints[project.id], project)
+
     # Each project's docs use its own prefixes.json from next/, written by the refresh above.
-    doc_count = init_vectordb(collection_name=target, projects=projects)
-    if not doc_count:
-        raise RebuildStopped("Indexing produced 0 documents — refusing to swap the alias.")
+    try:
+        doc_count = init_vectordb(collection_name=target, projects=projects)
+        if not doc_count:
+            raise RebuildStopped("Indexing produced 0 documents — refusing to swap the alias.")
+    except BaseException:
+        # Never served: drop what was built, or each failed retry leaves a collection behind.
+        if target in _collections() and _alias_target(alias) != target:
+            try:
+                qdrant_client.delete_collection(target)
+            except Exception as exc:
+                logger.warning("Could not remove the unfinished collection %s: %s", target, exc)
+        raise
 
     _set_job(project.id, "swapping", f"Built {doc_count} documents. Switching traffic to '{target}'…",
              collection=target, documents=doc_count)
@@ -432,10 +458,20 @@ def _rebuild(project: Project) -> dict[str, Any]:
             ]
         )
 
-    for project in projects:
-        save_fingerprint(fingerprints[project.id], project)
+    # The new index is live: make the files it was built from live too, then serve them.
+    # Until that succeeds the old index is kept, and next/ with uploaded/ stay for a rerun.
+    try:
+        for project in projects:
+            promote(project)
+        reload_projects()
+        endpoints_metadata.reload()
+    except Exception as exc:
+        raise RebuildPartlyPublished(
+            f"The new index '{target}' is live, but the files it was built from could not all be made live ({exc}). "
+            "Fix the cause and run Rebuild again."
+        ) from exc
 
-    # Only now is the old index unreachable, so dropping it is safe.
+    # Only now is the old index unreachable and unneeded, so dropping it is safe.
     removed = _retire_legacy_index(project)
     for name in _collections():
         if name.startswith(version_prefix(project)) and name != target:
@@ -444,12 +480,6 @@ def _rebuild(project: Project) -> dict[str, Any]:
                 removed.append(name)
             except Exception as exc:
                 logger.warning("Could not remove the superseded collection %s: %s", name, exc)
-
-    # The new index is live: make the files it was built from live too, then serve them.
-    for project in projects:
-        promote(project)
-    reload_projects()
-    endpoints_metadata.reload()
 
     result = {
         "collection": target,
@@ -493,6 +523,9 @@ def run_rebuild_job(project_id: str, lock_token: str = "") -> None:
     except RebuildStopped as exc:
         logger.warning("Index rebuild of %s stopped: %s", project_id, exc)
         _set_job(project_id, "failed", f"Rebuild stopped: {exc} The previous index is still serving.", error=str(exc))
+    except RebuildPartlyPublished as exc:
+        logger.exception("Index rebuild of %s published its index but not all its files", project_id)
+        _set_job(project_id, "failed", f"Rebuild incomplete: {exc}", error=str(exc), traceback=traceback.format_exc()[-2000:])
     except Exception as exc:
         logger.exception("Index rebuild of %s failed", project_id)
         _set_job(

@@ -116,3 +116,53 @@ def test_job_status_write_retries_a_briefly_locked_file(norssit_project, monkeyp
     rebuild._set_job("norssit", "running", "Checking…")
     assert len(attempts) == 2
     assert rebuild.read_job("norssit")["message"] == "Checking…"
+
+
+# ── Commit order: nothing live is lost, and a failure says what is serving ────
+
+
+def test_a_failed_index_build_drops_its_half_built_collection(pipeline, monkeypatch: pytest.MonkeyPatch):
+    created: list[str] = []
+
+    def broken_index(collection_name, projects):
+        created.append(collection_name)
+        raise RuntimeError("upsert failed")
+
+    monkeypatch.setattr(rebuild, "init_vectordb", broken_index)
+    monkeypatch.setattr(rebuild, "_collections", lambda: list(created))
+    monkeypatch.setattr(rebuild, "_alias_target", lambda alias: None)
+    rebuild.run_rebuild_job("norssit")
+    assert created and f"delete {created[0]}" in pipeline
+    assert "previous index is still serving" in rebuild.read_job("norssit")["message"]
+
+
+def test_the_fingerprint_is_written_with_the_other_files_before_the_swap(pipeline, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(rebuild, "save_fingerprint", lambda fp, project: pipeline.append("save fingerprint"))
+    rebuild.rebuild_index_with_alias("norssit")
+    assert pipeline.index("save fingerprint") < pipeline.index("swap")
+
+
+def test_old_collections_are_retired_only_after_the_files_are_live(pipeline, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(rebuild, "_collections", lambda: ["norssit__v20200101-000000"])
+    monkeypatch.setattr(rebuild, "promote", lambda project: pipeline.append("promote"))
+    rebuild.rebuild_index_with_alias("norssit")
+    assert pipeline.index("swap") < pipeline.index("promote") < pipeline.index("delete norssit__v20200101-000000")
+
+
+def test_a_failure_after_the_swap_keeps_the_built_files_and_says_the_new_index_is_live(
+    pipeline, norssit_project, monkeypatch: pytest.MonkeyPatch
+):
+    def full_disk(project):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(rebuild, "promote", full_disk)
+    monkeypatch.setattr(rebuild, "_collections", lambda: ["norssit__v20200101-000000"])
+    rebuild.run_rebuild_job("norssit")
+
+    job = rebuild.read_job("norssit")
+    assert job["state"] == "failed"
+    assert "previous index is still serving" not in job["message"]
+    assert "is live" in job["message"]
+    assert norssit_project.build_dir.is_dir()
+    # The old index stays: its files are still the live ones.
+    assert "delete norssit__v20200101-000000" not in pipeline
