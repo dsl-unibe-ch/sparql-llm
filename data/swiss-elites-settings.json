@@ -2,7 +2,7 @@
   "app_name": "Swiss Elites Chat",
   "app_org": "University of Lausanne - Swiss Elites project",
   "app_topics": "Swiss elites, political figures, historical persons, social networks, and prosopographical data",
-  "app_public_host": "vm7.dsl.unibe.ch",
+  "app_public_host": "swiss-elites.dsl.unibe.ch",
   "app_homepage_url": "https://elites-suisses.lod4hss.org/",
   "app_intro": "A natural-language interface to the **Elites Suisses** knowledge graph of the [LESSH project](https://elites-suisses.lod4hss.org/) (Université de Lausanne / Universität Bern). Ask in English or French about Swiss political, economic, academic and military figures of the 19th–20th centuries: their mandates and memberships, studies, families and marriages.",
   "default_llm_model": "gpustack/qwen3.8-27b",
