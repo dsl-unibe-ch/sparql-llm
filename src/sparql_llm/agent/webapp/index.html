@@ -88,9 +88,9 @@
       /* Custom element must fill and flex as a column */
       chat-with-context { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 
-      /* ── Dataset picker: moved into the top of the widget's history sidebar (inline
-         styles there, the page's CSS does not reach into its shadow root); shown in
-         the header instead when the widget has no sidebar. ── */
+      /* ── Dataset picker: moved into the top of the widget's history sidebar, above
+         "New chat"; shown in the header instead when the widget has no sidebar
+         (auth off). Inline styles, so it looks the same wherever it sits. ── */
       #dataset-picker { display: none; }
       .site-header #dataset-picker { display: flex; align-items: center; gap: 0.5rem; }
     </style>
@@ -356,17 +356,18 @@
     })();
 
     // ── Dataset picker and placeholder, placed inside the compiled widget ──
-    // The widget renders into a shadow root and re-renders parts of it, so both are
-    // (re)applied whenever its content changes.
+    // The widget renders into the element itself (its renderRoot is the element, not a
+    // shadow root) and re-renders parts of it, so both are (re)applied whenever its
+    // content changes. A shadow root is still looked into, should a rebuild add one.
     (function () {
       var chatEl = document.getElementById("chat-element");
       var picker = document.getElementById("dataset-picker");
+      var pickerStyle = picker ? picker.getAttribute("style") : "";
       var placeholder = chatEl.getAttribute("data-placeholder");
       var placed = false;
 
       function apply() {
-        var root = chatEl.shadowRoot;
-        if (!root) return;
+        var root = chatEl.shadowRoot || chatEl;
         if (placeholder) {
           root.querySelectorAll("textarea").forEach(function (t) {
             if (t.placeholder !== placeholder) t.placeholder = placeholder;
@@ -375,19 +376,19 @@
         if (picker && !picker.isConnected) placed = false;
         var aside = root.querySelector('aside[aria-label="Saved conversations"]');
         if (picker && aside && picker.parentNode !== aside) {
+          // Also when it went to the header first: put its sidebar look back.
+          picker.setAttribute("style", pickerStyle || "");
           picker.style.display = "block";
+          picker.querySelectorAll("div, span").forEach(function (el) { el.style.display = "block"; el.style.marginLeft = ""; });
           aside.insertBefore(picker, aside.firstChild);
           placed = true;
         }
       }
 
       var observer = new MutationObserver(apply);
-      function watch() {
-        if (!chatEl.shadowRoot) return setTimeout(watch, 50);
-        observer.observe(chatEl.shadowRoot, { childList: true, subtree: true });
-        apply();
-      }
-      watch();
+      observer.observe(chatEl, { childList: true, subtree: true });
+      if (chatEl.shadowRoot) observer.observe(chatEl.shadowRoot, { childList: true, subtree: true });
+      apply();
       // No history sidebar (auth off): offer the datasets in the header instead.
       setTimeout(function () {
         if (picker && !placed) {
