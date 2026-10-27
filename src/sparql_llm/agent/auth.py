@@ -52,6 +52,8 @@ class Conversation(Base):
     messages: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list, nullable=False)
     #: The dataset the chat asked about; the history lists only the selected dataset's chats.
     project: Mapped[str] = mapped_column(String(64), default="", server_default="", nullable=False)
+    #: The chat's model, MCP tools switch and limits, restored when the chat is resumed.
+    settings: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, server_default="{}", nullable=False)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(TIMESTAMPAware(timezone=True), default=now_utc, nullable=False)
 
@@ -82,10 +84,11 @@ async def create_db_and_tables() -> None:
 
 
 async def migrate_conversation_project(engine: Any, first_project_id: str) -> bool:
-    """Give every chat saved before datasets existed to the first dataset. Idempotent.
+    """Bring an older conversation table up to date in place. Idempotent.
 
-    ``create_all`` never alters an existing table, so the column is added here; then each
-    chat without a dataset gets the first one. Returns whether anything changed.
+    ``create_all`` never alters an existing table, so the columns added since are added
+    here: ``project`` (then every chat without a dataset gets the first one) and
+    ``settings`` (empty for older chats). Returns whether anything changed.
     """
     async with engine.begin() as conn:
         rows = (await conn.exec_driver_sql('PRAGMA table_info("conversation")')).fetchall()
@@ -97,6 +100,9 @@ async def migrate_conversation_project(engine: Any, first_project_id: str) -> bo
             await conn.exec_driver_sql(
                 "ALTER TABLE conversation ADD COLUMN project VARCHAR(64) NOT NULL DEFAULT ''"
             )
+        if "settings" not in columns:
+            await conn.exec_driver_sql("ALTER TABLE conversation ADD COLUMN settings JSON NOT NULL DEFAULT '{}'")
+            added = True
         updated = await conn.exec_driver_sql(
             "UPDATE conversation SET project = ? WHERE project = ''", (first_project_id,)
         )

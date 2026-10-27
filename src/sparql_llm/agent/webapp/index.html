@@ -339,6 +339,39 @@
         });
       }
 
+      // A saved chat keeps the settings it was asked with, and gets them back when resumed.
+      var chatEl = document.getElementById("chat-element");
+      function currentSettings() {
+        return {
+          model: window.__CHAT_MODEL__ || chatEl.getAttribute("model") || undefined,
+          use_tools: !!window.__USE_TOOLS__,
+          max_try_fix_sparql: window.__MAX_FIXES__,
+          max_tool_iterations: window.__MAX_STEPS__,
+        };
+      }
+      function applySettings(s) {
+        if (!s) return;
+        if (typeof s.use_tools === "boolean" && toggle) {
+          window.__USE_TOOLS__ = s.use_tools;
+          toggle.checked = s.use_tools;
+          syncStepsVisibility();
+        }
+        if (s.max_try_fix_sparql && maxFixes) {
+          window.__MAX_FIXES__ = clampFixes(s.max_try_fix_sparql);
+          maxFixes.value = window.__MAX_FIXES__;
+        }
+        if (s.max_tool_iterations && maxSteps) {
+          window.__MAX_STEPS__ = clampSteps(s.max_tool_iterations);
+          maxSteps.value = window.__MAX_STEPS__;
+        }
+        // Only a model still on offer: otherwise the current one stays.
+        var models = (chatEl.getAttribute("models") || "").split(",");
+        if (s.model && models.indexOf(s.model) !== -1) {
+          window.__CHAT_MODEL__ = s.model;
+          chatEl.setAttribute("model", s.model);
+        }
+      }
+
       var origFetch = window.fetch.bind(window);
       window.fetch = function (input, init) {
         try {
@@ -347,6 +380,8 @@
           var isChat = method === "POST" && CHAT_ENDPOINT && url.indexOf(CHAT_ENDPOINT) !== -1;
           if (isChat && init && typeof init.body === "string") {
             var payload = JSON.parse(init.body);
+            // The model picked in the widget, recorded for the chat's saved settings.
+            if (payload.model) window.__CHAT_MODEL__ = payload.model;
             // The dataset is the page's: the server checks it and answers from it only.
             payload.project = {{ (dataset.id if dataset else "") | tojson }};
             payload.use_tools = !!window.__USE_TOOLS__;
@@ -374,7 +409,20 @@
             } else if (method === "PUT" && url.indexOf(HISTORY_ENDPOINT + "/") === 0 && init && typeof init.body === "string") {
               var saved = JSON.parse(init.body);
               saved.project = DATASET;
+              saved.settings = currentSettings();
               init = Object.assign({}, init, { body: JSON.stringify(saved) });
+            } else if (
+              method === "GET" &&
+              url.indexOf(HISTORY_ENDPOINT + "/") === 0 &&
+              /^[A-Za-z0-9_-]+$/.test(url.slice(HISTORY_ENDPOINT.length + 1))
+            ) {
+              // Opening a saved chat: put its settings back once the widget has its messages.
+              return origFetch(input, init).then(function (response) {
+                if (response.ok) {
+                  response.clone().json().then(function (chat) { applySettings(chat.settings); }).catch(function () {});
+                }
+                return response;
+              });
             }
           }
         } catch (e) {

@@ -136,3 +136,11 @@ def test_no_history_without_a_dataset(datasets, tmp_path: Path):
         json.dumps([{"id": "swiss", "published": False}, {"id": "norssit", "published": False}]), encoding="utf-8"
     )
     assert 'history-endpoint=""' in _client_as(USER).get("/").text
+
+
+def test_the_page_saves_and_restores_chat_settings(datasets):
+    """The page records the chat's settings with each save and applies them when a saved chat opens."""
+    page = _client_as(CURATOR).get("/").text
+
+    assert "saved.settings = currentSettings()" in page
+    assert "applySettings(" in page

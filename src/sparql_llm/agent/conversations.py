@@ -52,8 +52,21 @@ class StoredMessage(BaseModel):
     links: list[dict[str, Any]] = []
 
 
+class ChatSettings(BaseModel):
+    """What the chat was asked with, restored when it is resumed. Unknown keys are dropped."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    model: str | None = Field(default=None, max_length=200)
+    use_tools: bool | None = None
+    max_try_fix_sparql: int | None = Field(default=None, ge=1, le=20)
+    max_tool_iterations: int | None = Field(default=None, ge=1, le=30)
+
+
 class SaveRequest(BaseModel):
     messages: list[StoredMessage]
+    #: The settings of the chat's latest turn, as the page sends them.
+    settings: ChatSettings | None = None
     #: The dataset the chat asks about, as the page sends it; empty (an older page) = the first.
     project: str = ""
 
@@ -173,7 +186,12 @@ async def get_conversation(
     session: AsyncSession = Depends(get_async_session),
 ) -> dict[str, Any]:
     conv = await _owned(session, conversation_id, user)
-    return {**_summary(conv), "created_at": conv.created_at.isoformat(), "messages": conv.messages}
+    return {
+        **_summary(conv),
+        "created_at": conv.created_at.isoformat(),
+        "messages": conv.messages,
+        "settings": conv.settings or {},
+    }
 
 
 @router.put("/{conversation_id}")
@@ -211,6 +229,8 @@ async def save_conversation(
     if not conv.project:
         conv.project = project
     conv.messages = messages
+    if payload.settings is not None:
+        conv.settings = payload.settings.model_dump(exclude_none=True)
     conv.updated_at = now_utc()
     await session.commit()
     return _summary(conv)

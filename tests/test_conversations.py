@@ -318,3 +318,41 @@ def test_an_existing_chat_is_not_saved_under_another_dataset(client, use_project
 
     assert moved.status_code == 409
     assert client.get("/conversations/s1").json()["messages"] == _thread()
+
+
+SETTINGS = {"model": "gpustack/gpt-oss-120b", "use_tools": True, "max_try_fix_sparql": 5, "max_tool_iterations": 12}
+
+
+def test_a_chat_reopens_with_its_settings(client, use_projects):
+    """Resuming a chat restores its model, MCP tools switch and limits."""
+    use_projects(*TWO)
+    _save(client, "c1", settings={**SETTINGS, "unexpected": "dropped"})
+    assert client.get("/conversations/c1").json()["settings"] == SETTINGS
+
+    changed = {**SETTINGS, "use_tools": False, "model": "gpustack/qwen3.8-27b"}
+    _save(client, "c1", settings=changed)
+    assert client.get("/conversations/c1").json()["settings"] == changed
+
+
+def test_a_chat_saved_without_settings_reopens_with_none(client, use_projects):
+    use_projects(*TWO)
+    _save(client, "c1")
+    assert client.get("/conversations/c1").json()["settings"] == {}
+
+
+def test_old_chats_get_empty_settings_after_upgrade(client, use_projects):
+    from sparql_llm.agent.auth import migrate_conversation_project
+
+    use_projects(*TWO)
+    _save(client, "old1")
+
+    async def downgrade():
+        async with client.engine.begin() as conn:
+            await conn.exec_driver_sql("ALTER TABLE conversation DROP COLUMN settings")
+            await conn.exec_driver_sql("ALTER TABLE conversation DROP COLUMN project")
+
+    asyncio.run(downgrade())
+    assert asyncio.run(migrate_conversation_project(client.engine, "swiss-elites")) is True
+    assert asyncio.run(migrate_conversation_project(client.engine, "swiss-elites")) is False
+
+    assert client.get("/conversations/old1").json()["settings"] == {}
