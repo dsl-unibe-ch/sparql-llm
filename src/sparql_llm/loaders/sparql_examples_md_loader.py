@@ -7,7 +7,6 @@ that ``SparqlExamplesLoader`` consumes; this loader reads that convention. A pro
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 from langchain_core.document_loaders.base import BaseLoader
@@ -15,12 +14,6 @@ from langchain_core.documents import Document
 from rdflib.plugins.sparql import prepareQuery
 
 from sparql_llm.utils import logger
-
-_SECTION_PATTERN = re.compile(r"^##\s+(.+?)\s*$", re.MULTILINE)
-_SPARQL_BLOCK_PATTERN = re.compile(r"```\s*sparql\s*\n(.*?)```", re.DOTALL)
-_QUESTION_PATTERN = re.compile(
-    r"^(?:Question|Alternative question):\s*(.+?)\s*$", re.MULTILINE
-)
 
 
 class SparqlExamplesMdLoader(BaseLoader):
@@ -36,6 +29,9 @@ class SparqlExamplesMdLoader(BaseLoader):
         ```sparql
         <SPARQL query>
         ```
+
+    The curators' flat layout (``Question:`` lines and fenced queries, no headings) is read
+    too: parsing is ``parse_examples``, the one the upload check and preflight use.
 
     Yields one Document per *question phrasing* (so a section with both a
     ``Question:`` and an ``Alternative question:`` line emits two Documents
@@ -54,18 +50,15 @@ class SparqlExamplesMdLoader(BaseLoader):
             logger.warning(f"Examples file not found: {self.file_path}")
             return []
 
+        # The same parser as the upload check and preflight: an example they accept is indexed.
+        from sparql_llm.indexing.sync_examples import parse_examples
+
         text = self.file_path.read_text(encoding="utf-8")
-        sections = self._split_sections(text)
         docs: list[Document] = []
 
-        for section in sections:
-            title_match = _SECTION_PATTERN.match(section)
-            title = title_match.group(1).strip() if title_match else ""
-
-            sparql_match = _SPARQL_BLOCK_PATTERN.search(section)
-            if not sparql_match:
-                continue
-            query = self._normalize_query(sparql_match.group(1).strip())
+        for example in parse_examples(text):
+            title = example.title
+            query = self._normalize_query(example.query)
 
             query_type = None
             try:
@@ -75,9 +68,7 @@ class SparqlExamplesMdLoader(BaseLoader):
                     f"Could not parse query in section '{title}' of {self.file_path}: {e}"
                 )
 
-            questions = [m.group(1).strip() for m in _QUESTION_PATTERN.finditer(section)]
-            if not questions:
-                questions = [title]
+            questions = [q.strip() for q in example.questions] or [title]
 
             for q in questions:
                 docs.append(
@@ -95,15 +86,6 @@ class SparqlExamplesMdLoader(BaseLoader):
 
         logger.info(f"Loaded {len(docs)} example documents from {self.file_path}")
         return docs
-
-    @staticmethod
-    def _split_sections(text: str) -> list[str]:
-        """Split the document into level-2 (``##``) sections."""
-        starts = [m.start() for m in _SECTION_PATTERN.finditer(text)]
-        if not starts:
-            return []
-        starts.append(len(text))
-        return [text[starts[i] : starts[i + 1]] for i in range(len(starts) - 1)]
 
     def _normalize_query(self, query: str) -> str:
         """Apply the project's prefix repairs before the query reaches the index."""
