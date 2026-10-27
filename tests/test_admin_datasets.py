@@ -1,6 +1,7 @@
 """Admins add, publish and unpublish datasets; every admin card works on the selected dataset."""
 
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -101,7 +102,8 @@ def test_admin_cards_follow_the_selected_dataset(two, tmp_path: Path):
     assert 'data-selected-dataset="b"' in page
     assert "Alpha" in page and "published" in page
     assert "ready, not published" in page
-    assert "🔴 Gamma" in page and "🟡 Beta" in page and "🟢 Alpha" in page
+    for state, label in (("new", "Gamma"), ("ready", "Beta"), ("published", "Alpha")):
+        assert re.search(rf'ds-dot-{state}"[^>]*></span><span class="ds-option-label">{label}<', page), (state, label)
     assert list(files["projects"]) == ["b"]
 
 

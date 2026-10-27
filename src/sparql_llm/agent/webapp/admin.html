@@ -129,7 +129,25 @@
       .ds-section .card { margin-bottom: 1rem; }
       .ds-bar { position: sticky; top: 0; z-index: 30; display: flex; flex-wrap: wrap; align-items: center; gap: 0.6rem; margin: 0 -1rem 0.75rem; padding: 0.75rem 1rem; background: #fff; border-bottom: 1px solid #cbd5e1; border-radius: 14px 14px 0 0; box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06); }
       .ds-bar-label { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; }
-      .ds-bar select { min-width: 14rem; padding: 0.4rem 0.6rem; font-size: 0.88rem; font-weight: 600; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; color: #0f172a; }
+      /* Dataset menu with state lights: green published, amber ready, red new. */
+      .ds-picker { position: relative; }
+      .ds-picker-btn { display: inline-flex; align-items: center; gap: 0.55rem; min-width: 14rem; padding: 0.45rem 0.7rem; font-size: 0.9rem; font-weight: 600; color: #0f172a; background: #fff; border: 1px solid #cbd5e1; border-radius: 10px; cursor: pointer; }
+      .ds-picker-btn:hover, .ds-picker-btn[aria-expanded="true"] { border-color: #94a3b8; background: #f8fafc; }
+      .ds-caret { margin-left: auto; font-size: 0.7rem; color: #64748b; }
+      .ds-picker-menu { position: absolute; top: calc(100% + 6px); left: 0; z-index: 40; min-width: 100%; width: max-content; max-width: 26rem; max-height: 22rem; overflow-y: auto; padding: 0.35rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 23, 42, 0.16); }
+      .ds-option { display: flex; align-items: center; gap: 0.6rem; width: 100%; padding: 0.5rem 0.65rem; border: none; border-radius: 8px; background: none; font: inherit; font-size: 0.86rem; color: #1e293b; text-align: left; text-decoration: none; cursor: pointer; }
+      .ds-option:hover, .ds-option:focus-visible { background: #f1f5f9; outline: none; }
+      .ds-option-current { background: #eef2ff; font-weight: 600; }
+      .ds-option-label { flex: 1; }
+      .ds-option-state { font-size: 0.72rem; font-weight: 500; color: #94a3b8; white-space: nowrap; }
+      .ds-option-add { color: #2563eb; font-weight: 600; }
+      .ds-menu-sep { height: 1px; margin: 0.3rem 0.4rem; background: #e2e8f0; }
+      .ds-dot { flex-shrink: 0; width: 9px; height: 9px; border-radius: 50%; }
+      .ds-dot-published { background: #22c55e; box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18), 0 0 8px 2px rgba(34, 197, 94, 0.65); animation: ds-glow 2.4s ease-in-out infinite; }
+      .ds-dot-ready { background: #f59e0b; box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.18), 0 0 8px 2px rgba(245, 158, 11, 0.6); }
+      .ds-dot-new { background: #ef4444; box-shadow: 0 0 0 2px rgba(239, 68, 68, 0.18), 0 0 8px 2px rgba(239, 68, 68, 0.55); }
+      @keyframes ds-glow { 50% { box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.12), 0 0 12px 4px rgba(34, 197, 94, 0.45); } }
+      @media (prefers-reduced-motion: reduce) { .ds-dot-published { animation: none; } }
       .ds-danger { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.75rem; margin: 0 0 1rem; padding: 0.75rem 1rem; border: 1px solid #fecaca; border-radius: 12px; background: #fff; font-size: 0.8rem; color: #64748b; }
       .btn-danger { background: #fff; color: #b91c1c; border: 1px solid #fca5a5; border-radius: 8px; padding: 0.5rem 1rem; font-size: 0.82rem; font-weight: 600; cursor: pointer; }
       .btn-danger:hover:not(:disabled) { background: #fef2f2; }
@@ -182,18 +200,24 @@
       <!-- Dataset: every card in this section works on the dataset picked in its bar -->
       <section class="ds-section" id="datasets-card" data-selected-dataset="{{ dataset.id if dataset else '' }}">
         <div class="ds-bar">
-          <label class="ds-bar-label" for="ds-select">Dataset</label>
-          <!-- A dropdown, so it takes the same room with two datasets or twenty. -->
-          {% set dots = {"published": "🟢", "ready": "🟡", "new": "🔴"} %}
-          <select id="ds-select" title="🟢 published · 🟡 ready, not published · 🔴 new, not rebuilt yet">
-            {% for d in datasets %}
-            <option value="{{ d.id }}"{% if dataset and d.id == dataset.id %} selected{% endif %}>{{ dots[d.state] }} {{ d.label }}</option>
-            {% endfor %}
-            {% if is_admin %}
-            <option disabled>──────────</option>
-            <option value="__add">＋ Add a dataset…</option>
-            {% endif %}
-          </select>
+          <span class="ds-bar-label" id="ds-picker-label">Dataset</span>
+          <!-- A menu rather than a native dropdown: native options cannot show the state lights.
+               Same room with two datasets or twenty. -->
+          <div class="ds-picker">
+            <button type="button" id="ds-picker-btn" class="ds-picker-btn" aria-haspopup="true" aria-expanded="false" aria-labelledby="ds-picker-label ds-picker-btn">
+              {% if dataset %}<span class="ds-dot ds-dot-{{ dataset.state }}" aria-hidden="true"></span>{{ dataset.label }}{% endif %}
+              <span class="ds-caret" aria-hidden="true">▾</span>
+            </button>
+            <div id="ds-picker-menu" class="ds-picker-menu" hidden>
+              {% for d in datasets %}
+              <a href="/admin?dataset={{ d.id }}" class="ds-option{% if dataset and d.id == dataset.id %} ds-option-current{% endif %}"{% if dataset and d.id == dataset.id %} aria-current="page"{% endif %}><span class="ds-dot ds-dot-{{ d.state }}" aria-hidden="true"></span><span class="ds-option-label">{{ d.label }}</span><span class="ds-option-state">{{ d.state_label }}</span></a>
+              {% endfor %}
+              {% if is_admin %}
+              <div class="ds-menu-sep"></div>
+              <button type="button" id="ds-add-open" class="ds-option ds-option-add">＋ Add a dataset…</button>
+              {% endif %}
+            </div>
+          </div>
           {% if dataset %}<span class="ds-state ds-{{ dataset.state }}">{{ dataset.state_label }}</span>{% endif %}
           {% if is_admin and dataset %}
             {% if dataset.state == "published" %}
@@ -263,7 +287,7 @@
           <label>Name <input id="ds-new-label" placeholder="e.g. Norssit" required /></label>
           <span id="ds-add-error" class="ds-error"></span>
           <div class="ds-dialog-actions">
-            <button value="cancel" class="btn-reindex btn-check">Cancel</button>
+            <button value="cancel" formnovalidate class="btn-reindex btn-check">Cancel</button>
             <button type="button" id="ds-new" class="btn-reindex">Add dataset</button>
           </div>
         </form>
@@ -283,7 +307,7 @@
           <label>Type <strong>{{ dataset.id }}</strong> to confirm <input id="ds-remove-confirm" autocomplete="off" /></label>
           <span id="ds-remove-error" class="ds-error"></span>
           <div class="ds-dialog-actions">
-            <button value="cancel" class="btn-reindex btn-check">Cancel</button>
+            <button value="cancel" formnovalidate class="btn-reindex btn-check">Cancel</button>
             <button type="button" id="ds-remove" class="btn-danger" disabled>Remove</button>
           </div>
         </form>
@@ -454,16 +478,45 @@
           };
         }
 
-        var pick = document.getElementById('ds-select');
-        var addDialog = document.getElementById('ds-add-dialog');
-        if (pick) {
-          pick.addEventListener('change', function () {
-            if (pick.value === '__add') {
-              pick.value = DATASET;  // the dropdown keeps showing the current dataset
-              if (addDialog) { addDialog.showModal(); document.getElementById('ds-new-id').focus(); }
-              return;
+        // The dataset menu: opens on its button, closes on Esc, on a click outside or on a choice.
+        var menuBtn = document.getElementById('ds-picker-btn');
+        var menu = document.getElementById('ds-picker-menu');
+        function setMenu(open) {
+          menu.hidden = !open;
+          menuBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+        }
+        if (menuBtn && menu) {
+          menuBtn.addEventListener('click', function (e) {
+            e.stopPropagation();
+            setMenu(menu.hidden);
+            if (!menu.hidden) {
+              var first = menu.querySelector('.ds-option-current') || menu.querySelector('.ds-option');
+              if (first) first.focus();
             }
-            location.href = '/admin?dataset=' + encodeURIComponent(pick.value);
+          });
+          document.addEventListener('click', function (e) {
+            if (!menu.hidden && !menu.contains(e.target)) setMenu(false);
+          });
+          document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && !menu.hidden) { setMenu(false); menuBtn.focus(); }
+          });
+          // Arrow keys move between the entries.
+          menu.addEventListener('keydown', function (e) {
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+            e.preventDefault();
+            var items = Array.prototype.slice.call(menu.querySelectorAll('.ds-option'));
+            var i = items.indexOf(document.activeElement);
+            var next = items[(i + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length];
+            if (next) next.focus();
+          });
+        }
+        var addDialog = document.getElementById('ds-add-dialog');
+        var addOpen = document.getElementById('ds-add-open');
+        if (addOpen && addDialog) {
+          addOpen.addEventListener('click', function () {
+            setMenu(false);
+            addDialog.showModal();
+            document.getElementById('ds-new-id').focus();
           });
         }
         var add = document.getElementById('ds-new');
