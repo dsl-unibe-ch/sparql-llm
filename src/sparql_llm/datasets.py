@@ -80,6 +80,12 @@ def add_dataset(dataset_id: str, label: str) -> None:
     # one of those, or any folder already there, which removing the dataset would archive.
     if dataset_id in RESERVED_IDS or (_data_dir() / dataset_id).exists():
         raise DatasetError(f"The id '{dataset_id}' is taken by a folder of this installation: choose another.")
+    # Saved chats name their dataset by id: a new dataset under a removed one's id would
+    # show, and resume, the removed dataset's chats as its own.
+    archived = re.compile(re.escape(dataset_id) + r"-\d{8}-\d{6}")
+    removed = _data_dir() / REMOVED_DIR
+    if removed.is_dir() and any(archived.fullmatch(p.name) for p in removed.iterdir()):
+        raise DatasetError(f"The id '{dataset_id}' belonged to a removed dataset, whose saved chats still use it: choose another.")
     staged = _data_dir() / dataset_id / UPLOADED_DIR
     staged.mkdir(parents=True, exist_ok=True)
     (staged / PROJECT_FILE).write_text(

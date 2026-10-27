@@ -39,3 +39,14 @@ def test_a_folder_that_is_not_the_datasets_own_is_never_archived(swiss_project):
     with pytest.raises(DatasetError):
         check_removable("vectordb")
     assert (store / "collection.bin").read_text(encoding="utf-8") == "sentinel"
+
+
+def test_a_removed_id_cannot_be_reused(swiss_project):
+    # Saved chats keep the dataset id: a new dataset under a removed id would inherit them.
+    archive = swiss_project.dir.parent / "removed" / "old-a-20261027-120000"
+    archive.mkdir(parents=True)
+    with pytest.raises(DatasetError, match="removed"):
+        add_dataset("old-a", "Replacement")
+    # Only that exact id: one that merely starts the same way is free.
+    add_dataset("old", "Old")
+    assert "old" in list_dataset_ids()
