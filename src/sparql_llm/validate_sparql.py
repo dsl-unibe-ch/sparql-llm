@@ -349,6 +349,19 @@ def validate_sparql(
         "fixed_query": None,
         "errors": [],
     }
+    # 0. Declare the prefixes the query uses but does not declare, from this dataset's map.
+    # rdflib knows some prefixes itself (schema: as https://schema.org/), so waiting for an
+    # "Unknown namespace prefix" error would give such a query rdflib's namespace, not ours.
+    if endpoint_url and prefixes_map:
+        declared = set(re.findall(r"(?i)\bPREFIX\s+([A-Za-z][\w.-]*)?\s*:", query))
+        undeclared = {
+            prefix: ns
+            for prefix, ns in prefixes_map.items()
+            if prefix not in declared and re.search(rf"(?<![\w:<-]){re.escape(prefix)}:[A-Za-z_]", query)
+        }
+        if undeclared:
+            query = add_missing_prefixes(query, undeclared)
+            validation_output["fixed_query"] = query
     # 1. Check if the query is syntactically valid, auto fix prefixes when possible
     try:
         # Try to parse, to fix prefixes and structural issues
@@ -387,13 +400,21 @@ def validate_sparql_in_msg(
     msg: str,
     prefixes_map: dict[str, str] | None = None,
     endpoints_void_dict: EndpointsSchemaDict | None = None,
+    endpoint_url: str | None = None,
 ) -> list[QueryValidationOutput]:
-    """Validate SPARQL queries in a markdown response using VoID descriptions of endpoints."""
+    """Validate SPARQL queries in a markdown response using VoID descriptions of endpoints.
+
+    With ``endpoint_url``, every query is checked against that endpoint's schema, the one it
+    will run on, whatever ``#+ endpoint:`` line the model wrote; the output still reports
+    the endpoint the model named.
+    """
     validation_outputs = []
     generated_sparqls = extract_sparql_queries(msg)
     for gen_sparql in generated_sparqls:
         if gen_sparql["query"] and gen_sparql["endpoint_url"]:
-            validation_outputs.append(
-                validate_sparql(gen_sparql["query"], gen_sparql["endpoint_url"], prefixes_map, endpoints_void_dict)
+            output = validate_sparql(
+                gen_sparql["query"], endpoint_url or gen_sparql["endpoint_url"], prefixes_map, endpoints_void_dict
             )
+            output["endpoint_url"] = gen_sparql["endpoint_url"]
+            validation_outputs.append(output)
     return validation_outputs

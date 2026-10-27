@@ -117,3 +117,32 @@ def test_execution_uses_the_selected_datasets_method(two, executed):
     asyncio.run(validation.validate_output(State(messages=[message]), _config("b")))
 
     assert executed == [(A_URL, True), (B_URL, False)]
+
+
+def test_missing_schema_prefix_takes_the_selected_datasets_namespace(two):
+    """GPT review I2: rdflib binds schema: to https itself, so an http dataset never got its own namespace."""
+    message = AIMessage(content=f"```sparql\n#+ endpoint: {A_URL}\nSELECT ?s WHERE {{ ?s a schema:Person }}\n```")
+    on_a = asyncio.run(validation.validate_output(State(messages=[message]), _config("a", enable_sparql_execution=False)))
+    message = AIMessage(content=f"```sparql\n#+ endpoint: {B_URL}\nSELECT ?s WHERE {{ ?s a schema:Person }}\n```")
+    on_b = asyncio.run(validation.validate_output(State(messages=[message]), _config("b", enable_sparql_execution=False)))
+
+    assert "PREFIX schema: <http://schema.org/>" in on_a["structured_output"]["sparql_query"]
+    assert "PREFIX schema: <https://schema.org/>" in on_b["structured_output"]["sparql_query"]
+
+
+def test_an_endpoint_comment_naming_another_dataset_does_not_skip_the_schema_check(two, executed, tmp_path: Path):
+    """GPT review I3: the schema check looked up the commented endpoint, so naming B skipped A's schema."""
+    from sparql_llm.indexing.index_resources import endpoints_metadata
+
+    schema = {A_URL: {"http://a.example/voc/Person": {"http://a.example/voc/name": []}}}
+    (tmp_path / "a" / "prefixes.json").write_text(
+        json.dumps({"prefixes_map": A["prefixes"], "classes_schema": schema}), encoding="utf-8"
+    )
+    endpoints_metadata.reload()
+    query = "SELECT ?s WHERE {{ ?s a voc:Nothing ; voc:nope ?x }}"
+    message = AIMessage(content=f"```sparql\n#+ endpoint: {B_URL}\n{query}\n```".replace("{{", "{").replace("}}", "}"))
+
+    result = asyncio.run(validation.validate_output(State(messages=[message]), _config("a")))
+
+    assert result["passed_validation"] is False
+    assert executed == []

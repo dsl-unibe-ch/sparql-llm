@@ -292,3 +292,29 @@ def test_saving_records_the_dataset(client, use_projects):
     assert client.get("/conversations/n1").json()["project"] == "norssit"
     # A save without a dataset (an older page) belongs to the first one.
     assert client.get("/conversations/s1").json()["project"] == "swiss-elites"
+
+
+def test_saving_under_a_dataset_the_user_may_not_use_is_refused(client, use_projects, tmp_path):
+    """GPT review I4: a save named any listed dataset, and an unknown one was silently refiled."""
+    use_projects(*TWO)
+    (tmp_path / "datasets.json").write_text(
+        json.dumps([{"id": "swiss-elites", "published": True}, {"id": "norssit", "published": False}]), encoding="utf-8"
+    )
+
+    unpublished = _save(client, "n1", project="norssit")
+    unknown = _save(client, "g1", project="ghost")
+
+    assert unpublished.status_code == 422 and unknown.status_code == 422
+    assert "is not available" in unknown.json()["detail"]
+    assert client.get("/conversations").json() == []
+
+
+def test_an_existing_chat_is_not_saved_under_another_dataset(client, use_projects):
+    """GPT review I4: a save naming another dataset replaced the thread of a chat of the first one."""
+    use_projects(*TWO)
+    _save(client, "s1", project="swiss-elites")
+
+    moved = _save(client, "s1", _thread(answer="Another answer."), project="norssit")
+
+    assert moved.status_code == 409
+    assert client.get("/conversations/s1").json()["messages"] == _thread()

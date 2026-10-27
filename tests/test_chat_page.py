@@ -128,3 +128,11 @@ def test_api_description_names_no_dataset(datasets):
     """Final review: /docs named every served dataset (unpublished ones too) and the Swiss topics."""
     description = main._api_description()
     assert "s.example" not in description and "ldf.fi" not in description and "Norssit" not in description
+
+
+def test_no_history_without_a_dataset(datasets, tmp_path: Path):
+    """GPT review I5: with nothing published, the sidebar asked for every chat, unfiltered."""
+    (tmp_path / "datasets.json").write_text(
+        json.dumps([{"id": "swiss", "published": False}, {"id": "norssit", "published": False}]), encoding="utf-8"
+    )
+    assert 'history-endpoint=""' in _client_as(USER).get("/").text

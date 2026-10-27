@@ -36,8 +36,13 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
 
     validation_steps: list[StepOutput] = []
     recall_messages: list[HumanMessage] = []
+    # Checked against the selected dataset's endpoint, the only one the query can run on:
+    # a comment naming another endpoint must not skip this dataset's schema check.
     validation_outputs = validate_sparql_in_msg(
-        validation_target, endpoints_metadata.prefixes_for(project), endpoints_metadata.schema_for(project)
+        validation_target,
+        endpoints_metadata.prefixes_for(project),
+        endpoints_metadata.schema_for(project),
+        endpoint_url=project.endpoint_url,
     )
     for validation_output in validation_outputs:
         if validation_output["fixed_query"]:

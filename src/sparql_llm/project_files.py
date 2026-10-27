@@ -39,7 +39,7 @@ def _served(project_id: str) -> bool:
     return project_id in list_dataset_ids()
 
 
-def _endpoint_owner(project_id: str, endpoint_url: str) -> str | None:
+def endpoint_owner(project_id: str, endpoint_url: str) -> str | None:
     """Another dataset whose live or uploaded project.json uses this endpoint, if any."""
     from sparql_llm.datasets import list_dataset_ids
 
@@ -87,7 +87,7 @@ def _project_errors(project_id: str, text: str) -> list[str]:
         ]
     if project.id != project_id:
         return [f"id: is '{project.id}', but this is the file of project '{project_id}'. The id must stay '{project_id}'."]
-    owner = _endpoint_owner(project_id, project.endpoint_url)
+    owner = endpoint_owner(project_id, project.endpoint_url)
     if owner:
         return [f"endpoint_url: is already used by dataset '{owner}'. Each dataset needs its own endpoint."]
     return []
@@ -155,6 +155,11 @@ def restore_previous(project_id: str, name: str, user_email: str = "") -> None:
     previous = directory / f"{name}.prev"
     if not previous.exists():
         raise ProjectFileError(f"There is no previous version of {name} to restore.")
+    # The previous version is checked like an upload: it may name an endpoint that
+    # another dataset has used since.
+    errors = validate_upload(project_id, name, previous.read_bytes())
+    if errors:
+        raise ProjectFileError(" ".join(errors))
     save_upload(project_id, name, previous.read_bytes(), user_email)
 
 

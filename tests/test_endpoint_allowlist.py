@@ -48,7 +48,7 @@ def test_validation_never_queries_unconfigured_url(norssit_project, monkeypatch:
         return {"results": {"bindings": [{"n": {"value": "10137"}}]}}
 
     monkeypatch.setattr(validation, "query_sparql", fake_query)
-    monkeypatch.setattr(validation, "validate_sparql_in_msg", lambda msg, prefixes, schema: [
+    monkeypatch.setattr(validation, "validate_sparql_in_msg", lambda msg, prefixes, schema, **kw: [
         {"original_query": "SELECT * WHERE { ?s ?p ?o }", "fixed_query": None, "errors": [],
          "endpoint_url": "https://evil.example/sparql"}
     ])

@@ -38,7 +38,7 @@ def test_post_for_follows_the_project(post_only):
 def test_pipeline_execution_uses_the_project_method(post_only, monkeypatch: pytest.MonkeyPatch):
     calls: list[bool] = []
     monkeypatch.setattr(validation, "query_sparql", _recorder(calls))
-    monkeypatch.setattr(validation, "validate_sparql_in_msg", lambda *a: [
+    monkeypatch.setattr(validation, "validate_sparql_in_msg", lambda *a, **kw: [
         {"original_query": "SELECT * WHERE { ?s ?p ?o }", "fixed_query": None, "errors": [], "endpoint_url": URL}
     ])
     message = AIMessage(content="```sparql\nSELECT * WHERE { ?s ?p ?o }\n```")

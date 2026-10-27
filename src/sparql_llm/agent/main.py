@@ -1385,7 +1385,7 @@ async def chat_ui(
             # Saved chats need a logged-in owner; without auth the sidebar stays hidden. The
             # widget builds each chat's URL from this, so the dataset filter is added by the
             # page's fetch wrapper rather than here.
-            "history_endpoint": "/conversations" if settings.auth_enabled else "",
+            "history_endpoint": "/conversations" if settings.auth_enabled and selected else "",
             "examples": ",".join(selected.example_questions) if selected else "",
             "auth_enabled": settings.auth_enabled,
             # Shows the header link to /admin — curators need it too.

@@ -215,9 +215,18 @@ def load_candidate(project_id: str) -> Project:
     if project_id not in list_dataset_ids():
         raise RebuildStopped(f"There is no dataset '{project_id}'.")
     try:
-        return load_project(Path(settings.data_dir), project_id, candidate=True)
+        project = load_project(Path(settings.data_dir), project_id, candidate=True)
     except ProjectError as exc:
         raise RebuildStopped(str(exc)) from exc
+    from sparql_llm.project_files import endpoint_owner
+
+    # Checked here too, not only on upload: Undo and older staged files reach a rebuild as well.
+    owner = endpoint_owner(project_id, project.endpoint_url)
+    if owner:
+        raise RebuildStopped(
+            f"{project.label}: endpoint_url: is already used by dataset '{owner}'. Each dataset needs its own endpoint."
+        )
+    return project
 
 
 def rebuild_index_with_alias(project_id: str) -> dict[str, Any]:

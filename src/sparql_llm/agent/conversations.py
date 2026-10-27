@@ -120,14 +120,20 @@ def _summary(conv: Conversation) -> dict[str, Any]:
     return {"id": conv.id, "title": conv.title, "updated_at": conv.updated_at.isoformat(), "project": conv.project}
 
 
-def _dataset(requested: str) -> str:
-    """The dataset a chat is saved under: the one named if it exists, else the first."""
-    from sparql_llm.datasets import list_dataset_ids
+def _dataset(requested: str, user: User) -> str:
+    """The dataset a chat is saved under: the one named, if this user may use it.
 
-    ids = list_dataset_ids()
-    if requested in ids:
-        return requested
-    return ids[0] if ids else ""
+    No dataset named (an older page) means the first one the user may use; a named one
+    the user may not use, or that does not exist, is refused.
+    """
+    from sparql_llm.agent.request_project import allowed_datasets
+
+    allowed = [p.id for p in allowed_datasets(user)]
+    if not requested:
+        return allowed[0] if allowed else ""
+    if requested not in allowed:
+        raise HTTPException(status_code=422, detail=f"The dataset '{requested}' is not available.")
+    return requested
 
 
 async def _owned(session: AsyncSession, conversation_id: str, user: User) -> Conversation:
@@ -193,16 +199,17 @@ async def save_conversation(
     conv = await session.get(Conversation, conversation_id)
     if conv is not None and conv.user_id != user.id:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    project = _dataset(payload.project, user)
+    # A chat stays with the dataset it started on: a save naming another one changes nothing.
+    if conv is not None and conv.project and payload.project and payload.project != conv.project:
+        raise HTTPException(status_code=409, detail="This conversation belongs to another dataset.")
     if conv is None:
-        conv = Conversation(
-            id=conversation_id, user_id=user.id, title=title_from(messages), project=_dataset(payload.project)
-        )
+        conv = Conversation(id=conversation_id, user_id=user.id, title=title_from(messages), project=project)
         session.add(conv)
     elif not conv.title:
         conv.title = title_from(messages)
-    # A chat stays with the dataset it started on.
     if not conv.project:
-        conv.project = _dataset(payload.project)
+        conv.project = project
     conv.messages = messages
     conv.updated_at = now_utc()
     await session.commit()

@@ -117,3 +117,20 @@ def test_first_successful_rebuild_makes_a_new_dataset_ready_not_published(two):
 
     assert rebuild.read_job("c")["state"] == "done", rebuild.read_job("c")["message"]
     assert dataset_state("c") == "ready"
+
+
+def test_undo_cannot_bring_back_another_datasets_endpoint(two):
+    """GPT review I1: Undo staged a previous project.json without the endpoint-uniqueness check, and Rebuild promoted it."""
+    from sparql_llm.project_files import ProjectFileError, restore_previous, save_upload
+
+    a_dir = two["a"].dir
+    (a_dir / "project.json.prev").write_text(json.dumps({**A, "endpoint_url": B["endpoint_url"]}), encoding="utf-8")
+    with pytest.raises(ProjectFileError, match="is already used by dataset 'b'"):
+        restore_previous("a", "project.json")
+
+    # However the duplicate got staged, Check and Rebuild refuse it.
+    save_upload("a", "project.json", json.dumps({**A, "endpoint_url": B["endpoint_url"]}).encode(), "s@x")
+    assert "is already used by dataset 'b'" in preflight.run_checks("a")[0]["message"]
+    rebuild.run_rebuild_job("a")
+    assert rebuild.read_job("a")["state"] == "failed"
+    assert json.loads((a_dir / "project.json").read_text(encoding="utf-8"))["endpoint_url"] == A["endpoint_url"]
