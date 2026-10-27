@@ -99,15 +99,20 @@
       .dsp-current { display: flex; align-items: center; gap: 0.35rem; font-size: 0.88rem; font-weight: 600; }
       .dsp-arrow { display: inline-block; font-size: 0.7rem; color: #64748b; transition: transform 0.15s; }
       .dsp-toggle[aria-expanded="true"] .dsp-arrow { transform: rotate(90deg); }
-      .dsp-list { margin-top: 0.25rem; max-height: 16rem; overflow-y: auto; }
-      .dsp-item { display: block; padding: 0.4rem 0.5rem 0.4rem 1.4rem; border-radius: 8px; font-size: 0.85rem; text-decoration: none; color: #1e293b; }
+      .dsp-arrow { transition: transform 0.2s ease; }
+      .dsp-collapse { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 0.22s ease, opacity 0.22s ease; }
+      .dsp-collapse.dsp-open { grid-template-rows: 1fr; opacity: 1; }
+      .dsp-list { min-height: 0; overflow: hidden; }
+      .dsp-open .dsp-list { overflow-y: auto; max-height: 16rem; }
+      .dsp-item { display: block; margin-top: 0.15rem; padding: 0.4rem 0.5rem 0.4rem 1.4rem; border-radius: 8px; font-size: 0.85rem; text-decoration: none; color: #1e293b; }
       .dsp-item:hover { background: #f1f5f9; }
-      .dsp-selected { background: #e2e8f0; font-weight: 600; }
       .dsp-note { display: block; font-size: 0.68rem; font-weight: 500; color: #b45309; }
+      .dsp-toggle .dsp-note { padding-left: 1.05rem; }
+      @media (prefers-reduced-motion: reduce) { .dsp-collapse, .dsp-arrow { transition: none; } }
       /* No history sidebar (auth off): the same picker, in the header. */
       .site-header #dataset-picker { display: block; position: relative; padding: 0; border: none; margin: 0; }
       .site-header .dsp-caption { display: none; }
-      .site-header .dsp-list { position: absolute; top: 100%; left: 0; min-width: 14rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); padding: 0.25rem; z-index: 50; }
+      .site-header .dsp-collapse { position: absolute; top: 100%; left: 0; min-width: 14rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); padding: 0 0.25rem; z-index: 50; }
     </style>
     <script type="module" crossorigin src="/assets/index-CWm5W83b.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-V5TykCWV.css">
@@ -205,13 +210,17 @@
           <button type="button" id="dataset-toggle" class="dsp-toggle" aria-expanded="false" aria-controls="dataset-list">
             <span class="dsp-caption">Dataset</span>
             <span class="dsp-current"><span class="dsp-arrow" aria-hidden="true">▸</span>{{ dataset.label if dataset else "" }}</span>
+            {% for d in datasets if dataset and d.id == dataset.id and not d.published %}<span class="dsp-note">only visible to curators</span>{% endfor %}
           </button>
-          <div id="dataset-list" class="dsp-list" hidden>
-            {% for d in datasets %}
-            <a href="/?dataset={{ d.id }}" class="dsp-item{% if dataset and d.id == dataset.id %} dsp-selected{% endif %}"{% if dataset and d.id == dataset.id %} aria-current="page"{% endif %}>
-              {{ d.label }}{% if not d.published %}<span class="dsp-note">only visible to curators</span>{% endif %}
-            </a>
-            {% endfor %}
+          <!-- The other datasets: the current one is the line above. Slides open (grid rows 0fr → 1fr). -->
+          <div id="dataset-list" class="dsp-collapse">
+            <div class="dsp-list">
+              {% for d in datasets if not (dataset and d.id == dataset.id) %}
+              <a href="/?dataset={{ d.id }}" class="dsp-item" tabindex="-1">
+                {{ d.label }}{% if not d.published %}<span class="dsp-note">only visible to curators</span>{% endif %}
+              </a>
+              {% endfor %}
+            </div>
           </div>
         </nav>
         {% endif %}
@@ -419,7 +428,9 @@
       var list = document.getElementById("dataset-list");
       function setOpen(open) {
         toggle.setAttribute("aria-expanded", open ? "true" : "false");
-        list.hidden = !open;
+        list.classList.toggle("dsp-open", open);
+        // Folded entries stay out of the tab order.
+        list.querySelectorAll("a").forEach(function (a) { a.tabIndex = open ? 0 : -1; });
       }
       if (toggle && list) {
         var open = false;
