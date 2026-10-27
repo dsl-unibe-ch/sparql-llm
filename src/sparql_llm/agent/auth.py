@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from sparql_llm.agent.roles import ensure_role_column
-from sparql_llm.config import settings
+from sparql_llm.config import Settings, SettingsError, settings
 
 # ── Database setup ────────────────────────────────────────────────────────────
 
@@ -122,6 +122,27 @@ async def get_user_db(session: AsyncSession = Depends(get_async_session)):
 
 SECRET = settings.auth_secret
 
+#: Shorter secrets are guessable; the placeholder is public. Either would let anyone forge
+#: login tokens and decrypt the saved provider keys, which are encrypted with it.
+MIN_SECRET_LENGTH = 32
+
+
+def check_auth_secret() -> None:
+    """Refuse to run with login on and a placeholder or short ``auth_secret``."""
+    if not settings.auth_enabled:
+        return
+    if settings.auth_secret == Settings.model_fields["auth_secret"].default or len(settings.auth_secret) < MIN_SECRET_LENGTH:
+        raise SettingsError(
+            f"AUTH_SECRET is the placeholder or shorter than {MIN_SECRET_LENGTH} characters. "
+            "Set a long random secret (e.g. `python -c \"import secrets; print(secrets.token_hex(32))\"`), "
+            "and keep it: the saved provider keys are encrypted with it."
+        )
+
+
+def cookie_secure() -> bool:
+    """Whether the login cookie is sent over HTTPS only: the setting, else on under a public name."""
+    return settings.cookie_secure if settings.cookie_secure is not None else bool(settings.app_public_host)
+
 
 class UserManager(UUIDIDMixin, BaseUserManager[User, "uuid.UUID"]):  # type: ignore[type-arg]
     reset_password_token_secret = SECRET
@@ -137,7 +158,7 @@ async def get_user_manager(user_db=Depends(get_user_db)):
 cookie_transport = CookieTransport(
     cookie_name="sparql_llm_auth",
     cookie_max_age=60 * 60 * 24 * 7,  # 7 days
-    cookie_secure=False,  # set True when serving over HTTPS
+    cookie_secure=cookie_secure(),
     cookie_httponly=True,
     cookie_samesite="lax",
 )

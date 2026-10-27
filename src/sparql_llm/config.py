@@ -118,7 +118,8 @@ class Settings(BaseSettings):
     """Homepage of the project behind this instance."""
 
     app_public_host: str = ""
-    """The public host name where the application is deployed, used for MCP transport security settings."""
+    """The public host name where the application is deployed (served over HTTPS): the MCP transport
+    security settings, the browser origin trusted with the login cookie, and Secure cookies."""
 
     # Public API key used by the frontend to access the chatbot and prevent abuse from bots
     chat_api_key: str = ""
@@ -135,7 +136,10 @@ class Settings(BaseSettings):
     auth_enabled: bool = True
     """Set to False to disable login (useful for local dev without auth)."""
     auth_secret: str = "CHANGE_ME_IN_PRODUCTION_USE_A_LONG_RANDOM_STRING"
-    """JWT signing secret — override via AUTH_SECRET env var."""
+    """JWT signing secret — override via AUTH_SECRET env var. With auth on, the app refuses to
+    start on this placeholder or anything shorter than 32 characters."""
+    cookie_secure: bool | None = None
+    """Send the login cookie over HTTPS only. Left unset, on whenever ``app_public_host`` is set."""
     auth_db_path: str = ""
     """Path to the SQLite database file for user accounts. Left empty, it defaults to <data_dir>/users.db."""
     admin_email: str = ""

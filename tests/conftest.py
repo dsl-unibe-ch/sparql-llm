@@ -93,6 +93,8 @@ os.environ["DATA_DIR"] = str(_SESSION_DATA)
 os.environ["PROJECTS"] = '["swiss-elites"]'
 # Never fetch endpoint metadata over the network while importing modules.
 os.environ["AUTO_INIT"] = "false"
+# Login refuses the placeholder secret; the tests get a long throwaway one.
+os.environ["AUTH_SECRET"] = "test-secret-" + "x" * 40
 
 
 def _use_projects(monkeypatch: pytest.MonkeyPatch, data_dir: Path, project_ids: list[str]):

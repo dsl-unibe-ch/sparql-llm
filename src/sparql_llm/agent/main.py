@@ -12,7 +12,7 @@ import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlsplit
 
 import httpx
 import openai
@@ -90,6 +90,7 @@ if settings.auth_enabled:
         UserManager,
         async_session_maker,
         auth_backend,
+        check_auth_secret,
         cookie_transport,
         create_db_and_tables,
         current_active_user,
@@ -132,6 +133,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """FastAPI lifespan that initializes the MCP session manager and auth DB."""
     migrate_configured()
     if settings.auth_enabled:
+        check_auth_secret()
         pathlib.Path(settings.auth_db_path).parent.mkdir(parents=True, exist_ok=True)
         await create_db_and_tables()
         # Chats saved before there were several datasets belong to the first one.
@@ -178,9 +180,48 @@ app = FastAPI(
 app.mount("/mcp", mcp_dispatcher, name="mcp")
 
 
+#: A local dev page (any port) may call the API, like the public site itself.
+LOCAL_ORIGIN = re.compile(r"http://(localhost|127\.0\.0\.1)(:\d+)?")
+
+
+def trusted_origin(origin: str, host: str) -> bool:
+    """Whether a browser page at ``origin`` may act with the login cookie on a request to ``host``.
+
+    Every *.unibe.ch host is the same site for SameSite=Lax: only this site itself, its
+    public HTTPS name and a local dev server are trusted, not its siblings.
+    """
+    parts = urlsplit(origin)
+    if not parts.scheme or not parts.netloc:
+        return False
+    if parts.netloc == host:
+        return True
+    if settings.app_public_host and origin == f"https://{settings.app_public_host}":
+        return True
+    return bool(LOCAL_ORIGIN.fullmatch(origin))
+
+
+@app.middleware("http")
+async def refuse_cross_site_cookie_writes(request: Request, call_next: Any) -> Any:
+    """A change made with the login cookie must come from a trusted page (CSRF)."""
+    if (
+        settings.auth_enabled
+        and request.method in ("POST", "PUT", "PATCH", "DELETE")
+        and cookie_transport.cookie_name in request.cookies
+    ):
+        origin = request.headers.get("origin")
+        if origin is None and request.headers.get("referer"):
+            referer = urlsplit(request.headers["referer"])
+            origin = f"{referer.scheme}://{referer.netloc}"
+        # No Origin and no Referer: not a browser page (curl, scripts), which cookies do not reach unasked.
+        if origin is not None and not trusted_origin(origin, request.headers.get("host", "")):
+            return JSONResponse({"detail": "This request did not come from this site."}, status_code=403)
+    return await call_next(request)
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[f"https://{settings.app_public_host}"] if settings.app_public_host else [],
+    allow_origin_regex=LOCAL_ORIGIN.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
