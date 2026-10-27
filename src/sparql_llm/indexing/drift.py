@@ -23,6 +23,10 @@ from typing import Any
 from sparql_llm.project import Project, get_projects, graph_pattern
 from sparql_llm.utils import logger, query_sparql
 
+#: Bounds on each fingerprint query, in seconds: per wait, and for the whole answer.
+FINGERPRINT_TIMEOUT = 30
+FINGERPRINT_DEADLINE = 90
+
 # The fingerprint taken at index time is kept in each project's folder (project.fingerprint_path).
 # The graph clause follows the project's graphs: none, one, or several.
 _TRIPLES_QUERY = """
@@ -75,17 +79,20 @@ def take_fingerprint(project: Project, fetch=query_sparql) -> Fingerprint:
         "classes": graph_pattern(project.graphs, "?s a ?class"),
     }
 
+    # Each query gives up in bounded time: a status check or a rebuild must never wait forever.
+    bounds = {"post": post, "timeout": FINGERPRINT_TIMEOUT, "deadline": FINGERPRINT_DEADLINE}
+
     triples = 0
-    rows = fetch(_TRIPLES_QUERY % subs, endpoint_url, post=post)["results"]["bindings"]
+    rows = fetch(_TRIPLES_QUERY % subs, endpoint_url, **bounds)["results"]["bindings"]
     if rows:
         triples = int(rows[0]["n"]["value"])
 
     classes: dict[str, int] = {}
-    for row in fetch(_CLASSES_QUERY % subs, endpoint_url, post=post)["results"]["bindings"]:
+    for row in fetch(_CLASSES_QUERY % subs, endpoint_url, **bounds)["results"]["bindings"]:
         classes[row["class"]["value"]] = int(row["n"]["value"])
 
     predicates = [
-        row["p"]["value"] for row in fetch(_PREDICATES_QUERY % subs, endpoint_url, post=post)["results"]["bindings"]
+        row["p"]["value"] for row in fetch(_PREDICATES_QUERY % subs, endpoint_url, **bounds)["results"]["bindings"]
     ]
 
     return Fingerprint(

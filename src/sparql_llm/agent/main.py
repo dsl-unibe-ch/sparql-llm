@@ -543,8 +543,11 @@ if settings.auth_enabled:
         project_id = _admin_dataset(dataset)
         if project_id is None:
             return _no_dataset(dataset)
-        drift = await run_in_threadpool(check_drift, project_id)
-        return JSONResponse({"dataset": project_id, "drift": drift, "job": read_job(project_id)})
+        job = read_job(project_id)
+        # The page polls every few seconds during a rebuild and shows no drift meanwhile:
+        # three endpoint queries per poll would only compete with the rebuild's own.
+        drift = None if job.get("state") == "running" else await run_in_threadpool(check_drift, project_id)
+        return JSONResponse({"dataset": project_id, "drift": drift, "job": job})
 
     @app.post("/admin/reindex", include_in_schema=False)
     async def admin_reindex(

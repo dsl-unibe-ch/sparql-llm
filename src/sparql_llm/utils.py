@@ -318,7 +318,7 @@ def query_sparql(
     query: str,
     endpoint_url: str,
     post: bool = False,
-    timeout: int | None = None,
+    timeout: float = 60,
     client: httpx.Client | None = None,
     use_file: str | None = None,
     check_service_desc: bool = False,
@@ -327,7 +327,8 @@ def query_sparql(
 ) -> Any:
     """Execute a SPARQL query on a SPARQL endpoint or its service description using httpx or a RDF turtle file using rdflib.
 
-    ``max_bytes`` stops reading an answer past that size (``ResponseTooLarge``), and ``deadline``
+    ``timeout`` bounds each wait (connect, read): an endpoint that accepts and never answers
+    must not hold a request, or the rebuild lock, forever. ``max_bytes`` stops reading an answer past that size (``ResponseTooLarge``), and ``deadline``
     bounds the whole request in seconds (``TimeoutError``): ``timeout`` alone only bounds each
     wait, so a slowly trickling answer could otherwise run on and fill memory.
     """
