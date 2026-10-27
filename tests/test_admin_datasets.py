@@ -187,3 +187,30 @@ def test_removing_the_first_dataset_also_drops_the_old_single_dataset_index(two,
     assert f"alias {settings.docs_collection_name}" in fake_index
     assert f"{settings.docs_collection_name}-20261026-110000" in fake_index
     assert "b__v20261026-130000" not in fake_index
+
+
+def test_a_removal_cut_short_by_the_filesystem_says_so_and_a_retry_finishes(
+    two, tmp_path: Path, fake_index, monkeypatch: pytest.MonkeyPatch
+):
+    from sparql_llm import datasets
+    from sparql_llm.datasets import list_dataset_ids
+
+    client = _client_as(ADMIN)
+    _make_ready(tmp_path, B)
+    client.post("/admin/datasets/b/unpublish")
+    real_move = datasets.shutil.move
+
+    def no_space(src, dst):
+        raise OSError("No space left on device")
+
+    monkeypatch.setattr(datasets.shutil, "move", no_space)
+    cut_short = client.post("/admin/datasets/b/remove", json={"confirm": "b"})
+    assert cut_short.status_code == 500
+    assert "Remove again" in cut_short.json()["error"]
+    assert "No space left on device" in cut_short.json()["error"]
+
+    monkeypatch.setattr(datasets.shutil, "move", real_move)
+    retry = client.post("/admin/datasets/b/remove", json={"confirm": "b"})
+    assert retry.status_code == 200, retry.text
+    assert list_dataset_ids() == ["a"]
+    assert not (tmp_path / "b").exists()

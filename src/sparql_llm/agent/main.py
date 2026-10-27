@@ -500,10 +500,19 @@ if settings.auth_enabled:
             return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
         try:
             check_removable(dataset_id)
+            # The index goes first, while the dataset is still listed: see drop_index.
             await run_in_threadpool(drop_index, dataset_id)
             archived = remove_dataset(dataset_id)
         except DatasetError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
+        except OSError as exc:
+            # Every step can be repeated: a second Remove finishes what this one started.
+            logger.exception("Removal of dataset %s cut short", dataset_id)
+            return JSONResponse(
+                {"error": f"Removal incomplete: its index is gone, but its files could not be archived ({exc}). "
+                          "Fix the cause, then press Remove again."},
+                status_code=500,
+            )
         finally:
             _release_lock(lock_token)
         from sparql_llm.indexing.index_resources import endpoints_metadata
