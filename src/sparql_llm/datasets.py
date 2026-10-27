@@ -76,6 +76,10 @@ def add_dataset(dataset_id: str, label: str) -> None:
     entries = _entries()
     if any(entry["id"] == dataset_id for entry in entries):
         raise DatasetError(f"A dataset with the id '{dataset_id}' already exists.")
+    # Datasets share the data folder with the index, logs and archive: an id must not name
+    # one of those, or any folder already there, which removing the dataset would archive.
+    if dataset_id in RESERVED_IDS or (_data_dir() / dataset_id).exists():
+        raise DatasetError(f"The id '{dataset_id}' is taken by a folder of this installation: choose another.")
     staged = _data_dir() / dataset_id / UPLOADED_DIR
     staged.mkdir(parents=True, exist_ok=True)
     (staged / PROJECT_FILE).write_text(
@@ -120,9 +124,25 @@ def set_published(dataset_id: str, published: bool) -> None:
 #: Removed datasets' folders are moved here, not deleted: a developer can bring one back.
 REMOVED_DIR = "removed"
 
+#: Folders of the installation itself in the data folder, whether or not they exist yet.
+RESERVED_IDS = frozenset({REMOVED_DIR, "vectordb", "logs", "ontology", "fastembed_cache"})
+
+
+def _own_folder(dataset_id: str) -> bool:
+    """Whether data/<id> is this dataset's folder: its live or staged project.json names it."""
+    folder = _data_dir() / dataset_id
+    for path in (folder / PROJECT_FILE, folder / UPLOADED_DIR / PROJECT_FILE):
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("id") == dataset_id:
+                return True
+        except Exception:
+            continue
+    return False
+
 
 def check_removable(dataset_id: str) -> None:
-    """Raise DatasetError unless the dataset may be removed: unpublished, and not the last one."""
+    """Raise DatasetError unless the dataset may be removed: unpublished, not the last one, and
+    its folder (if any) its own, never a shared one that happens to carry its name."""
     entries = _entries()
     if not any(entry["id"] == dataset_id for entry in entries):
         raise DatasetError(f"There is no dataset '{dataset_id}'.")
@@ -130,6 +150,11 @@ def check_removable(dataset_id: str) -> None:
         raise DatasetError(f"Unpublish '{dataset_label(dataset_id)}' before removing it.")
     if len(entries) == 1:
         raise DatasetError("The last dataset cannot be removed.")
+    if (_data_dir() / dataset_id).exists() and not _own_folder(dataset_id):
+        raise DatasetError(
+            f"The folder '{dataset_id}' in the data folder is not this dataset's own (no project.json naming it): "
+            "nothing was removed. Ask a developer to remove the dataset by hand."
+        )
 
 
 def remove_dataset(dataset_id: str) -> Path | None:
