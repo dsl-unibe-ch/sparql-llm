@@ -8,6 +8,7 @@ import logging
 import os
 import pathlib
 import re
+import secrets
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from datetime import datetime
@@ -1413,12 +1414,15 @@ class LogsRequest(BaseModel):
 
 @app.post("/logs", response_model=list[str])
 async def get_user_logs(logs_request: LogsRequest) -> JSONResponse:
-    """Get the list of user questions from the logs file."""
-    if settings.logs_api_key and logs_request.api_key != settings.logs_api_key:
-        raise ValueError("Invalid API key")
+    """Get the list of user questions from the logs file. Needs LOGS_API_KEY; closed without one."""
+    # Every user's questions, across datasets: never open by default.
+    if not settings.logs_api_key:
+        return JSONResponse({"detail": "Log access is not configured."}, status_code=403)
+    if not secrets.compare_digest(logs_request.api_key.encode(), settings.logs_api_key.encode()):
+        return JSONResponse({"detail": "Invalid API key."}, status_code=401)
     questions = set()
     pattern = re.compile(r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3}) - User question: (.+)")
-    with open(settings.logs_filepath) as file:
+    with open(settings.logs_filepath, encoding="utf-8") as file:
         for line in file:
             match = pattern.search(line)
             if match:
