@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 from typing import Any
 
 import curies
@@ -284,6 +285,34 @@ def get_schema_for_endpoint(endpoint_url: str, void_file: str | None = None) -> 
     return void_dict
 
 
+#: Bounds on the answer to a query a user or the public MCP asked for: read no more than this
+#: many bytes, within this many seconds.
+QUERY_MAX_BYTES = 5_000_000
+QUERY_DEADLINE = 30
+
+
+class ResponseTooLarge(Exception):
+    """An endpoint's answer passed the byte cap the caller set: the rest was not read."""
+
+
+def _read_json_bounded(client: httpx.Client, request: httpx.Request, max_bytes: int | None, deadline: float | None) -> Any:
+    """Send ``request`` and decode its JSON body, reading no more than ``max_bytes`` within ``deadline`` seconds."""
+    end = time.monotonic() + deadline if deadline else None
+    resp = client.send(request, stream=True)
+    try:
+        resp.raise_for_status()
+        body = bytearray()
+        for chunk in resp.iter_bytes():
+            body += chunk
+            if max_bytes and len(body) > max_bytes:
+                raise ResponseTooLarge(f"the answer is larger than {max_bytes} bytes: make the query return fewer rows")
+            if end and time.monotonic() > end:
+                raise TimeoutError(f"the endpoint took more than {deadline} seconds to answer")
+    finally:
+        resp.close()
+    return json.loads(bytes(body))
+
+
 # Use https://github.com/lu-pl/sparqlx ?
 def query_sparql(
     query: str,
@@ -293,8 +322,15 @@ def query_sparql(
     client: httpx.Client | None = None,
     use_file: str | None = None,
     check_service_desc: bool = False,
+    max_bytes: int | None = None,
+    deadline: float | None = None,
 ) -> Any:
-    """Execute a SPARQL query on a SPARQL endpoint or its service description using httpx or a RDF turtle file using rdflib."""
+    """Execute a SPARQL query on a SPARQL endpoint or its service description using httpx or a RDF turtle file using rdflib.
+
+    ``max_bytes`` stops reading an answer past that size (``ResponseTooLarge``), and ``deadline``
+    bounds the whole request in seconds (``TimeoutError``): ``timeout`` alone only bounds each
+    wait, so a slowly trickling answer could otherwise run on and fill memory.
+    """
     query_resp: dict[str, Any] = {"results": {"bindings": []}}
     if use_file:
         g = rdflib.Graph()
@@ -309,20 +345,16 @@ def query_sparql(
             client = httpx.Client(follow_redirects=True, timeout=timeout)
             should_close = True
         try:
-            if post:
-                resp = client.post(
-                    endpoint_url,
-                    headers={"Accept": "application/sparql-results+json"},
-                    data={"query": query},
+            request = (
+                client.build_request(
+                    "POST", endpoint_url, headers={"Accept": "application/sparql-results+json"}, data={"query": query}
                 )
-            else:
-                resp = client.get(
-                    endpoint_url,
-                    headers={"Accept": "application/sparql-results+json"},
-                    params={"query": query},
+                if post
+                else client.build_request(
+                    "GET", endpoint_url, headers={"Accept": "application/sparql-results+json"}, params={"query": query}
                 )
-            resp.raise_for_status()
-            query_resp = resp.json()
+            )
+            query_resp = _read_json_bounded(client, request, max_bytes, deadline)
             # query_resp = resp_json
             # Handle ASK queries
             if query_resp.get("boolean") is not None:

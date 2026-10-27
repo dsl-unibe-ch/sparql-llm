@@ -1,8 +1,10 @@
 """Validate output of a LLM, e.g. SPARQL queries generated."""
 
+import functools
 import json
 from typing import Any
 
+import anyio.to_thread
 from langchain_core.messages import HumanMessage
 from langchain_core.runnables import RunnableConfig
 
@@ -12,7 +14,7 @@ from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration
 from sparql_llm.indexing.index_resources import endpoints_metadata
 from sparql_llm.project import allowed_endpoint, post_for
-from sparql_llm.utils import logger, query_sparql, strip_think_blocks
+from sparql_llm.utils import QUERY_DEADLINE, QUERY_MAX_BYTES, logger, query_sparql, strip_think_blocks
 from sparql_llm.validate_sparql import validate_sparql_in_msg
 
 
@@ -109,12 +111,18 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
             if sparql_query and endpoint_url:
                 execute_resp = ""
                 try:
-                    res = query_sparql(
-                        sparql_query,
-                        endpoint_url,
-                        timeout=10,
-                        check_service_desc=False,
-                        post=post_for(project),
+                    # In a thread: the one worker's event loop keeps serving others while the endpoint answers.
+                    res = await anyio.to_thread.run_sync(
+                        functools.partial(
+                            query_sparql,
+                            sparql_query,
+                            endpoint_url,
+                            timeout=10,
+                            check_service_desc=False,
+                            post=post_for(project),
+                            max_bytes=QUERY_MAX_BYTES,
+                            deadline=QUERY_DEADLINE,
+                        )
                     )
                     res_bindings = res.get("results", {}).get("bindings", [])
                     if len(res_bindings) == 0:

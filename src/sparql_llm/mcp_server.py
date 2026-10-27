@@ -8,6 +8,7 @@ carrying the in-memory ``INTERNAL_TOKEN``: the app's own tools agent, serving a 
 
 import argparse
 import contextlib
+import functools
 import json
 import secrets
 from collections.abc import AsyncIterator, Callable
@@ -15,6 +16,7 @@ from typing import Any
 
 import anyio
 import anyio.abc
+import anyio.to_thread
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from qdrant_client.models import FieldCondition, Filter, MatchValue, ScoredPoint
@@ -25,7 +27,7 @@ from sparql_llm.entity_resolver import describe_for_tool, get_resolver
 from sparql_llm.indexing.index_resources import embedding_model, endpoints_metadata, qdrant_client
 from sparql_llm.indexing.rebuild import collection_for
 from sparql_llm.project import Project, allowed_endpoint, get_project, get_projects, post_for
-from sparql_llm.utils import compress_list, get_prefix_converter, logger, query_sparql
+from sparql_llm.utils import QUERY_DEADLINE, QUERY_MAX_BYTES, compress_list, get_prefix_converter, logger, query_sparql
 from sparql_llm.validate_sparql import validate_sparql
 
 # What are the rat orthologs of the human TP53?
@@ -64,6 +66,20 @@ prefixes, or break the query into smaller parts."""
 #: only, new at every start: nothing outside this process can know it.
 INTERNAL_TOKEN = secrets.token_urlsafe(32)
 INTERNAL_TOKEN_HEADER = "X-Internal-Token"
+
+#: The tools wait on the endpoint, the embedding model and the index. They run in threads, a
+#: few at a time, so the one worker's event loop keeps serving login, chat and admin meanwhile.
+_TOOL_THREADS = anyio.CapacityLimiter(4)
+
+
+def _off_loop(fn: Callable[..., str]) -> Callable[..., Any]:
+    """Make a blocking tool async by running it in a worker thread under ``_TOOL_THREADS``."""
+
+    @functools.wraps(fn)
+    async def run(*args: Any, **kwargs: Any) -> str:
+        return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs), limiter=_TOOL_THREADS)
+
+    return run
 
 
 def _first_project() -> Project:
@@ -150,7 +166,8 @@ Returns:
 """
 
     @mcp.tool(description=search_sparql_docs_tool_desc)
-    async def search_sparql_docs(question: str, potential_classes: list[str], steps: list[str]) -> str:
+    @_off_loop
+    def search_sparql_docs(question: str, potential_classes: list[str], steps: list[str]) -> str:
         relevant_docs: list[ScoredPoint] = []
         for search_embeddings in embedding_model.embed_query([question, *steps, *potential_classes]):
             # Get SPARQL example queries
@@ -203,7 +220,8 @@ Returns:
         return PROMPT_TOOL_SPARQL.format(docs_count=str(len(relevant_docs)), formatted_docs=format_docs(relevant_docs))
 
     @mcp.tool()
-    async def get_classes_schema(classes: list[str]) -> str:
+    @_off_loop
+    def get_classes_schema(classes: list[str]) -> str:
         """Search for specific classes and their schema in the SPARQL endpoints.
 
         Args:
@@ -243,6 +261,8 @@ Returns:
     if enable_resources_info_tool:
 
         @mcp.tool()
+
+        @_off_loop
         def get_resources_info(question: str) -> str:
             """Get information about the SPARQL endpoints indexed by this MCP server.
 
@@ -272,6 +292,8 @@ Returns:
 {format_docs(relevant_docs)}"""
 
     @mcp.tool()
+
+    @_off_loop
     def execute_sparql_query(sparql_query: str, endpoint_url: str = "") -> str:
         """Execute a SPARQL query against a SPARQL endpoint.
 
@@ -305,7 +327,14 @@ Returns:
             return resp_msg
         # Execute the SPARQL query
         try:
-            res = query_sparql(sparql_query, endpoint_url, timeout=10, post=post_for(project))
+            res = query_sparql(
+                sparql_query,
+                endpoint_url,
+                timeout=10,
+                post=post_for(project),
+                max_bytes=QUERY_MAX_BYTES,
+                deadline=QUERY_DEADLINE,
+            )
             bindings = res.get("results", {}).get("bindings")
             if not bindings:
                 # If no results, return a message to ask fix the query
@@ -322,6 +351,8 @@ Returns:
         return resp_msg
 
     @mcp.tool()
+
+    @_off_loop
     def validate_sparql_query(sparql_query: str, endpoint_url: str = "") -> str:
         """Validate a SPARQL query without executing it (dry run).
 
@@ -411,6 +442,8 @@ Returns:
         return "\n\n".join(parts)
 
     @mcp.tool()
+
+    @_off_loop
     def list_classes_for_endpoint(endpoint_url: str = "") -> str:
         """List every class available in a SPARQL endpoint's schema.
 
@@ -453,6 +486,8 @@ Returns:
         return "\n".join(parts)
 
     @mcp.tool()
+
+    @_off_loop
     def resolve_entity_uri(
         entity_name: str,
         entity_type: str = "",
@@ -485,6 +520,8 @@ Returns:
         return describe_for_tool(get_resolver(project), entity_name, project, entity_type, limit)
 
     @mcp.tool()
+
+    @_off_loop
     def explain_query_results(
         query_results_json: str,
         original_question: str,

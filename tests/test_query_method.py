@@ -52,7 +52,7 @@ def test_tools_execution_uses_the_project_method(use_projects, monkeypatch: pyte
     monkeypatch.setattr(mcp_server, "query_sparql", _recorder(calls))
     monkeypatch.setattr(mcp_server, "validate_sparql", lambda *a: {"fixed_query": None, "errors": []})
     tools = {t.name: t for t in mcp_server.get_mcp_app()._tool_manager.list_tools()}
-    tools["execute_sparql_query"].fn("SELECT * WHERE { ?s ?p ?o }", URL)
+    asyncio.run(tools["execute_sparql_query"].fn("SELECT * WHERE { ?s ?p ?o }", URL))
     assert calls == [False]
 
 

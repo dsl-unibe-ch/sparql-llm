@@ -76,7 +76,7 @@ def test_service_clauses_are_refused_in_pipeline_mode(network, service):
 def test_service_clauses_are_refused_in_tools_mode(network):
     tools = {t.name: t for t in mcp_server.get_mcp_app()._tool_manager.list_tools()}
     query = f"SELECT ?p WHERE {{ SERVICE <{FOREIGN}> {{ ?p ?x ?y }} }}"
-    text = tools["execute_sparql_query"].fn(query, NORSSIT)
+    text = asyncio.run(tools["execute_sparql_query"].fn(query, NORSSIT))
     assert network == []
     assert "SERVICE" in text
 

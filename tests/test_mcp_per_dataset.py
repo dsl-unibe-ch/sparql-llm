@@ -57,7 +57,7 @@ def test_mcp_tools_are_bound_to_their_dataset(two, monkeypatch: pytest.MonkeyPat
     tools = _tools("b")
 
     asyncio.run(tools["search_sparql_docs"].fn("Who is Weber?", [], []))
-    tools["execute_sparql_query"].fn("SELECT * WHERE { ?s ?p ?o }", A["endpoint_url"])
+    asyncio.run(tools["execute_sparql_query"].fn("SELECT * WHERE { ?s ?p ?o }", A["endpoint_url"]))
 
     assert searched and set(searched) == {"b__docs"}
     assert executed == [B["endpoint_url"]]
