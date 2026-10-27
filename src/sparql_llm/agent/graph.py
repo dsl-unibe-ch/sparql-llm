@@ -30,6 +30,10 @@ def route_model_output(state: State, config: RunnableConfig) -> Literal["__end__
     """
     configuration = Configuration.from_runnable_config(config)
 
+    # Results to answer from always reach the model, whatever repairs it took to get them.
+    if not state.passed_validation and state.results_delivered:
+        return "call_model"
+
     if state.try_count > configuration.max_try_fix_sparql:
         return "max_tries_reached"
 

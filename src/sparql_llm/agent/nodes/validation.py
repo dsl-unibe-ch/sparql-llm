@@ -13,6 +13,7 @@ from sparql_llm.agent.request_project import project_of
 from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration
 from sparql_llm.indexing.index_resources import endpoints_metadata
+from sparql_llm.mcp_server import EMPTY_RESULT_PROMPT
 from sparql_llm.project import allowed_endpoint, post_for
 from sparql_llm.utils import QUERY_DEADLINE, QUERY_MAX_BYTES, logger, query_sparql, strip_think_blocks
 from sparql_llm.validate_sparql import validate_sparql_in_msg
@@ -31,6 +32,9 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
     configuration = Configuration.from_runnable_config(config)
     if not configuration.enable_output_validation:
         return {}
+    # The model already has its query's results: this message is its answer, not a query to run.
+    if state.results_delivered:
+        return {"passed_validation": True}
     last_msg = strip_think_blocks(str(state.messages[-1].content))
     validation_target = getattr(state, "latest_model_output", last_msg) if configuration.natural_language_only else last_msg
 
@@ -110,6 +114,8 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
             endpoint_url = extracted.get("sparql_endpoint_url")
             if sparql_query and endpoint_url:
                 execute_resp = ""
+                # Results the model answers from end the loop and use no repair; failures do.
+                delivered = False
                 try:
                     # In a thread: the one worker's event loop keeps serving others while the endpoint answers.
                     res = await anyio.to_thread.run_sync(
@@ -125,14 +131,20 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
                         )
                     )
                     res_bindings = res.get("results", {}).get("bindings", [])
-                    if len(res_bindings) == 0:
-                        # If no results, return a message to ask fix the query
-                        execute_resp = f"Query on {endpoint_url} returned no results. {FIX_QUERY_PROMPT}\n```sparql\n{sparql_query}\n```"
+                    if len(res_bindings) == 0 and state.try_count >= configuration.max_try_fix_sparql:
+                        # No repair left: "nothing found" is then the answer, not a reason to give up.
+                        execute_resp = f"Query on {endpoint_url} returned no results, and there are no attempts left to change it. Tell the user that nothing was found for this question. Do NOT generate another SPARQL query.\n```sparql\n{sparql_query}\n```"
+                        delivered = True
+                    elif len(res_bindings) == 0:
+                        # Empty can be the real answer ("no children recorded"): do not push the model to loosen a correct query.
+                        execute_resp = f"Query on {endpoint_url}: {EMPTY_RESULT_PROMPT}\n```sparql\n{sparql_query}\n```"
                     elif res_bindings and len(res_bindings) > 50:
                         # Truncate the results if too large
                         execute_resp = f"Executed query on {endpoint_url}:\n```sparql\n{sparql_query}\n```\n\nResults (showing first 50 out of {len(res_bindings)} results):\n```\n{json.dumps(res_bindings[:200], indent=2)}\n```\n\nNow write the final answer to the user using ONLY these results. Do NOT generate another SPARQL query."
+                        delivered = True
                     else:
                         execute_resp = f"Executed query on {endpoint_url}:\n```sparql\n{sparql_query}\n```\n\nResults:\n```\n{json.dumps(res, indent=2)}\n```\n\nNow write the final answer to the user using ONLY these results. Do NOT generate another SPARQL query."
+                        delivered = True
                 except Exception as e:
                     execute_resp = f"Query on {endpoint_url} returned error:\n\n{e}\n\n{FIX_QUERY_PROMPT}\n```sparql\n{sparql_query}\n```"
                 # print("EXECUTE RESP", execute_resp)
@@ -145,7 +157,8 @@ async def validate_output(state: State, config: RunnableConfig) -> dict[str, Any
                 )
                 response["messages"] = recall_messages
                 response["passed_validation"] = False
-                response["try_count"] = state.try_count + 1
+                response["results_delivered"] = delivered
+                response["try_count"] = state.try_count if delivered else state.try_count + 1
                 validation_steps.append(
                     StepOutput(
                         type="recall",

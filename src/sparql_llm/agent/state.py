@@ -107,6 +107,9 @@ class State(InputState):
     extracted_entities: dict[str, Any] = field(default_factory=dict)
     passed_validation: bool = field(default=True)
     try_count: int = field(default=0)
+    """Repair rounds used: invalid queries, failed or empty executions. Results that answer do not count."""
+    results_delivered: bool = field(default=False)
+    """The model has its query's results: its next message is the answer, and runs nothing more."""
 
     steps: Annotated[list[StepOutput], add_to_list] = field(default_factory=list)
     structured_output: list[StructuredOutput] = field(default_factory=list)
