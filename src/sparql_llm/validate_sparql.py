@@ -19,7 +19,8 @@ from sparql_llm.utils import (
     logger,
 )
 
-queries_pattern = re.compile(r"```sparql(.*?)```", re.DOTALL)
+# Models also write ```SPARQL: a query skipped here would reach the user unchecked and unrun.
+queries_pattern = re.compile(r"```sparql(.*?)```", re.DOTALL | re.IGNORECASE)
 endpoint_pattern = re.compile(r"#\+ endpoint:\s*(https?://\S+)", re.MULTILINE)
 
 #: String literals and comments, removed before looking for keywords in a query.
@@ -406,15 +407,14 @@ def validate_sparql_in_msg(
 
     With ``endpoint_url``, every query is checked against that endpoint's schema, the one it
     will run on, whatever ``#+ endpoint:`` line the model wrote; the output still reports
-    the endpoint the model named.
+    the endpoint the model named, or ``endpoint_url`` when it named none.
     """
     validation_outputs = []
     generated_sparqls = extract_sparql_queries(msg)
     for gen_sparql in generated_sparqls:
-        if gen_sparql["query"] and gen_sparql["endpoint_url"]:
-            output = validate_sparql(
-                gen_sparql["query"], endpoint_url or gen_sparql["endpoint_url"], prefixes_map, endpoints_void_dict
-            )
-            output["endpoint_url"] = gen_sparql["endpoint_url"]
+        named_endpoint = gen_sparql["endpoint_url"] or endpoint_url
+        if gen_sparql["query"] and named_endpoint:
+            output = validate_sparql(gen_sparql["query"], endpoint_url or named_endpoint, prefixes_map, endpoints_void_dict)
+            output["endpoint_url"] = named_endpoint
             validation_outputs.append(output)
     return validation_outputs
