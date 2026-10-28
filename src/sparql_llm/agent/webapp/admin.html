@@ -594,8 +594,8 @@
                 + '<span class="pf-name">' + esc(f.name) + '</span>'
                 + '<span class="pf-meta">' + meta + '</span>'
                 + (f.exists ? '<a href="' + base + '">Download</a>' : '')
-                + '<input type="file" data-url="' + base + '" />'
-                + '<button class="btn-reindex btn-check" data-upload="' + base + '">Upload</button>'
+                + '<input type="file" data-url="' + base + '" hidden />'
+                + '<button class="btn-reindex btn-check" data-pick="' + base + '">Upload…</button>
                 + (f.pending || f.has_previous
                   ? '<button class="btn-reindex btn-check" data-undo="' + base + '/undo">'
                     + (f.pending ? 'Discard upload' : 'Undo') + '</button>'
@@ -620,16 +620,22 @@
           });
         }
 
+        // Upload… opens the file chooser; picking a file uploads it straight away.
+        list.addEventListener('change', function (e) {
+          var up = e.target.getAttribute('data-url');
+          if (!up || !e.target.files.length) return;
+          var form = new FormData();
+          form.append('file', e.target.files[0]);
+          fetch(up, { method: 'POST', body: form, credentials: 'same-origin' }).then(afterSave)
+            .catch(function () { showMessages(['The upload failed.'], 'ck-error'); });
+        });
+
         list.addEventListener('click', function (e) {
-          var up = e.target.getAttribute('data-upload');
+          var pick = e.target.getAttribute('data-pick');
           var undo = e.target.getAttribute('data-undo');
-          if (up) {
-            var input = list.querySelector('input[data-url="' + up + '"]');
-            if (!input || !input.files.length) { showMessages(['Choose a file first.'], 'ck-warning'); return; }
-            var form = new FormData();
-            form.append('file', input.files[0]);
-            fetch(up, { method: 'POST', body: form, credentials: 'same-origin' }).then(afterSave)
-              .catch(function () { showMessages(['The upload failed.'], 'ck-error'); });
+          if (pick) {
+            var input = list.querySelector('input[data-url="' + pick + '"]');
+            if (input) { input.value = ''; input.click(); }
           } else if (undo) {
             fetch(undo, { method: 'POST', credentials: 'same-origin' }).then(afterSave)
               .catch(function () { showMessages(['Undo failed.'], 'ck-error'); });
@@ -705,10 +711,16 @@
             .finally(function () { checkBtn.disabled = false; });
         });
 
+        var sawRunning = false;
+
         function renderJob(job) {
           if (!job) return false;
           var running = (job.state === 'running' || job.state === 'swapping');
           button.disabled = running;
+          // The dataset's state (new → ready), its menu light and Publish are drawn by the
+          // server, so reload once a rebuild watched on this page has finished.
+          if (running) sawRunning = true;
+          else if (sawRunning && job.state === 'done') { location.reload(); return false; }
           if (running) {
             status.innerHTML = '<span class="spinner"></span>' + esc(job.message || 'Rebuilding...');
           } else if (job.state === 'failed') {
@@ -757,6 +769,7 @@
             .then(function (d) {
               // Another dataset's rebuild holds the instance: say so instead of polling this one.
               if (d && d.started === false) { status.textContent = d.error || 'A rebuild is already running.'; button.disabled = false; return; }
+              sawRunning = true;
               poll();
             })
             .catch(function () {
