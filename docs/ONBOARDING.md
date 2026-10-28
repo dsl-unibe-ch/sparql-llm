@@ -2,6 +2,8 @@
 
 This guide adds a new dataset to the chat assistant. One instance serves several datasets: users pick one in the chat, and every answer comes from that dataset only. You add the dataset on the admin page, edit three files and upload them there. You don't need Python, a terminal or a server login.
 
+If you run the assistant on your own machine, set it up first with [DOCKER.md](DOCKER.md).
+
 The worked example throughout is **Norssit**, the alumni register of the Helsinki Normal Lyceum (`https://ldf.fi/norssit/sparql`). Its finished files are in [`docs/examples/norssit/`](examples/norssit/). Swiss Elites values are shown next to it, for an SDHSS project.
 
 The three files of a project are:

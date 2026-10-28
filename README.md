@@ -316,6 +316,8 @@ Requirements: Docker, nodejs (to build the frontend), and optionally [`uv`](http
    * OpenAPI Swagger UI available at http://localhost:8000/docs
 
    > Persistent data lives in the `sparql-llm-data` docker volume (mounted at `/app/data`) and the downloaded embedding model in `sparql-llm-cache` (mounted at `/cache`). The port is bound to `127.0.0.1` only: put a reverse proxy in front for public access.
+   >
+   > Curators who self-host: see the step-by-step guide in [`docs/DOCKER.md`](docs/DOCKER.md).
 
 > [!NOTE]
 >
