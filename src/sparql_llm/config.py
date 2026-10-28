@@ -287,6 +287,29 @@ def env_pins(field_name: str) -> bool:
     return bool(os.environ.get(field_name.upper()))
 
 
+def write_runtime_settings(path: Path, updates: dict[str, Any]) -> None:
+    """Merge ``updates`` into the runtime settings file, atomically. Raises OSError on failure."""
+    existing: dict[str, Any] = {}
+    if path.exists():
+        with path.open("r", encoding="utf-8") as f:
+            loaded = json.load(f)
+        if isinstance(loaded, dict):
+            existing = loaded
+    existing.update(updates)
+    tmp = path.with_suffix(".json.tmp")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as f:
+            json.dump(existing, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
 settings_filepath = os.getenv("SETTINGS_FILEPATH")
 settings = Settings.load(settings_filepath or None)
 

@@ -44,7 +44,7 @@ from sparql_llm.agent.roles import (
 )
 from markupsafe import Markup
 
-from sparql_llm.config import settings, settings_filepath
+from sparql_llm.config import env_pins, runtime_settings_path, settings, write_runtime_settings
 from sparql_llm.datasets import (
     DatasetError,
     add_dataset,
@@ -688,6 +688,7 @@ if settings.auth_enabled:
             return JSONResponse({"error": "forbidden"}, status_code=403)
         return JSONResponse({
             "default_number_of_retrieved_docs": settings.default_number_of_retrieved_docs,
+            "pinned": {"default_number_of_retrieved_docs": env_pins("default_number_of_retrieved_docs")},
         })
 
     class _SettingsUpdate(BaseModel):
@@ -703,7 +704,7 @@ if settings.auth_enabled:
 
         Changes take effect immediately (no restart required) because the
         in-memory ``settings`` singleton is mutated directly. The value is
-        also written to the settings JSON file so it survives restarts.
+        also written to ``settings.runtime.json`` in the data dir so it survives restarts.
 
         Args:
             body: JSON object with the fields to update.
@@ -722,26 +723,16 @@ if settings.auth_enabled:
                     {"error": "default_number_of_retrieved_docs must be between 1 and 100."},
                     status_code=422,
                 )
-            settings.default_number_of_retrieved_docs = value
-
-        # Persist to the settings JSON file so the value survives restarts
-        settings_path = settings_filepath or ""
-        if settings_path:
             try:
-                path = pathlib.Path(settings_path)
-                data: dict[str, Any] = {}
-                if path.exists():
-                    with path.open("r") as f:
-                        data = json.load(f)
-                data["default_number_of_retrieved_docs"] = settings.default_number_of_retrieved_docs
-                with path.open("w") as f:
-                    json.dump(data, f, indent=2, ensure_ascii=False)
-                    f.write("\n")
-            except Exception as exc:
-                logger.warning(f"Could not persist settings to {settings_path}: {exc}")
+                write_runtime_settings(runtime_settings_path(settings), {"default_number_of_retrieved_docs": value})
+            except OSError as exc:
+                logger.warning(f"Could not save runtime settings: {exc}")
+                return JSONResponse({"error": f"Could not save the setting: {exc}"}, status_code=500)
+            settings.default_number_of_retrieved_docs = value
 
         return JSONResponse({
             "default_number_of_retrieved_docs": settings.default_number_of_retrieved_docs,
+            "pinned": {"default_number_of_retrieved_docs": env_pins("default_number_of_retrieved_docs")},
         })
 
     def _flash(kind: str, message: str) -> RedirectResponse:

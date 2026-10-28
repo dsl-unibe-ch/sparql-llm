@@ -783,6 +783,9 @@
             var k = d.default_number_of_retrieved_docs || 10;
             rangeEl.value = Math.min(k, 50);
             inputEl.value = k;
+            if (d.pinned && d.pinned.default_number_of_retrieved_docs) {
+              statusEl.textContent = 'Note: set in the server environment; your saved value applies only if that is removed.';
+            }
           })
           .catch(function () {});
 
@@ -805,7 +808,9 @@
             .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
             .then(function (res) {
               if (res.ok) {
-                statusEl.textContent = 'Saved. Takes effect on the next query.';
+                var pinned = res.data.pinned && res.data.pinned.default_number_of_retrieved_docs;
+                statusEl.textContent = 'Saved. Takes effect on the next query.' +
+                  (pinned ? ' Note: set in the server environment; your saved value applies only if that is removed.' : '');
                 statusEl.style.color = '#166534';
               } else {
                 statusEl.textContent = res.data.error || 'Failed to save.';
