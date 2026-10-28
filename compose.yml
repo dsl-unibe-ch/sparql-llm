@@ -1,28 +1,18 @@
 services:
-
-  vectordb:
-    # https://hub.docker.com/r/qdrant/qdrant/tags
-    image: docker.io/qdrant/qdrant:v1.15.1
-    # image: qdrant/qdrant:v1.9.2-unprivileged # Unprivileged don't work when mounting a volume
-    restart: unless-stopped
-    volumes:
-      - ./data/qdrant:/qdrant/storage
-      # - ./qdrant_config.yml:/qdrant/config/production.yaml
-    environment:
-      - QDRANT__TELEMETRY_DISABLED=true
-      - QDRANT_ALLOW_RECOVERY_MODE=true
-    # command: ./qdrant --config-path /qdrant/config/production.yaml
-
-  api:
+  app:
+    image: ${SPARQL_LLM_IMAGE:-ghcr.io/dsl-unibe-ch/sparql-llm}:${SPARQL_LLM_VERSION:-latest}
     build: .
-    restart: unless-stopped
-    depends_on:
-      - vectordb
-    environment:
-      - VECTORDB_URL=http://vectordb:6334/
+    env_file: .env
+    ports:
+      - "127.0.0.1:8000:8000"
     volumes:
-      - ./.fastembed_cache:/tmp/fastembed_cache
-      - ./data:/app/data
-      - ./src:/app/src
-    env_file:
-      - .env
+      - sparql-llm-data:/app/data
+      - sparql-llm-cache:/cache
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+volumes:
+  sparql-llm-data:
+    name: sparql-llm-data
+  sparql-llm-cache:
+    name: sparql-llm-cache

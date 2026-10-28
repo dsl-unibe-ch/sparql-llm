@@ -1,8 +1,13 @@
 services:
   vectordb:
-    extends:
-      file: compose.yml
-      service: vectordb
+    # https://hub.docker.com/r/qdrant/qdrant/tags
+    image: docker.io/qdrant/qdrant:v1.15.1
+    restart: unless-stopped
+    volumes:
+      - ./data/qdrant:/qdrant/storage
+    environment:
+      - QDRANT__TELEMETRY_DISABLED=true
+      - QDRANT_ALLOW_RECOVERY_MODE=true
 
   text2sparql-api:
     build: .

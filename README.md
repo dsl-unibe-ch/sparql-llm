@@ -306,7 +306,7 @@ Requirements: Docker, nodejs (to build the frontend), and optionally [`uv`](http
 
    > You can change the UI around the chat in `chat-with-context/demo/index.html`
 
-4. **Start** the vector database and web server locally for development, with code from the `src` folder mounted in the container and automatic API reload on changes to the code:
+4. **Start** the app (single container, embedded vector store) with docker compose, after copying `.env.example` to `.env` and filling it in:
 
    ```bash
    docker compose up
@@ -314,21 +314,8 @@ Requirements: Docker, nodejs (to build the frontend), and optionally [`uv`](http
 
    * Chat web UI available at http://localhost:8000
    * OpenAPI Swagger UI available at http://localhost:8000/docs
-   * Vector database dashboard UI available at http://localhost:6333/dashboard
 
-   **In production**, you will need to make some changes to the `compose.prod.yml` file to adapt it to your server/proxy setup:
-
-   ```bash
-   docker compose -f compose.prod.yml up
-   ```
-
-   Then run the indexing script manually from within the container to index the SPARQL endpoints (need to do it once):
-
-   ```sh
-   docker compose -f compose.prod.yml exec api uv run src/sparql_llm/indexing/index_resources.py
-   ```
-
-   > All data from the containers are stored persistently in the `data` folder (e.g. vectordb indexes and endpoints metadata)
+   > Persistent data lives in the `sparql-llm-data` docker volume (mounted at `/app/data`) and the downloaded embedding model in `sparql-llm-cache` (mounted at `/cache`). The port is bound to `127.0.0.1` only: put a reverse proxy in front for public access.
 
 > [!NOTE]
 >
