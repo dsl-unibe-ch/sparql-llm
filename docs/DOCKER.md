@@ -109,7 +109,7 @@ Everything you create lives in the Docker volume `sparql-llm-data`: users, datas
 
 ```sh
 docker compose stop
-docker run --rm -v sparql-llm-data:/d -v "$PWD:/b" alpine tar czf /b/sparql-llm-data.tgz -C /d .
+docker run --rm -v sparql-llm-data:/d -v "${PWD}:/b" alpine tar czf /b/sparql-llm-data.tgz -C /d .
 docker compose start
 ```
 
@@ -119,14 +119,14 @@ Keep your `.env`, or at least `AUTH_SECRET`, together with the archive. Saved pr
 
 ```sh
 docker compose stop
-docker run --rm -v sparql-llm-data:/d -v "$PWD:/b" alpine tar xzf /b/sparql-llm-data.tgz -C /d
+docker run --rm -v sparql-llm-data:/d -v "${PWD}:/b" alpine tar xzf /b/sparql-llm-data.tgz -C /d
 docker run --rm -v sparql-llm-data:/d alpine chown -R 1000:1000 /d
 docker compose up -d
 ```
 
 Use the same `AUTH_SECRET` as when the backup was made.
 
-On Windows, run these commands in PowerShell and replace `"$PWD:/b"` with `"${PWD}:/b"`.
+The commands work as written in PowerShell (Windows) and in a macOS or Linux terminal. Run them in the folder that holds `compose.yml`; the archive is written there.
 
 If you prefer a folder on your disk to a named volume, replace the volume in `compose.yml` with a bind mount. The folder must be owned by user id 1000.
 
