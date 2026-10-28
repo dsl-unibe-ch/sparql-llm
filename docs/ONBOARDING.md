@@ -115,7 +115,7 @@ SELECT ?person ?name WHERE { ?person a foaf:Person ; skos:prefLabel ?name }
 
 On the admin page (`/admin`), pick the dataset in the **Dataset** dropdown, then, in the **Project files** card:
 
-1. For each file: choose it, press **Upload**. A file with a problem is refused with a message. An accepted file **waits**: the card shows it as "waiting for the next Rebuild", and the assistant keeps using the file in service, even after a server restart. **Download** gives you the waiting file if there is one, else the one in service. **Discard upload** drops a waiting file.
+1. For each file: press **Upload** and pick it; it uploads straight away. A file with a problem is refused with a message. An accepted file **waits**: the card shows it as "waiting for the next Rebuild", and the assistant keeps using the file in service, even after a server restart. **Download** gives you the waiting file if there is one, else the one in service. Uploaded the wrong file? Upload the right one; it replaces the waiting one.
 2. Press **Check configuration** in the **Search index** card. Each check shows ✓ (fine), ⚠ (a warning; the rebuild still runs) or ✗ (an error; fix it first).
 3. Press **Rebuild index**. It checks again, then describes the endpoint's schema, collects the names and builds the search index, all from the waiting files. Only when everything succeeded does it put the files and the new index in service together. If anything fails, nothing changes: the assistant keeps the old files and index, and your uploads keep waiting.
 
@@ -199,6 +199,6 @@ When an answer is wrong, the fix is usually one of these:
 
 - **The data changed** (the endpoint was reloaded): pick the dataset, press **Rebuild index**. The Search index card says when the data no longer matches the index.
 - **You improved a file**: Download, edit, Upload, Check, Rebuild.
-- **A file broke something**: **Undo** queues the version it replaced; then Rebuild.
+- **A file broke something**: **Restore previous version** queues the version it replaced; then Rebuild.
 - **Files shipped with the code** (`projects/<id>/`) are copied to the server only when the project has no files there yet. After that the files in service are the ones uploaded on the admin page, so a change in the repository reaches the server only by uploading it.
 - **MCP clients** (VS Code, Claude Desktop) reach one dataset per address: `/mcp/<id>`, e.g. `/mcp/norssit`. The bare `/mcp` is the first dataset (Swiss Elites). An unpublished dataset's address answers `This dataset is not published.`

@@ -242,7 +242,8 @@
             <p class="idx-note">
               Download a file, edit it, and upload it again. An uploaded file waits: press
               <strong>Check configuration</strong>, then <strong>Rebuild index</strong>. Only a rebuild that
-              succeeds puts it in service; the version it replaces is kept for Undo.
+              succeeds puts it in service; the version it replaces is kept for Restore previous version.
+              Uploaded the wrong file? Upload the right one: it replaces the waiting one.
             </p>
             <div id="pf-list" class="pf-list">Loading&hellip;</div>
             <ul id="pf-errors" class="idx-checks" hidden></ul>
@@ -595,7 +596,7 @@
                 + '<span class="pf-meta">' + meta + '</span>'
                 + (f.exists ? '<a href="' + base + '">Download</a>' : '')
                 + '<input type="file" data-url="' + base + '" hidden />'
-                + '<button class="btn-reindex btn-check" data-pick="' + base + '">Upload…</button>'
+                + '<button class="btn-reindex btn-check" data-pick="' + base + '">Upload</button>'
                 // A wrong upload is fixed by uploading again; only a file in service can be rolled back.
                 + (!f.pending && f.has_previous
                   ? '<button class="btn-reindex btn-check" data-undo="' + base + '/undo"'
@@ -640,7 +641,7 @@
             if (input) { input.value = ''; input.click(); }
           } else if (undo) {
             fetch(undo, { method: 'POST', credentials: 'same-origin' }).then(afterSave)
-              .catch(function () { showMessages(['Undo failed.'], 'ck-error'); });
+              .catch(function () { showMessages(['The previous version could not be restored.'], 'ck-error'); });
           }
         });
 
