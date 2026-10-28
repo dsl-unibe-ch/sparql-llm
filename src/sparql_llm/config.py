@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextvars import ContextVar
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Annotated, Any, Required, TypeVar
@@ -11,7 +12,8 @@ from typing import Annotated, Any, Required, TypeVar
 from dotenv import load_dotenv
 from langchain_core.runnables import RunnableConfig, ensure_config
 from pydantic import model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic.fields import FieldInfo
+from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 from typing_extensions import TypedDict
 
 
@@ -19,6 +21,37 @@ from typing_extensions import TypedDict
 # instance. agent/utils.py reads OPENAI_API_KEY / OPENAI_BASE_URL via os.getenv()
 # for the GPUStack client, which would otherwise see empty strings.
 load_dotenv()
+
+# Settings saved from the admin UI, kept in the data folder so they survive image upgrades.
+RUNTIME_SETTINGS_FILE = "settings.runtime.json"
+
+# The (install, runtime) JSON contents while Settings.load() builds an instance; unset otherwise,
+# so a plain Settings() reads only the environment and the code defaults.
+_file_layers: ContextVar[tuple[dict[str, Any], dict[str, Any]] | None] = ContextVar("_file_layers", default=None)
+
+
+class _JsonLayer(PydanticBaseSettingsSource):
+    """One settings JSON file as a pydantic-settings source, ranked against the others."""
+
+    def __init__(self, settings_cls: type[BaseSettings], data: dict[str, Any]):
+        super().__init__(settings_cls)
+        self._data = data
+
+    def get_field_value(self, field: FieldInfo, field_name: str) -> tuple[Any, str, bool]:
+        return self._data.get(field_name), field_name, False
+
+    def __call__(self) -> dict[str, Any]:
+        return dict(self._data)
+
+
+def _read_settings_json(path: Path, what: str) -> dict[str, Any]:
+    try:
+        content = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        raise SettingsError(f"The {what} {path} is not valid JSON: {e}") from e
+    if not isinstance(content, dict):
+        raise SettingsError(f"The {what} {path} must hold a JSON object.")
+    return content
 
 
 # Total=False to make all fields optional except those marked as Required
@@ -157,8 +190,30 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        # A blank line in .env (APP_PUBLIC_HOST=) leaves the file or default value in place.
+        env_ignore_empty=True,
         extra="allow",
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        # First wins: the environment beats the UI-saved runtime file, which beats the install file.
+        install, runtime = _file_layers.get() or ({}, {})
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            _JsonLayer(settings_cls, runtime),
+            _JsonLayer(settings_cls, install),
+            file_secret_settings,
+        )
 
     @model_validator(mode="after")
     def _paths_under_data_dir(self) -> Settings:
@@ -187,28 +242,53 @@ class Settings(BaseSettings):
         return f"http://127.0.0.1:{self.server_port}"
 
     @classmethod
+    def load(cls, install_file: str | None) -> Settings:
+        """Build the settings from env / .env, then <data_dir>/settings.runtime.json, then the install file.
+
+        Args:
+            install_file: The install settings file (SETTINGS_FILEPATH), or None for none.
+        """
+        install: dict[str, Any] = {}
+        if install_file:
+            path = Path(install_file)
+            if not path.is_file():
+                raise SettingsError(f"The settings file {path} (SETTINGS_FILEPATH) does not exist.")
+            install = _read_settings_json(path, "settings file (SETTINGS_FILEPATH)")
+        data_dir = os.environ.get("DATA_DIR") or install.get("data_dir") or cls.model_fields["data_dir"].default
+        runtime_path = Path(data_dir) / RUNTIME_SETTINGS_FILE
+        runtime = _read_settings_json(runtime_path, "runtime settings file") if runtime_path.is_file() else {}
+        token = _file_layers.set((install, runtime))
+        try:
+            return cls()
+        finally:
+            _file_layers.reset(token)
+
+    @classmethod
     def from_file(cls, filepath: str) -> Settings:
-        """Create a Settings instance from a file.
+        """Create a Settings instance from an install settings file (see ``load``).
 
         Args:
             filepath: The path to the file.
         """
-        path = Path(filepath)
-        if not path.is_file():
-            raise SettingsError(f"The settings file {path} (SETTINGS_FILEPATH) does not exist.")
-        try:
-            content = json.loads(path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            raise SettingsError(f"The settings file {path} (SETTINGS_FILEPATH) is not valid JSON: {e}") from e
-        return Settings(**content)
+        return cls.load(filepath)
 
 
 class SettingsError(Exception):
     """The install settings file is missing or unreadable; the app refuses to start."""
 
 
+def runtime_settings_path(s: Settings) -> Path:
+    """Where the admin UI saves settings for this instance."""
+    return Path(s.data_dir) / RUNTIME_SETTINGS_FILE
+
+
+def env_pins(field_name: str) -> bool:
+    """Whether the environment (or .env, loaded into it) sets this field, so a saved value cannot win."""
+    return bool(os.environ.get(field_name.upper()))
+
+
 settings_filepath = os.getenv("SETTINGS_FILEPATH")
-settings = Settings.from_file(settings_filepath) if settings_filepath else Settings()
+settings = Settings.load(settings_filepath or None)
 
 
 # Configuration defined at runtime
