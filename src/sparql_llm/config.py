@@ -291,8 +291,11 @@ def write_runtime_settings(path: Path, updates: dict[str, Any]) -> None:
     """Merge ``updates`` into the runtime settings file, atomically. Raises OSError on failure."""
     existing: dict[str, Any] = {}
     if path.exists():
-        with path.open("r", encoding="utf-8") as f:
-            loaded = json.load(f)
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise OSError(f"{path} is not valid JSON: {exc}") from exc
         if isinstance(loaded, dict):
             existing = loaded
     existing.update(updates)

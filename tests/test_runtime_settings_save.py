@@ -65,3 +65,40 @@ def test_get_reports_env_pin(client, monkeypatch):
     assert client.get("/admin/settings").json()["pinned"][KEY] is False
     monkeypatch.setenv(KEY.upper(), "3")
     assert client.get("/admin/settings").json()["pinned"][KEY] is True
+
+
+def test_corrupt_runtime_file_reports_error_and_is_kept(client, tmp_path: Path):
+    runtime = tmp_path / "settings.runtime.json"
+    runtime.write_bytes(b'{"truncated": ')
+
+    response = client.post("/admin/settings", json={KEY: 9})
+
+    assert response.status_code == 500
+    assert "settings.runtime.json" in response.json()["error"]
+    assert main.settings.default_number_of_retrieved_docs == 20
+    assert runtime.read_bytes() == b'{"truncated": '
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
+def test_bad_encoding_runtime_file_reports_error(client, tmp_path: Path):
+    (tmp_path / "settings.runtime.json").write_bytes(b"\xff\xfe\x00bad")
+
+    response = client.post("/admin/settings", json={KEY: 9})
+
+    assert response.status_code == 500
+    assert "settings.runtime.json" in response.json()["error"]
+    assert main.settings.default_number_of_retrieved_docs == 20
+
+
+def test_data_dir_that_is_a_file_reports_error(client, tmp_path: Path, monkeypatch):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(main.settings, "data_dir", str(blocker))
+
+    response = client.post("/admin/settings", json={KEY: 9})
+
+    assert response.status_code == 500
+    assert response.json()["error"].startswith("Could not save the setting")
+    assert main.settings.default_number_of_retrieved_docs == 20
+    assert blocker.read_text(encoding="utf-8") == "x"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["not-a-dir"]
