@@ -728,7 +728,8 @@ if settings.auth_enabled:
             except OSError as exc:
                 logger.warning(f"Could not save runtime settings: {exc}")
                 return JSONResponse({"error": f"Could not save the setting: {exc}"}, status_code=500)
-            settings.default_number_of_retrieved_docs = value
+            if not env_pins("default_number_of_retrieved_docs"):
+                settings.default_number_of_retrieved_docs = value
 
         return JSONResponse({
             "default_number_of_retrieved_docs": settings.default_number_of_retrieved_docs,
@@ -1397,6 +1398,15 @@ async def get_models(
 
     cfg = await session.get(UserLLMConfig, _user.id)
     if cfg is None or not cfg.encrypted_api_key:
+        if os.getenv("OPENAI_API_KEY"):
+            # Instance-level key: chat works without a personal key, so offer the instance models.
+            models = [m for m in (settings.available_llm_models or [settings.default_llm_model]) if m]
+            return JSONResponse(content={
+                "models": models,
+                "default": settings.default_llm_model,
+                "tool_capable_models": [m for m in models if m not in settings.tool_incapable_models],
+                "needs_setup": False,
+            })
         return JSONResponse(content={"models": [], "needs_setup": True})
 
     try:
@@ -1451,7 +1461,6 @@ app.mount(
 )
 
 
-#: Remembers the dataset a browser used last, so "/" opens on it.
 @app.get("/healthz", include_in_schema=False)
 async def healthz() -> dict[str, str]:
     """Liveness: the process answers. No login, no checks."""
@@ -1469,6 +1478,7 @@ async def readyz() -> JSONResponse:
     return JSONResponse({"status": "ready"})
 
 
+#: Remembers the dataset a browser used last, so "/" opens on it.
 LAST_DATASET_COOKIE = "last_dataset"
 
 

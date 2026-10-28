@@ -102,3 +102,14 @@ def test_data_dir_that_is_a_file_reports_error(client, tmp_path: Path, monkeypat
     assert main.settings.default_number_of_retrieved_docs == 20
     assert blocker.read_text(encoding="utf-8") == "x"
     assert sorted(p.name for p in tmp_path.iterdir()) == ["not-a-dir"]
+
+
+def test_env_pinned_value_is_saved_but_not_applied_in_memory(client, tmp_path: Path, monkeypatch):
+    monkeypatch.setenv(KEY.upper(), "3")
+
+    response = client.post("/admin/settings", json={KEY: 7})
+
+    assert response.status_code == 200
+    assert json.loads((tmp_path / "settings.runtime.json").read_text(encoding="utf-8"))[KEY] == 7
+    assert main.settings.default_number_of_retrieved_docs == 20
+    assert response.json()["pinned"][KEY] is True
