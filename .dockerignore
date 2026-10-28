@@ -7,3 +7,14 @@ dist/
 node_modules/
 .DS_Store
 .fastembed_cache/
+tests/
+notebooks/
+docs/
+scripts/
+chat-with-context/
+.github/
+.git/
+*.md
+!README.md
+CURATOR-*
+.superpowers/
