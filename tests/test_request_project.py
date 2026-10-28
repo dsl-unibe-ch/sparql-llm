@@ -36,6 +36,7 @@ def two_datasets(use_projects, tmp_path: Path):
 @pytest.fixture
 def graph_calls(monkeypatch: pytest.MonkeyPatch):
     calls: list[dict] = []
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     class Graph:
         async def ainvoke(self, inputs, config=None):
@@ -59,7 +60,7 @@ def _clear_overrides():
 
 
 def _ask(client: TestClient, **extra):
-    body = {"messages": [{"role": "user", "content": "How many persons?"}], "stream": False, **extra}
+    body = {"messages": [{"role": "user", "content": "How many persons?"}], "stream": False, "model": "p/m", **extra}
     return client.post("/chat", json=body)
 
 

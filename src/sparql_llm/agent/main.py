@@ -1197,10 +1197,17 @@ def chat_error_message(exc: Exception) -> str:
     return f"Something went wrong while answering: {reason}."
 
 
+NO_LLM_MESSAGE = (
+    "No language model is set up for your account yet. "
+    "Add your API key and endpoint in [Settings](/api-settings), then pick a model."
+)
+NO_MODEL_MESSAGE = "Pick a model first: the list in Settings shows what your provider offers."
+
+
 def tool_capable_models() -> list[str]:
     """Models usable in MCP tools mode: everything available minus the known-incapable ones."""
     models = settings.available_llm_models or [settings.default_llm_model]
-    return [m for m in models if m not in settings.tool_incapable_models]
+    return [m for m in models if m and m not in settings.tool_incapable_models]
 
 
 # FastAPI does not support Union in response model (even if it says otherwise in docs)
@@ -1239,6 +1246,27 @@ async def chat(
             f"**MCP tools** mode.\n\nEither turn MCP tools off, or pick a different tool-capable model."
         )
 
+    # ── Fetch user's LLM credentials ──
+    llm_api_key = ""
+    llm_base_url = ""
+    llm_provider = "gpustack"
+
+    if settings.auth_enabled and _user:
+        user_llm = await session.get(UserLLMConfig, _user.id)
+        if user_llm:
+            try:
+                llm_api_key = decrypt_api_key(user_llm.encrypted_api_key, settings.auth_secret)
+                llm_base_url = user_llm.base_url
+                llm_provider = user_llm.provider
+            except Exception as exc:
+                logger.error("Failed to decrypt API key for user %s: %s", _user.id, exc)
+
+    if not refusal:
+        if not llm_api_key and not os.getenv("OPENAI_API_KEY"):
+            refusal = NO_LLM_MESSAGE
+        elif "/" not in chat_request.model:
+            refusal = NO_MODEL_MESSAGE
+
     if refusal:
         msg = refusal
 
@@ -1267,21 +1295,6 @@ async def chat(
     # A fix attempt or a tool round takes ~2 graph steps. Size the recursion limit for
     # whichever mode runs, never below LangGraph's default of 25.
     recursion_limit = max(25, 2 * max_try + 10, 2 * max_tool_iterations + 10)
-
-    # ── Fetch user's LLM credentials ──
-    llm_api_key = ""
-    llm_base_url = ""
-    llm_provider = "gpustack"
-    
-    if settings.auth_enabled and _user:
-        user_llm = await session.get(UserLLMConfig, _user.id)
-        if user_llm:
-            try:
-                llm_api_key = decrypt_api_key(user_llm.encrypted_api_key, settings.auth_secret)
-                llm_base_url = user_llm.base_url
-                llm_provider = user_llm.provider
-            except Exception as exc:
-                logger.error("Failed to decrypt API key for user %s: %s", _user.id, exc)
 
     config = RunnableConfig(
         configurable={
@@ -1375,7 +1388,7 @@ async def get_models(
     is configured, returns `needs_setup: True`.
     """
     if not settings.auth_enabled:
-        models = settings.available_llm_models or [settings.default_llm_model]
+        models = [m for m in (settings.available_llm_models or [settings.default_llm_model]) if m]
         return JSONResponse(content={
             "models": models,
             "default": settings.default_llm_model,

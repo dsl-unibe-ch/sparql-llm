@@ -21,6 +21,7 @@ class _NoSession:
 def client(monkeypatch: pytest.MonkeyPatch):
     main.app.dependency_overrides[main.current_active_user] = lambda: USER
     main.app.dependency_overrides[main.get_async_session] = lambda: _NoSession()
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     yield TestClient(main.app)
     main.app.dependency_overrides.clear()
 
@@ -34,7 +35,7 @@ def _failing_graph(exc: Exception):
 
 
 def _ask(client: TestClient):
-    return client.post("/chat", json={"messages": [{"role": "user", "content": "How many persons?"}], "stream": False})
+    return client.post("/chat", json={"messages": [{"role": "user", "content": "How many persons?"}], "stream": False, "model": "p/m"})
 
 
 def test_llm_timeout_becomes_chat_message(client, monkeypatch: pytest.MonkeyPatch):
