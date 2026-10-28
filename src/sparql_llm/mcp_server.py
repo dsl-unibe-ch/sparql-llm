@@ -55,6 +55,12 @@ and check them one by one."""
 # An empty result is not always a mistake: "no children recorded" is a real answer.
 # Telling the model to always fix and retry sent it round the loop again for
 # queries that were already correct.
+# How execute_sparql_query's answer starts when the query ran and returned rows; the MCP
+# tools agent looks for it (or EMPTY_RESULT_PROMPT) to offer the query in the editor.
+QUERY_RESULTS_HEADING = "Results of SPARQL query execution on"
+# Precedes the query actually run when the tool fixed the model's prefixes first.
+FIXED_QUERY_HEADING = "Fixed the prefixes of the generated SPARQL query automatically:"
+
 EMPTY_RESULT_PROMPT = """SPARQL query returned no results.
 An empty result can be the real answer: if the entity is already confirmed and the pattern comes from the examples,
 report that nothing is recorded and stop. If you were looking something up by name, or wrote the pattern yourself,
@@ -313,7 +319,7 @@ Returns:
         )
         if validation_output["fixed_query"]:
             # Pass the fixed query to the client
-            resp_msg += f"Fixed the prefixes of the generated SPARQL query automatically:\n```sparql\n{validation_output['fixed_query']}\n```\n"
+            resp_msg += f"{FIXED_QUERY_HEADING}\n```sparql\n{validation_output['fixed_query']}\n```\n"
             sparql_query = validation_output["fixed_query"]
         if validation_output["errors"]:
             # Recall the LLM to try to fix the errors
@@ -341,7 +347,7 @@ Returns:
                 resp_msg += f"{EMPTY_RESULT_PROMPT}\n```sparql\n{sparql_query}\n```"
             else:
                 # If results, return them (limit to first 50 rows if too many)
-                resp_msg += f"Results of SPARQL query execution on {endpoint_url}"
+                resp_msg += f"{QUERY_RESULTS_HEADING} {endpoint_url}"
                 if len(bindings) > 50:
                     res["results"]["bindings"] = bindings[:50]
                     resp_msg += f" (showing first 50 of {len(bindings)} results)"
