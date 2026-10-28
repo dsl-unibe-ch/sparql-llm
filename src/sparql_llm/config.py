@@ -48,15 +48,15 @@ class Settings(BaseSettings):
     # Left empty, it defaults to <data_dir>/vectordb
     vectordb_url: str = ""
 
-    # Embedding backend: "openai" (remote, e.g. GPUStack) or "local" (fastembed/ONNX in-process).
-    # "openai" offloads inference to the GPU server, freeing ~1.5 GB RAM on the VM.
-    # "local" loads the ONNX model into process memory (no network dependency).
-    embedding_backend: str = "openai"
+    # Embedding backend: "local" (fastembed/ONNX in-process, the default, no network dependency)
+    # or "openai" (opt-in: a remote OpenAI-compatible server, e.g. GPUStack, which offloads
+    # inference and frees ~1.5 GB RAM).
+    embedding_backend: str = "local"
 
     # Model identifier — meaning depends on the backend:
     #   openai: the model name served by the API (e.g. "qwen3-embedding-0.6b")
     #   local:  a HuggingFace/fastembed model id (e.g. "intfloat/multilingual-e5-large")
-    embedding_model: str = "qwen3-embedding-0.6b"
+    embedding_model: str = "intfloat/multilingual-e5-large"
 
     # Vector dimension. Must match the model output and the Qdrant collection.
     # qwen3-embedding-0.6b and intfloat/multilingual-e5-large both produce 1024-d vectors.
@@ -70,7 +70,7 @@ class Settings(BaseSettings):
 
     force_index: bool = False
     # Automatically initialize the vector store client, should be False when deploying in prod with multiple workers
-    auto_init: bool = True
+    auto_init: bool = False
 
     # Sparse embeddings are only used for the entities resolution
     sparse_embedding_model: str = "Qdrant/bm25"
@@ -78,9 +78,10 @@ class Settings(BaseSettings):
     entities_collection_name: str = "entities"
 
     # Default settings for the agent that can be changed at runtime
-    # GPUStack at UniBE: provider "gpustack" is wired in agent/utils.py;
+    # No default LLM: users bring their own (provider/model-name) via the settings file,
+    # the environment or the admin UI. Provider "gpustack" is wired in agent/utils.py;
     # set OPENAI_BASE_URL and OPENAI_API_KEY in .env.
-    default_llm_model: str = "gpustack/gpt-oss-120b"
+    default_llm_model: str = ""
 
     # Model IDs (provider/model-name) offered in the chat UI's model picker, in order.
     available_llm_models: list[str] = []

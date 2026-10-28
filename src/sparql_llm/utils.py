@@ -422,26 +422,32 @@ class EndpointsMetadataManager:
         return get_projects()
 
     def _ensure_loaded(self) -> None:
-        """Load metadata if not already loaded: each project's cache file, else fetch them all."""
+        """Load each project's cache file. Never fetches: only ``refresh()`` hits the endpoints.
+
+        Projects without a readable cache contribute nothing and are named in one warning,
+        so a fresh install boots offline with empty maps until the index is built.
+        """
         if self._initialized:
             return
         prefixes_map: dict[str, str] = {}
         void_dict: EndpointsSchemaDict = {}
-        try:
-            for project in self._projects:
+        missing: list[str] = []
+        for project in self._projects:
+            try:
                 data = json.loads(project.prefixes_path.read_text(encoding="utf-8"))
-                for prefix, namespace in data.get("prefixes_map", {}).items():
-                    prefixes_map.setdefault(prefix, namespace)
-                void_dict.update(data.get("classes_schema", {}))
-            if prefixes_map and void_dict:
-                logger.info(f"💾 Loaded endpoints metadata for {len(void_dict)} endpoints")
-                self._prefixes_map, self._void_dict = prefixes_map, void_dict
-                self._initialized = True
-                return
-        except Exception as e:
-            logger.debug(f"Could not load cached endpoints metadata: {e}")
-
-        self._cache(*self._fetch())
+            except Exception as e:
+                logger.debug(f"Could not load cached endpoints metadata for {project.id}: {e}")
+                missing.append(project.id)
+                continue
+            for prefix, namespace in data.get("prefixes_map", {}).items():
+                prefixes_map.setdefault(prefix, namespace)
+            void_dict.update(data.get("classes_schema", {}))
+        if missing:
+            logger.warning(f"No endpoints metadata cache for project(s) {', '.join(missing)}: rebuild the index to create it")
+        if void_dict:
+            logger.info(f"💾 Loaded endpoints metadata for {len(void_dict)} endpoints")
+        self._prefixes_map, self._void_dict = prefixes_map, void_dict
+        self._initialized = True
 
     def reload(self) -> None:
         """Read the cached metadata files again on next use, e.g. after a rebuild promoted them."""
