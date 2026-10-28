@@ -597,8 +597,11 @@
                 + '<input type="file" data-url="' + base + '" hidden />'
                 + '<button class="btn-reindex btn-check" data-pick="' + base + '">Upload…</button>'
                 + (f.pending || f.has_previous
-                  ? '<button class="btn-reindex btn-check" data-undo="' + base + '/undo">'
-                    + (f.pending ? 'Discard upload' : 'Undo') + '</button>'
+                  ? '<button class="btn-reindex btn-check" data-undo="' + base + '/undo" title="'
+                    + (f.pending
+                      ? 'Drop this upload and keep the version in service.'
+                      : 'Bring back the version in service before this one. It takes effect at the next Rebuild.')
+                    + '">' + (f.pending ? 'Discard upload' : 'Restore previous version') + '</button>'
                   : '')
                 + '</div>';
             });
