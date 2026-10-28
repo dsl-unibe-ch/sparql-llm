@@ -115,18 +115,20 @@ docker compose start
 
 Keep your `.env`, or at least `AUTH_SECRET`, together with the archive. Saved provider keys are encrypted with `AUTH_SECRET`. Without it they can't be read, and users have to enter their keys again.
 
-**Restore** into an empty volume (on a new machine, or after `docker compose down` and `docker volume rm sparql-llm-data`):
+**Restore** into an empty volume. On a machine that already runs it, this replaces everything in it with the backup:
 
 ```sh
-docker compose stop
+docker compose down
+docker volume rm sparql-llm-data
+docker compose create
 docker run --rm -v sparql-llm-data:/d -v "${PWD}:/b" alpine tar xzf /b/sparql-llm-data.tgz -C /d
 docker run --rm -v sparql-llm-data:/d alpine chown -R 1000:1000 /d
 docker compose up -d
 ```
 
-Use the same `AUTH_SECRET` as when the backup was made.
+On a new machine `docker volume rm` says there is no such volume; that is fine. `docker compose create` makes the empty volume, so Compose recognises it later. Use the same `AUTH_SECRET` as when the backup was made.
 
-The commands work as written in PowerShell (Windows) and in a macOS or Linux terminal. Run them in the folder that holds `compose.yml`; the archive is written there.
+The commands work as written in PowerShell (Windows) and in a macOS or Linux terminal. Run them in the folder that holds `compose.yml` and the archive.
 
 If you prefer a folder on your disk to a named volume, replace the volume in `compose.yml` with a bind mount. The folder must be owned by user id 1000.
 
