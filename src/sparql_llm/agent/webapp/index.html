@@ -95,8 +95,13 @@
       #dataset-picker.dsp-placed { display: block; }
       .dsp-toggle { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; width: 100%; padding: 0.35rem 0.5rem; border: none; border-radius: 8px; background: transparent; cursor: pointer; text-align: left; color: #1e293b; }
       .dsp-toggle:hover { background: #f1f5f9; }
-      .dsp-caption { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; }
-      .dsp-current { display: flex; align-items: center; gap: 0.35rem; font-size: 0.88rem; font-weight: 600; }
+      .dsp-caption { display: flex; align-items: center; gap: 0.35rem; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; color: #64748b; }
+      .dsp-current { display: block; padding-left: 1.05rem; font-size: 0.88rem; font-weight: 600; }
+      /* Unfolded, the list shows the current dataset itself, so the line above steps aside. */
+      .dsp-toggle[aria-expanded="true"] .dsp-current,
+      .dsp-toggle[aria-expanded="true"] .dsp-note { display: none; }
+      .dsp-item-current { background: #eef2ff; color: #3730a3; font-weight: 600; }
+      .dsp-item-current:hover { background: #e0e7ff; }
       .dsp-arrow { display: inline-block; font-size: 0.7rem; color: #64748b; transition: transform 0.15s; }
       .dsp-toggle[aria-expanded="true"] .dsp-arrow { transform: rotate(90deg); }
       .dsp-arrow { transition: transform 0.2s ease; }
@@ -111,7 +116,11 @@
       @media (prefers-reduced-motion: reduce) { .dsp-collapse, .dsp-arrow { transition: none; } }
       /* No history sidebar (auth off): the same picker, in the header. */
       .site-header #dataset-picker { display: block; position: relative; padding: 0; border: none; margin: 0; }
-      .site-header .dsp-caption { display: none; }
+      /* In the header the list drops down over the page, so the current name always stays. */
+      .site-header .dsp-toggle { flex-direction: row; align-items: center; }
+      .site-header .dsp-caption-text { display: none; }
+      .site-header .dsp-current { padding-left: 0; }
+      .site-header .dsp-toggle[aria-expanded="true"] .dsp-current { display: block; }
       .site-header .dsp-collapse { position: absolute; top: 100%; left: 0; min-width: 14rem; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12); padding: 0 0.25rem; z-index: 50; }
     </style>
     <script type="module" crossorigin src="/assets/index-CWm5W83b.js"></script>
@@ -206,17 +215,19 @@
 
         {% if datasets | length > 1 %}
         <nav id="dataset-picker" aria-label="Dataset">
-          <!-- Folded: only the current dataset, so the history keeps its room. Unfolded: all of them. -->
+          <!-- Folded: only the current dataset, so the history keeps its room. Unfolded: all of
+               them in a fixed order, the current one highlighted, so nothing moves when switching. -->
           <button type="button" id="dataset-toggle" class="dsp-toggle" aria-expanded="false" aria-controls="dataset-list">
-            <span class="dsp-caption">Dataset</span>
-            <span class="dsp-current"><span class="dsp-arrow" aria-hidden="true">▸</span>{{ dataset.label if dataset else "" }}</span>
+            <span class="dsp-caption"><span class="dsp-arrow" aria-hidden="true">▸</span><span class="dsp-caption-text">Dataset</span></span>
+            <span class="dsp-current">{{ dataset.label if dataset else "" }}</span>
             {% for d in datasets if dataset and d.id == dataset.id and not d.published %}<span class="dsp-note">only visible to curators</span>{% endfor %}
           </button>
-          <!-- The other datasets: the current one is the line above. Slides open (grid rows 0fr → 1fr). -->
+          <!-- Slides open (grid rows 0fr → 1fr). -->
           <div id="dataset-list" class="dsp-collapse">
             <div class="dsp-list">
-              {% for d in datasets if not (dataset and d.id == dataset.id) %}
-              <a href="/?dataset={{ d.id }}" class="dsp-item" tabindex="-1">
+              {% for d in datasets %}
+              {% set current = dataset and d.id == dataset.id %}
+              <a href="/?dataset={{ d.id }}" class="dsp-item{% if current %} dsp-item-current{% endif %}" tabindex="-1"{% if current %} aria-current="page"{% endif %}>
                 {{ d.label }}{% if not d.published %}<span class="dsp-note">only visible to curators</span>{% endif %}
               </a>
               {% endfor %}
