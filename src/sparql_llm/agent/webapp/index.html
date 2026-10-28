@@ -225,6 +225,10 @@
         </nav>
         {% endif %}
 
+        {% if not dataset %}
+        <p id="no-datasets" style="margin: 1rem; color: #64748b;">No datasets yet. An admin can add one from the admin page.</p>
+        {% endif %}
+
         <chat-with-context
           id="chat-element"
           data-placeholder="{% if dataset %}Ask about {{ dataset.label }}…{% endif %}"

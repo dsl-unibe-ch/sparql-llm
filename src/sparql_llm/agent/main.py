@@ -1452,6 +1452,23 @@ app.mount(
 
 
 #: Remembers the dataset a browser used last, so "/" opens on it.
+@app.get("/healthz", include_in_schema=False)
+async def healthz() -> dict[str, str]:
+    """Liveness: the process answers. No login, no checks."""
+    return {"status": "ok"}
+
+
+@app.get("/readyz", include_in_schema=False)
+async def readyz() -> JSONResponse:
+    """Readiness for the container healthcheck: local state only, no login, no network."""
+    from sparql_llm.agent.health import readiness_checks
+
+    failing = {name: reason for name, reason in (await run_in_threadpool(readiness_checks)).items() if reason}
+    if failing:
+        return JSONResponse({"status": "not ready", "failing": failing}, status_code=503)
+    return JSONResponse({"status": "ready"})
+
+
 LAST_DATASET_COOKIE = "last_dataset"
 
 
