@@ -21,7 +21,7 @@ One machine runs one instance with this `compose.yml`. A second copy of the fold
 
 2. Open `.env` in a text editor and fill in three values:
 
-   - `AUTH_SECRET`: a long random string that signs login sessions. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`, or type any long random text.
+   - `AUTH_SECRET`: a long random string that signs login sessions. Generate one with `python -c "import secrets; print(secrets.token_urlsafe(48))"`, or type any long random text (at least 32 characters).
    - `ADMIN_EMAIL`: the email of the first administrator.
    - `ADMIN_PASSWORD`: the password of the first administrator.
 
