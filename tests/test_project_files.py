@@ -70,7 +70,8 @@ def test_invalid_field_message_is_plain(norssit_project):
 
 def test_invalid_json_message_names_the_line(norssit_project):
     errors = validate_upload("norssit", "project.json", b'{\n  "id": "norssit",\n}')
-    assert len(errors) == 1 and "line 3" in errors[0]
+    # Python 3.13 points at the trailing comma (line 2), older versions at the brace (line 3).
+    assert len(errors) == 1 and ("line 2" in errors[0] or "line 3" in errors[0])
 
 
 def test_examples_without_any_example_rejected(norssit_project):
