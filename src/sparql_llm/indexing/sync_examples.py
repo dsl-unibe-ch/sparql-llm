@@ -31,6 +31,7 @@ from typing import Any
 
 import httpx
 
+from sparql_llm.outbound import guarded_client
 from sparql_llm.project import CuratorExamples, Project, get_project, get_projects
 from sparql_llm.utils import logger, query_sparql
 
@@ -213,7 +214,7 @@ def drop_already_curated(
 
 def fetch(url: str, client: httpx.Client | None = None) -> str:
     owned = client is None
-    client = client or httpx.Client(follow_redirects=True, timeout=30)
+    client = client or guarded_client("example-sync", follow_redirects=True, timeout=30)
     try:
         response = client.get(url)
         response.raise_for_status()
@@ -230,7 +231,7 @@ def discover_sources(config: CuratorExamples, client: httpx.Client | None = None
     caller then keeps the previously synced examples.
     """
     owned = client is None
-    client = client or httpx.Client(follow_redirects=True, timeout=30)
+    client = client or guarded_client("example-sync", follow_redirects=True, timeout=30)
     try:
         response = client.get(listing_url(config), headers={"Accept": "application/vnd.github+json"})
         response.raise_for_status()
@@ -310,7 +311,7 @@ def sync_curator_examples(
         return report
 
     parsed: list[Example] = []
-    with httpx.Client(follow_redirects=True, timeout=30) as client:
+    with guarded_client("example-sync", follow_redirects=True, timeout=30) as client:
         if sources is None:
             sources, report["note"] = discover_sources(config, client)
             if not sources:

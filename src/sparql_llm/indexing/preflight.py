@@ -15,6 +15,7 @@ from typing import Any, Literal
 import httpx
 
 from sparql_llm.indexing.sync_examples import parse_examples
+from sparql_llm.outbound import DestinationRefused
 from sparql_llm.project import Project, graph_pattern
 from sparql_llm.utils import query_sparql
 
@@ -31,6 +32,8 @@ class CheckResult:
 
 def _short_reason(exc: Exception) -> str:
     """Why an endpoint call failed, in words a curator can act on."""
+    if isinstance(exc, DestinationRefused):
+        return "it points to a private network, which this instance refuses unless it is listed in OUTBOUND_ALLOW"
     if isinstance(exc, httpx.TimeoutException | TimeoutError):
         return "it did not answer in time"
     if isinstance(exc, json.JSONDecodeError):

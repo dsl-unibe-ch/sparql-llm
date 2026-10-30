@@ -15,13 +15,15 @@ ADMIN = SimpleNamespace(id=1, email="admin@example.org", is_superuser=True, is_c
 
 def test_query_sparql_without_a_timeout_still_bounds_each_wait(monkeypatch: pytest.MonkeyPatch):
     seen: list[dict] = []
-    real_client = httpx.Client
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.extensions["timeout"])
         return httpx.Response(200, json={"results": {"bindings": []}})
 
-    monkeypatch.setattr(httpx, "Client", lambda **kw: real_client(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(
+        "sparql_llm.utils.guarded_client",
+        lambda purpose, **kw: httpx.Client(transport=httpx.MockTransport(handler), **kw),
+    )
     query_sparql("SELECT * WHERE { ?s ?p ?o }", "https://a.example/sparql")
     assert seen and all(v is not None for v in seen[0].values())
 

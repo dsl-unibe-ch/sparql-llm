@@ -1,10 +1,11 @@
+import json
 import time
 
 import re
 from collections.abc import Callable
 from pathlib import Path
+from urllib.parse import urlsplit
 
-import httpx
 from bs4 import BeautifulSoup
 from sparql_llm.embeddings import create_embedding_model
 from langchain_core.documents import Document
@@ -26,6 +27,7 @@ from sparql_llm.loaders.ontology_profiles_loader import (
     fetch_ontology_terms,
     fetch_shacl_shapes,
 )
+from sparql_llm.outbound import guarded_client, remote_json_ld_contexts
 from sparql_llm.project import Project, get_projects
 from sparql_llm.loaders.sparql_info_loader import GENERAL_INFO_DOC_TYPE
 from sparql_llm.utils import EndpointsMetadataManager, get_prefix_converter
@@ -33,6 +35,8 @@ from sparql_llm.utils import EndpointsMetadataManager, get_prefix_converter
 SCHEMA = Namespace("http://schema.org/")
 #: A ``## heading`` and the text up to the next one.
 _DATASET_SECTION = re.compile(r"^##\s+(.+?)\s*$\n(.*?)(?=^##\s|\Z)", re.MULTILINE | re.DOTALL)
+#: rdflib fetches remote JSON-LD contexts itself, outside the outbound guard, so only these hosts may be named.
+_JSON_LD_CONTEXT_HOSTS = {"schema.org", "www.schema.org"}
 
 
 # Global instance, metadata loads lazily on first property access
@@ -64,16 +68,15 @@ def load_schemaorg_description(endpoint: SparqlEndpointLinks) -> list[Document]:
     homepage_url = endpoint.get("homepage_url")
     try:
         if homepage_url:
-            resp = httpx.get(
-                homepage_url,
-                headers={
-                    # "User-Agent": "BgeeBot/1.0",
-                    # Adding a user-agent to make it look like we are a google bot to trigger SSR on Bgee
-                    "User-Agent": "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2272.96 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html) X-Middleton/1",
-                },
-                timeout=10,
-                follow_redirects=True,
-            )
+            with guarded_client("homepage", follow_redirects=True, timeout=10) as client:
+                resp = client.get(
+                    homepage_url,
+                    headers={
+                        # "User-Agent": "BgeeBot/1.0",
+                        # Adding a user-agent to make it look like we are a google bot to trigger SSR on Bgee
+                        "User-Agent": "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2272.96 Mobile Safari/537.36 (compatible; Googlebot/2.1; +http://www.google.com/bot.html) X-Middleton/1",
+                    },
+                )
             if resp.status_code != 200:
                 raise Exception(f"Failed to fetch the webpage: {resp.status_code}")
             # print(resp.text)
@@ -89,6 +92,9 @@ def load_schemaorg_description(endpoint: SparqlEndpointLinks) -> list[Document]:
                 json_ld_content = str(json_ld_tag.string)
                 # print(json_ld_content, type(json_ld_content))
                 if json_ld_content:
+                    contexts = remote_json_ld_contexts(json.loads(json_ld_content))
+                    if any(urlsplit(context).hostname not in _JSON_LD_CONTEXT_HOSTS for context in contexts):
+                        raise Exception("The JSON-LD names a context outside schema.org")
                     # TODO: error here now, even if JSON-LD is valid
                     g.parse(data=json_ld_content, format="json-ld")
                     # json_ld_content = json.loads(json_ld_content)

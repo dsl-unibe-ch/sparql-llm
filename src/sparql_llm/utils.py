@@ -8,6 +8,7 @@ import curies
 import httpx
 import rdflib
 
+from sparql_llm.outbound import guarded_client
 from sparql_llm.project import Project
 
 THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
@@ -343,7 +344,7 @@ def query_sparql(
     else:
         should_close = False
         if client is None:
-            client = httpx.Client(follow_redirects=True, timeout=timeout)
+            client = guarded_client("sparql", follow_redirects=True, timeout=timeout)
             should_close = True
         try:
             request = (
