@@ -9,6 +9,11 @@ Instead this builds into a fresh versioned collection and, only once it has fini
 points a Qdrant alias at it. Readers address the alias, so the switch is atomic and a
 failed build leaves the previous index serving untouched.
 
+Publishing has one commit point: writing ``<id>/publish.json`` (``indexing.publication``).
+Before it nothing live has changed. After it the publish only ever rolls forward: alias,
+files, generation, cleanup, each step safe to repeat, finished by Rebuild or at the next
+start. So a kill at any moment leaves one coherent version once the app is up again.
+
 Each dataset has its own index (alias ``<id>__docs``), job file and rebuild: rebuilding
 one never touches another's collection, files or job. One rebuild runs at a time per
 instance (a global lock), since they share the embedding model.
@@ -24,6 +29,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import threading
 import time
 import traceback
@@ -40,11 +46,22 @@ from sparql_llm.indexing.drift import Fingerprint, save_fingerprint, take_finger
 from sparql_llm.indexing.entity_names import build_entity_names
 from sparql_llm.indexing.index_resources import endpoints_metadata, init_vectordb, qdrant_client
 from sparql_llm.indexing.preflight import run_preflight
-from sparql_llm.indexing.publication import apply_files, files_for
+from sparql_llm.indexing.publication import (
+    PublicationError,
+    apply_files,
+    clear_record,
+    files_for,
+    read_generation,
+    read_record,
+    record_path,
+    write_generation,
+    write_record,
+)
+from sparql_llm.indexing.qdrant_meta import snapshot_meta
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.indexing.void_gen import VoidError, generate_void
 from sparql_llm.migration import migrate_configured
-from sparql_llm.project import Project, ProjectError, discard_build, load_project, reload_projects
+from sparql_llm.project import BUILD_DIR, Project, ProjectError, discard_build, load_project, reload_projects
 from sparql_llm.utils import EndpointsMetadataManager, logger
 
 
@@ -131,25 +148,102 @@ def _release_lock(token: str) -> None:
         lock_file().unlink(missing_ok=True)
 
 
-def recover_after_restart() -> None:
-    """Clear what a killed process left: its rebuild lock, and jobs still marked running.
+def _project_dir(project_id: str) -> Path:
+    return Path(settings.data_dir) / project_id
 
-    Called at startup. The app runs one worker and rebuilds in its threads, so none can
-    be running yet: a lock or a "running" job on disk belongs to a process that is gone.
+
+def _snapshot_vector_store() -> None:
+    """Back up Qdrant's list of collections and aliases; only local mode has that file."""
+    if not settings.vectordb_url.startswith(("http", "https")):
+        snapshot_meta(Path(settings.vectordb_url))
+
+
+def publication_pending(project_id: str) -> bool:
+    """Whether a publish of this dataset has passed its commit point and not finished. An unreadable record counts."""
+    return record_path(_project_dir(project_id)).exists()
+
+
+def _unreadable_record(project_id: str) -> str:
+    return f"The record of an unfinished publish could not be read. Ask a developer to look at {project_id}/publish.json."
+
+
+def recover_after_restart() -> None:
+    """Finish or clear what a killed process left. Called at startup, before anything is served.
+
+    The app runs one worker and rebuilds in its threads, so none can be running yet: a
+    lock, a "running" job or a next/ folder on disk belongs to a process that is gone.
+    One dataset that cannot recover never stops the others, nor the app.
     """
     from sparql_llm.datasets import list_dataset_ids
 
     if lock_file().exists():
         logger.warning("Clearing the rebuild lock left by a stopped process: %s", lock_file().read_text(encoding="utf-8"))
         lock_file().unlink(missing_ok=True)
+    # Removal intents are finished here.
     for project_id in list_dataset_ids():
-        if read_job(project_id).get("state") == "running":
-            _set_job(
-                project_id,
-                "failed",
-                "The rebuild was interrupted by a restart. Run Check, then Rebuild again.",
-                error="interrupted",
-            )
+        try:
+            _recover_dataset(project_id)
+        except Exception:
+            logger.exception("Could not recover dataset %s at startup", project_id)
+    try:
+        _snapshot_vector_store()
+    except Exception:
+        logger.exception("Could not back up the vector store's meta.json")
+
+
+def _recover_dataset(project_id: str) -> None:
+    try:
+        record = read_record(_project_dir(project_id))
+    except PublicationError as exc:
+        logger.error("%s", exc)
+        _set_job(project_id, "failed", _unreadable_record(project_id), error="unreadable-record")
+        return
+    if record is not None:
+        try:
+            finish_publication(project_id, record, resumed=True)
+        except RebuildPartlyPublished as exc:
+            logger.exception("Could not finish the publish of %s at startup", project_id)
+            _set_job(project_id, "failed", str(exc), error=str(exc))
+        return
+    if read_job(project_id).get("state") in ("running", "swapping"):
+        _set_job(
+            project_id,
+            "failed",
+            "The rebuild was interrupted by a restart. Nothing changed. Run Check, then Rebuild again.",
+            error="interrupted",
+        )
+    shutil.rmtree(_project_dir(project_id) / BUILD_DIR, ignore_errors=True)
+    _tidy_index(project_id)
+
+
+def _delete_collections(names: list[str]) -> list[str]:
+    """Delete what can be deleted, logging the rest: leftovers do no harm and the next publish retries them."""
+    removed = []
+    for name in names:
+        try:
+            qdrant_client.delete_collection(name)
+            removed.append(name)
+        except Exception as exc:
+            logger.warning("Could not remove the superseded collection %s: %s", name, exc)
+    return removed
+
+
+def _tidy_index(project_id: str) -> None:
+    """Drop the collections nothing serves, and link a lost alias again."""
+    project = SimpleNamespace(id=project_id)
+    alias = alias_for(project)  # type: ignore[arg-type]
+    keep = _alias_target(alias)
+    existing = _collections()
+    if keep is None:
+        generation = read_generation(_project_dir(project_id)) or {}
+        if generation.get("collection") in existing:
+            keep = generation["collection"]
+            logger.warning("The alias %s was lost: linking it to %s again.", alias, keep)
+            _publish_alias(alias, keep)
+        elif (_project_dir(project_id) / "fingerprint.json").exists():
+            return  # Published, and nothing says with which index: the health check reports it.
+    prefix = version_prefix(project)  # type: ignore[arg-type]
+    _delete_collections([name for name in existing if name.startswith(prefix) and name != keep])
 
 
 def alias_for(project: Project) -> str:
@@ -212,12 +306,27 @@ def _point_alias(alias: str, collection: str) -> None:
     qdrant_client.update_collection_aliases(change_aliases_operations=ops)
 
 
+def _publish_alias(alias: str, collection: str) -> None:
+    """Point ``alias`` at ``collection``, creating it when this dataset has none yet."""
+    try:
+        _point_alias(alias, collection)
+    except Exception:
+        # No alias existed yet (nothing to delete) — create it outright.
+        qdrant_client.update_collection_aliases(
+            change_aliases_operations=[
+                models.CreateAliasOperation(
+                    create_alias=models.CreateAlias(collection_name=collection, alias_name=alias)
+                )
+            ]
+        )
+
+
 class RebuildStopped(Exception):
     """A project failed a check: the rebuild stops before the alias swap. Plain message for the admin page."""
 
 
 class RebuildPartlyPublished(Exception):
-    """The new index is live but its files could not all be made live. Plain message for the admin page."""
+    """A publish passed its commit point and could not finish: Rebuild finishes it. Plain message for the admin page."""
 
 
 def _project_headline(project: Project, report: dict[str, Any], fingerprint: Fingerprint) -> str:
@@ -263,10 +372,11 @@ def rebuild_index_with_alias(project_id: str) -> dict[str, Any]:
     Blocking; call from a worker thread. It runs on the candidate project (uploaded files
     over live ones) and writes everything it generates to its next/ folder: preflight
     checks, curator example sync, VoID generation, validator schema, entity names, the
-    index and the alias swap. Only then are next/ and the uploaded files promoted to live
-    and the projects reloaded. Any error before the swap leaves the live index and every
-    live file as they were. A failure to promote after the swap raises RebuildPartlyPublished
-    and keeps next/ and uploaded/. No other dataset is read or written.
+    index. Only then does it commit (see the module docstring) and move the alias, promote
+    next/ and the uploaded files to live and reload the projects. Any error before the
+    commit leaves the live index and every live file as they were. A failure after it
+    raises RebuildPartlyPublished and keeps the record, next/ and uploaded/ for Rebuild to
+    finish. No other dataset is read or written.
     """
     migrate_configured()
     project = load_candidate(project_id)
@@ -278,7 +388,8 @@ def rebuild_index_with_alias(project_id: str) -> dict[str, Any]:
         # The live index was built from next/ and uploaded/: keep them for the rerun.
         raise
     except BaseException:
-        discard_build(project)
+        if not record_path(project.dir).exists():
+            discard_build(project)
         raise
 
 
@@ -429,63 +540,22 @@ def _rebuild(project: Project) -> dict[str, Any]:
         if not doc_count:
             raise RebuildStopped("Indexing produced 0 documents — refusing to swap the alias.")
     except BaseException:
-        # Never served: drop what was built, or each failed retry leaves a collection behind.
-        if target in _collections() and _alias_target(alias) != target:
-            try:
-                qdrant_client.delete_collection(target)
-            except Exception as exc:
-                logger.warning("Could not remove the unfinished collection %s: %s", target, exc)
+        _drop_unpublished(target, alias, project)
         raise
 
     _set_job(project.id, "swapping", f"Built {doc_count} documents. Switching traffic to '{target}'…",
              collection=target, documents=doc_count)
 
-    existing = _collections()
     previous: str | None = None
 
-    for name in existing:
-        if name.startswith(version_prefix(project)) and name != target:
-            previous = name  # candidate for cleanup after a successful swap
-
-    try:
-        _point_alias(alias, target)
-    except Exception:
-        # No alias existed yet (nothing to delete) — create it outright.
-        qdrant_client.update_collection_aliases(
-            change_aliases_operations=[
-                models.CreateAliasOperation(
-                    create_alias=models.CreateAlias(collection_name=target, alias_name=alias)
-                )
-            ]
-        )
-
-    # The new index is live: make the files it was built from live too, then serve them.
-    # Until that succeeds the old index is kept, and next/ with uploaded/ stay for a rerun.
-    try:
-        for project in projects:
-            apply_files(project.dir, files_for(project))
-        reload_projects()
-        endpoints_metadata.reload()
-    except Exception as exc:
-        raise RebuildPartlyPublished(
-            f"The new index '{target}' is live, but the files it was built from could not all be made live ({exc}). "
-            "Fix the cause and run Rebuild again."
-        ) from exc
-
-    # Only now is the old index unreachable and unneeded, so dropping it is safe.
-    removed = _retire_legacy_index(project)
     for name in _collections():
         if name.startswith(version_prefix(project)) and name != target:
-            try:
-                qdrant_client.delete_collection(name)
-                removed.append(name)
-            except Exception as exc:
-                logger.warning("Could not remove the superseded collection %s: %s", name, exc)
+            previous = name  # candidate for cleanup after a successful swap
 
     result = {
         "collection": target,
         "documents": doc_count,
-        "removed": removed,
+        "removed": [],
         "previous": previous,
         "triples": triples,
         "classes": class_count,
@@ -506,27 +576,127 @@ def _rebuild(project: Project) -> dict[str, Any]:
     if example_warnings:
         warning += " ⚠ " + " ".join(example_warnings)
     headlines = " ".join(_project_headline(p, reports[p.id], fingerprints[p.id]) for p in projects)
-    _set_job(
-        project.id,
-        "done",
+    message = (
         f"{headlines} Index rebuilt: {doc_count} documents covering {class_count} classes "
         f"({triples:,} triples), {entities_report['entities']:,} entity names."
-        f"{warning}{entities_warning}",
-        **result,
+        f"{warning}{entities_warning}"
     )
+
+    try:
+        # Lists the new collection, so a restored backup still knows it.
+        _snapshot_vector_store()
+        record = {
+            "version": 1,
+            "dataset": project.id,
+            "alias": alias,
+            "collection": target,
+            "files": files_for(project),
+            "job_message": message,
+            "job": result,
+            "created_at": _now(),
+        }
+        write_record(project.dir, record)  # The commit point: from here on the publish only rolls forward.
+    except BaseException:
+        _drop_unpublished(target, alias, project)
+        raise
+    return finish_publication(project.id, record)
+
+
+def _drop_unpublished(target: str, alias: str, project: Project) -> None:
+    """Never served: drop what was built, or each failed retry leaves a collection behind."""
+    if record_path(project.dir).exists():
+        return
+    if target in _collections() and _alias_target(alias) != target:
+        try:
+            qdrant_client.delete_collection(target)
+        except Exception as exc:
+            logger.warning("Could not remove the unfinished collection %s: %s", target, exc)
+
+
+def _abandon_publication(project_id: str) -> dict[str, Any]:
+    """The target collection is gone and the alias never moved: only now may a publish be given up."""
+    clear_record(_project_dir(project_id))
+    shutil.rmtree(_project_dir(project_id) / BUILD_DIR, ignore_errors=True)
+    _set_job(
+        project_id,
+        "failed",
+        "The new index was lost before it went live. The previous index is still serving and your uploads are still waiting. "
+        "Run Rebuild again.",
+        error="abandoned",
+    )
+    return read_job(project_id)
+
+
+def _unfinished_message(record: dict[str, Any], exc: Exception) -> str:
+    """Says what serves now. An alias that did not move leaves the old index and the old files, which still agree."""
+    collection = record["collection"]
+    try:
+        live = _alias_target(record["alias"]) == collection
+    except Exception:
+        live = True
+    if not live:
+        return (
+            f"Publishing is unfinished: the switch to the new index '{collection}' did not complete ({exc}). "
+            "Fix the cause, then press Rebuild to finish."
+        )
+    return (
+        f"Publishing is unfinished: the new index '{collection}' is live, but its files could not all be made live ({exc}). "
+        "Fix the cause, then press Rebuild to finish. The new index keeps serving meanwhile."
+    )
+
+
+def finish_publication(project_id: str, record: dict[str, Any], resumed: bool = False) -> dict[str, Any]:
+    """Take a committed publish to its end. Every step is safe to repeat; any failure raises RebuildPartlyPublished."""
+    project_dir = _project_dir(project_id)
+    alias, collection = record["alias"], record["collection"]
+    try:
+        if collection not in _collections():
+            if _alias_target(alias) != collection:
+                return _abandon_publication(project_id)
+            raise RuntimeError(f"the collection {collection} is gone")
+        if _alias_target(alias) != collection:
+            _publish_alias(alias, collection)
+        apply_files(project_dir, record["files"])
+        write_generation(project_dir, collection)
+        reload_projects()
+        endpoints_metadata.reload()
+
+        # Only now is the old index unreachable and unneeded, so dropping it is safe.
+        project = SimpleNamespace(id=project_id)
+        removed = _retire_legacy_index(project)  # type: ignore[arg-type]
+        prefix = version_prefix(project)  # type: ignore[arg-type]
+        removed += _delete_collections([name for name in _collections() if name.startswith(prefix) and name != collection])
+        _snapshot_vector_store()
+
+        result = {**record["job"], "removed": removed}
+        message = record["job_message"]
+        if resumed:
+            message += " Publishing was finished after a restart."
+        _set_job(project_id, "done", message, **result)
+        clear_record(project_dir)
+    except Exception as exc:
+        raise RebuildPartlyPublished(_unfinished_message(record, exc)) from exc
     return result
 
 
 def run_rebuild_job(project_id: str, lock_token: str = "") -> None:
     """The body of a background rebuild: run it, record how it ended, release its lock (if it took one)."""
     try:
-        rebuild_index_with_alias(project_id)
+        # A stuck publish is finished, not built again: its new index and files are ready.
+        record = read_record(_project_dir(project_id))
+        if record is not None:
+            finish_publication(project_id, record, resumed=True)
+        else:
+            rebuild_index_with_alias(project_id)
+    except PublicationError as exc:
+        logger.error("%s", exc)
+        _set_job(project_id, "failed", _unreadable_record(project_id), error="unreadable-record")
     except RebuildStopped as exc:
         logger.warning("Index rebuild of %s stopped: %s", project_id, exc)
         _set_job(project_id, "failed", f"Rebuild stopped: {exc} The previous index is still serving.", error=str(exc))
     except RebuildPartlyPublished as exc:
-        logger.exception("Index rebuild of %s published its index but not all its files", project_id)
-        _set_job(project_id, "failed", f"Rebuild incomplete: {exc}", error=str(exc), traceback=traceback.format_exc()[-2000:])
+        logger.exception("Index rebuild of %s did not finish publishing", project_id)
+        _set_job(project_id, "failed", str(exc), error=str(exc), traceback=traceback.format_exc()[-2000:])
     except Exception as exc:
         logger.exception("Index rebuild of %s failed", project_id)
         _set_job(

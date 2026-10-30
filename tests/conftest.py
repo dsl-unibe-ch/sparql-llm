@@ -109,6 +109,28 @@ def _use_projects(monkeypatch: pytest.MonkeyPatch, data_dir: Path, project_ids: 
     return reload_projects()
 
 
+def fake_index(monkeypatch: pytest.MonkeyPatch, *existing: str) -> None:
+    """Stand in for Qdrant behind a rebuild: what a publish record names exists, and its alias moves when published."""
+    from sparql_llm.indexing import rebuild
+
+    collections = list(existing)
+    aliases: dict[str, str] = {}
+    real_write_record, real_publish_alias = rebuild.write_record, rebuild._publish_alias
+
+    def write_record(project_dir, record):
+        collections.append(record["collection"])
+        real_write_record(project_dir, record)
+
+    def publish_alias(alias, collection):
+        real_publish_alias(alias, collection)
+        aliases[alias] = collection
+
+    monkeypatch.setattr(rebuild, "write_record", write_record)
+    monkeypatch.setattr(rebuild, "_publish_alias", publish_alias)
+    monkeypatch.setattr(rebuild, "_collections", lambda: list(collections))
+    monkeypatch.setattr(rebuild, "_alias_target", aliases.get)
+
+
 @pytest.fixture
 def use_projects(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Serve the given project dicts (written to tmp_path) for the duration of the test."""

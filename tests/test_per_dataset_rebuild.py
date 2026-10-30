@@ -9,6 +9,8 @@ from sparql_llm.indexing import preflight, rebuild
 from sparql_llm.indexing.drift import Fingerprint
 from sparql_llm.indexing.preflight import CheckResult
 
+from .conftest import fake_index
+
 A = {"id": "a", "label": "Alpha", "endpoint_url": "https://a.example/sparql"}
 B = {"id": "b", "label": "Beta", "endpoint_url": "https://b.example/sparql"}
 
@@ -47,10 +49,10 @@ def two(use_projects, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(rebuild, "endpoints_metadata", FakeMetadata())
     monkeypatch.setattr(rebuild, "build_entity_names", lambda p: {"entities": 0, "error": ""})
     monkeypatch.setattr(rebuild, "take_fingerprint", lambda p: Fingerprint(triples=1))
-    monkeypatch.setattr(rebuild, "init_vectordb", lambda collection_name=None, projects=None, prefixes_map=None: 3)
-    monkeypatch.setattr(rebuild, "_collections", lambda: [])
+    monkeypatch.setattr(rebuild, "init_vectordb", lambda collection_name=None, projects=None, **kwargs: 3)
     monkeypatch.setattr(rebuild, "_aliases", lambda: set())
     monkeypatch.setattr(rebuild, "_point_alias", lambda alias, target: swaps.append((alias, target)))
+    fake_index(monkeypatch)
     monkeypatch.setattr(rebuild, "qdrant_client", FakeQdrant())
     projects["swaps"] = swaps
     return projects
@@ -69,7 +71,7 @@ def test_rebuilding_b_leaves_a_untouched(two, monkeypatch: pytest.MonkeyPatch):
     assert two["swaps"][0][1].startswith("b__v")
     assert (two["b"].dir / "void.ttl").read_text(encoding="utf-8") == "# new void of b\n"
 
-    monkeypatch.setattr(rebuild, "init_vectordb", lambda collection_name=None, projects=None, prefixes_map=None: 0)
+    monkeypatch.setattr(rebuild, "init_vectordb", lambda collection_name=None, projects=None, **kwargs: 0)
     rebuild.run_rebuild_job("b")
     assert rebuild.read_job("b")["state"] == "failed"
 

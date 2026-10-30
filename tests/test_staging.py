@@ -13,7 +13,7 @@ from sparql_llm.migration import seed_projects
 from sparql_llm.project import get_projects, reload_projects
 from sparql_llm.project_files import list_files, restore_previous, save_upload
 
-from .conftest import NORSSIT
+from .conftest import NORSSIT, fake_index
 
 
 def _upload_project(**changes) -> None:
@@ -69,15 +69,15 @@ def writing_pipeline(norssit_project, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(rebuild, "EndpointsMetadataManager", FakeMetadata)
     monkeypatch.setattr(rebuild, "build_entity_names", names)
     monkeypatch.setattr(rebuild, "take_fingerprint", lambda p: Fingerprint(triples=1))
-    monkeypatch.setattr(rebuild, "_collections", lambda: [])
     monkeypatch.setattr(rebuild, "_point_alias", lambda alias, target: None)
+    fake_index(monkeypatch)
     return norssit_project
 
 
 def test_a_late_failure_leaves_every_live_file_untouched(writing_pipeline, monkeypatch: pytest.MonkeyPatch):
     project = writing_pipeline
     _upload_project(label="Norssit v2")
-    monkeypatch.setattr(rebuild, "init_vectordb", lambda collection_name=None, projects=None, prefixes_map=None: 0)
+    monkeypatch.setattr(rebuild, "init_vectordb", lambda collection_name=None, projects=None, **kwargs: 0)
     rebuild.run_rebuild_job("norssit")
     assert rebuild.read_job("norssit")["state"] == "failed"
     assert project.void_path.read_text(encoding="utf-8") == "# live void\n"
@@ -94,7 +94,7 @@ def test_a_successful_rebuild_promotes_uploads_and_generated_files(writing_pipel
     monkeypatch.setattr(
         rebuild,
         "init_vectordb",
-        lambda collection_name=None, projects=None, prefixes_map=None: seen.extend(p.label for p in projects) or 5,
+        lambda collection_name=None, projects=None, **kwargs: seen.extend(p.label for p in projects) or 5,
     )
     rebuild.run_rebuild_job("norssit")
     assert rebuild.read_job("norssit")["state"] == "done", rebuild.read_job("norssit")["message"]

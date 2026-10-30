@@ -5,6 +5,9 @@ import pytest
 from sparql_llm.indexing import rebuild
 from sparql_llm.indexing.drift import Fingerprint
 from sparql_llm.indexing.preflight import CheckResult
+from sparql_llm.indexing.publication import record_path
+
+from .conftest import fake_index
 
 
 @pytest.fixture
@@ -54,7 +57,7 @@ def pipeline(norssit_project, monkeypatch: pytest.MonkeyPatch):
         record("fingerprint", Fingerprint(triples=9, classes={"http://xmlns.com/foaf/0.1/Person": 10137})),
     )
     monkeypatch.setattr(rebuild, "init_vectordb", record("index", 42))
-    monkeypatch.setattr(rebuild, "_collections", lambda: [])
+    fake_index(monkeypatch)
     monkeypatch.setattr(rebuild, "_point_alias", record("swap"))
     monkeypatch.setattr(rebuild, "qdrant_client", FakeQdrant())
     monkeypatch.setattr(rebuild, "reload_projects", record("reload", [norssit_project]))
@@ -124,7 +127,7 @@ def test_job_status_write_retries_a_briefly_locked_file(norssit_project, monkeyp
 def test_a_failed_index_build_drops_its_half_built_collection(pipeline, monkeypatch: pytest.MonkeyPatch):
     created: list[str] = []
 
-    def broken_index(collection_name, projects):
+    def broken_index(collection_name, projects, **kwargs):
         created.append(collection_name)
         raise RuntimeError("upsert failed")
 
@@ -143,7 +146,7 @@ def test_the_fingerprint_is_written_with_the_other_files_before_the_swap(pipelin
 
 
 def test_old_collections_are_retired_only_after_the_files_are_live(pipeline, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr(rebuild, "_collections", lambda: ["norssit__v20200101-000000"])
+    fake_index(monkeypatch, "norssit__v20200101-000000")
     monkeypatch.setattr(rebuild, "apply_files", lambda project_dir, files: pipeline.append("promote"))
     rebuild.rebuild_index_with_alias("norssit")
     assert pipeline.index("swap") < pipeline.index("promote") < pipeline.index("delete norssit__v20200101-000000")
@@ -156,13 +159,15 @@ def test_a_failure_after_the_swap_keeps_the_built_files_and_says_the_new_index_i
         raise OSError("No space left on device")
 
     monkeypatch.setattr(rebuild, "apply_files", full_disk)
-    monkeypatch.setattr(rebuild, "_collections", lambda: ["norssit__v20200101-000000"])
+    fake_index(monkeypatch, "norssit__v20200101-000000")
     rebuild.run_rebuild_job("norssit")
 
     job = rebuild.read_job("norssit")
     assert job["state"] == "failed"
     assert "previous index is still serving" not in job["message"]
     assert "is live" in job["message"]
+    assert "Publishing is unfinished" in job["message"]
+    assert record_path(norssit_project.dir).exists()
     assert norssit_project.build_dir.is_dir()
     # The old index stays: its files are still the live ones.
     assert "delete norssit__v20200101-000000" not in pipeline
