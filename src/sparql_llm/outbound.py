@@ -20,6 +20,7 @@ from typing import Any
 
 import httpcore
 import httpx
+from rdflib.plugins.sparql import CUSTOM_EVALS
 
 logger = logging.getLogger("sparql_llm.outbound")
 
@@ -155,6 +156,21 @@ class _AsyncGuardedBackend(httpcore.AsyncNetworkBackend):
 
     async def sleep(self, seconds: float) -> None:
         await self._backend.sleep(seconds)
+
+
+def _no_remote_service(ctx: Any, part: Any) -> Any:
+    """Answer a SPARQL ``SERVICE`` clause in a locally run query with no rows.
+
+    rdflib would run it itself through urllib, outside the guard. Local queries read the
+    Turtle an endpoint serves, and the text of such a query can hold what that endpoint chose.
+    """
+    if part.name != "ServiceGraphPattern":
+        raise NotImplementedError  # rdflib evaluates everything else as usual
+    logger.warning("Outbound connection refused: SERVICE in a locally run SPARQL query")
+    return iter(())
+
+
+CUSTOM_EVALS["sparql_llm_no_remote_service"] = _no_remote_service
 
 
 def _install_backend(transport: Any, backend: Any) -> None:

@@ -79,6 +79,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             seed=configuration.seed,
             http_client=chat_http_client(),
             http_async_client=chat_async_http_client(),
+            openai_proxy=None,  # With a client passed, ChatOpenAI refuses to start if OPENAI_PROXY is set
         )
     if provider == "openai":
         return ChatOpenAI(
@@ -91,6 +92,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             max_retries=1,
             http_client=chat_http_client(),
             http_async_client=chat_async_http_client(),
+            openai_proxy=None,  # With a client passed, ChatOpenAI refuses to start if OPENAI_PROXY is set
         )
     if provider == "gpustack":
         # With tools bound, gpt-oss on GPUStack/vLLM often returns an empty completion
@@ -112,6 +114,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             disable_streaming=disable_streaming,
             http_client=chat_http_client(),
             http_async_client=chat_async_http_client(),
+            openai_proxy=None,  # With a client passed, ChatOpenAI refuses to start if OPENAI_PROXY is set
         )
     if provider == "custom":
         # Generic OpenAI-compatible endpoint (e.g. Ollama, LM Studio, Together AI)
@@ -125,6 +128,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             max_retries=1,
             http_client=chat_http_client(),
             http_async_client=chat_async_http_client(),
+            openai_proxy=None,  # With a client passed, ChatOpenAI refuses to start if OPENAI_PROXY is set
         )
     return init_chat_model(
         model_name,

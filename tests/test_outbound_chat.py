@@ -93,6 +93,14 @@ def test_every_chat_client_is_guarded(model, monkeypatch: pytest.MonkeyPatch):
     assert chat.http_async_client is chat_async_http_client()
 
 
+@pytest.mark.parametrize("model", ["openai/m", "gpustack/m", "gpustack/gpt-oss-m", "custom/m", "openrouter/m"])
+def test_an_openai_proxy_setting_does_not_stop_chat_models(model, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_PROXY", "http://proxy.example:3128")
+    chat = load_chat_model(Configuration(model=model, llm_base_url="http://x.example/v1", llm_api_key="k"))
+    assert chat.http_client is chat_http_client()
+
+
 def test_the_sdk_keeps_the_refusal_reachable():
     chat = ChatOpenAI(
         base_url="http://127.0.0.1:9/v1",

@@ -95,7 +95,7 @@ Everyone with an account on your instance can then use that Ollama.
 
 The same setting covers an endpoint or a shared LLM on a private network, including one set in `OPENAI_BASE_URL`. List each one as `host:port`, separated by commas.
 
-`HTTP_PROXY` and `HTTPS_PROXY` are ignored for these connections.
+`HTTP_PROXY`, `HTTPS_PROXY` and `OPENAI_PROXY` are ignored for these connections.
 
 ## Exposing it publicly
 

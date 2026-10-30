@@ -1,12 +1,14 @@
 """Check and Rebuild: every fetch goes through the outbound guard, and a refusal degrades as a failure does."""
 
 import json
+import logging
 import re
 from pathlib import Path
 
 import httpx
 import pytest
 import rdflib.parser
+import rdflib.plugins.sparql.evaluate
 
 from sparql_llm import outbound
 from sparql_llm.indexing import index_resources, sync_examples
@@ -41,6 +43,29 @@ def _serve_homepage(monkeypatch: pytest.MonkeyPatch, json_ld: dict) -> None:
 def test_query_sparql_refuses_a_private_endpoint():
     with pytest.raises(DestinationRefused):
         query_sparql("ASK { ?s ?p ?o }", PRIVATE_ENDPOINT)
+
+
+def test_a_local_query_never_runs_service(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture):
+    """An empty answer falls back to the endpoint's Turtle, which rdflib queries here: SERVICE would run on this server."""
+    called: list = []
+
+    def urlopen(*args, **kwargs):
+        called.append(args)
+        raise OSError("connection attempted")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "turtle" in request.headers["accept"]:
+            return httpx.Response(200, text="<urn:a> <urn:b> <urn:c> .")
+        return httpx.Response(200, json={"results": {"bindings": []}})
+
+    monkeypatch.setattr(rdflib.plugins.sparql.evaluate, "urlopen", urlopen)
+    query = "SELECT * WHERE { SERVICE <http://169.254.169.254/latest> { ?s ?p ?o } }"
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        with caplog.at_level(logging.WARNING, logger="sparql_llm.outbound"):
+            result = query_sparql(query, "https://a.example/sparql", client=client, check_service_desc=True)
+    assert called == []
+    assert result == {"results": {"bindings": []}}
+    assert "SERVICE" in caplog.text
 
 
 def test_preflight_reports_a_refused_endpoint(use_projects):
