@@ -7,14 +7,13 @@ Three states of a project's files, so nothing unchecked is ever served:
 - live, in ``<data_dir>/<id>/``: what the instance serves, also after a restart;
 - uploaded, in ``<id>/uploaded/``: what a curator uploaded and Check / Rebuild test;
 - next, in ``<id>/next/``: what a running rebuild generates.
-A successful rebuild promotes uploaded and next into live together; a failed one discards next.
+A successful rebuild promotes uploaded and next into live together (``indexing.publication``); a failed one discards next.
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 import shutil
 from pathlib import Path
@@ -276,33 +275,6 @@ def read_projects(candidates: bool = False) -> tuple[list[Project], dict[str, st
 def discard_build(project: Project) -> None:
     """Drop what an unfinished rebuild generated; the live files were never touched."""
     shutil.rmtree(project.build_dir, ignore_errors=True)
-
-
-def promote(project: Project) -> None:
-    """Make a rebuilt candidate live: generated files from next/, then the uploaded files.
-
-    Each replaced uploaded file is kept as ``<name>.prev`` for Undo. Generated files the
-    project no longer configures (entity names, synced examples) are removed.
-    """
-    live = project.dir
-    for name in GENERATED_FILES:
-        built = project.build_dir / name
-        if built.is_file():
-            os.replace(built, live / name)
-    if project.entities is None:
-        (live / "entity_names.json").unlink(missing_ok=True)
-    if project.curator_examples is None:
-        (live / "examples-synced.md").unlink(missing_ok=True)
-    if project.uploaded_dir.is_dir():
-        for uploaded in project.uploaded_dir.iterdir():
-            if not uploaded.is_file():
-                continue
-            target = live / uploaded.name
-            if target.exists():
-                os.replace(target, live / f"{uploaded.name}.prev")
-            os.replace(uploaded, target)
-        shutil.rmtree(project.uploaded_dir, ignore_errors=True)
-    discard_build(project)
 
 
 def reload_projects() -> list[Project]:

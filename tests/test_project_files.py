@@ -87,7 +87,8 @@ def test_unknown_file_name_rejected(norssit_project, client_as):
 
 
 def test_save_keeps_the_upload_pending_and_undo_restores_a_promoted_file(norssit_project):
-    from sparql_llm.project import load_project, promote
+    from sparql_llm.indexing.publication import apply_files, files_for
+    from sparql_llm.project import load_project
 
     old = norssit_project.dataset_path.read_text(encoding="utf-8")
     save_upload("norssit", "dataset.md", "## New\n\nVäkkärä.\n".encode("utf-8"), "stephen@example.org")
@@ -96,7 +97,8 @@ def test_save_keeps_the_upload_pending_and_undo_restores_a_promoted_file(norssit
     assert listed["dataset.md"]["uploaded_by"] == "stephen@example.org"
     assert listed["dataset.md"]["pending"] is True
 
-    promote(load_project(norssit_project.dir.parent, "norssit", candidate=True))  # what a rebuild does
+    candidate = load_project(norssit_project.dir.parent, "norssit", candidate=True)
+    apply_files(candidate.dir, files_for(candidate))  # what a rebuild does
     assert norssit_project.dataset_path.read_text(encoding="utf-8") == "## New\n\nVäkkärä.\n"
     assert (norssit_project.dir / "dataset.md.prev").read_text(encoding="utf-8") == old
 

@@ -40,10 +40,11 @@ from sparql_llm.indexing.drift import Fingerprint, save_fingerprint, take_finger
 from sparql_llm.indexing.entity_names import build_entity_names
 from sparql_llm.indexing.index_resources import endpoints_metadata, init_vectordb, qdrant_client
 from sparql_llm.indexing.preflight import run_preflight
+from sparql_llm.indexing.publication import apply_files, files_for
 from sparql_llm.indexing.sync_examples import format_report, sync_curator_examples
 from sparql_llm.indexing.void_gen import VoidError, generate_void
 from sparql_llm.migration import migrate_configured
-from sparql_llm.project import Project, ProjectError, discard_build, load_project, promote, reload_projects
+from sparql_llm.project import Project, ProjectError, discard_build, load_project, reload_projects
 from sparql_llm.utils import EndpointsMetadataManager, logger
 
 
@@ -462,7 +463,7 @@ def _rebuild(project: Project) -> dict[str, Any]:
     # Until that succeeds the old index is kept, and next/ with uploaded/ stay for a rerun.
     try:
         for project in projects:
-            promote(project)
+            apply_files(project.dir, files_for(project))
         reload_projects()
         endpoints_metadata.reload()
     except Exception as exc:

@@ -144,7 +144,7 @@ def test_the_fingerprint_is_written_with_the_other_files_before_the_swap(pipelin
 
 def test_old_collections_are_retired_only_after_the_files_are_live(pipeline, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(rebuild, "_collections", lambda: ["norssit__v20200101-000000"])
-    monkeypatch.setattr(rebuild, "promote", lambda project: pipeline.append("promote"))
+    monkeypatch.setattr(rebuild, "apply_files", lambda project_dir, files: pipeline.append("promote"))
     rebuild.rebuild_index_with_alias("norssit")
     assert pipeline.index("swap") < pipeline.index("promote") < pipeline.index("delete norssit__v20200101-000000")
 
@@ -152,10 +152,10 @@ def test_old_collections_are_retired_only_after_the_files_are_live(pipeline, mon
 def test_a_failure_after_the_swap_keeps_the_built_files_and_says_the_new_index_is_live(
     pipeline, norssit_project, monkeypatch: pytest.MonkeyPatch
 ):
-    def full_disk(project):
+    def full_disk(project_dir, files):
         raise OSError("No space left on device")
 
-    monkeypatch.setattr(rebuild, "promote", full_disk)
+    monkeypatch.setattr(rebuild, "apply_files", full_disk)
     monkeypatch.setattr(rebuild, "_collections", lambda: ["norssit__v20200101-000000"])
     rebuild.run_rebuild_job("norssit")
 
