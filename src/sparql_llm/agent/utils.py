@@ -1,10 +1,12 @@
 """Utilities for the AI agent, e.g. load model."""
 
+import functools
 import os
 import re
 from collections.abc import Sequence
 from typing import Any
 
+import httpx
 from langchain.chat_models import init_chat_model
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage
@@ -13,6 +15,7 @@ from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
 from sparql_llm.config import Configuration
+from sparql_llm.outbound import guarded_async_client, guarded_client
 
 
 class GptOssChatOpenAI(ChatOpenAI):
@@ -32,6 +35,18 @@ class GptOssChatOpenAI(ChatOpenAI):
             if not message.get("content") and not message.get("tool_calls") and message.get("reasoning_content"):
                 message["content"] = message["reasoning_content"]
         return super()._create_chat_result(response_dict, generation_info)
+
+
+@functools.lru_cache(maxsize=1)
+def chat_http_client() -> httpx.Client:
+    """The client for every chat model with a user-set URL, shared so models built per request reuse connections."""
+    return guarded_client("chat", follow_redirects=True)
+
+
+@functools.lru_cache(maxsize=1)
+def chat_async_http_client() -> httpx.AsyncClient:
+    """The async counterpart of :func:`chat_http_client`."""
+    return guarded_async_client("chat", follow_redirects=True)
 
 
 def load_chat_model(configuration: Configuration) -> BaseChatModel:
@@ -62,6 +77,8 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             temperature=safe_temperature,
             api_key=SecretStr(os.getenv("OPENROUTER_API_KEY") or ""),
             seed=configuration.seed,
+            http_client=chat_http_client(),
+            http_async_client=chat_async_http_client(),
         )
     if provider == "openai":
         return ChatOpenAI(
@@ -72,6 +89,8 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             seed=configuration.seed,
             timeout=120.0,
             max_retries=1,
+            http_client=chat_http_client(),
+            http_async_client=chat_async_http_client(),
         )
     if provider == "gpustack":
         # With tools bound, gpt-oss on GPUStack/vLLM often returns an empty completion
@@ -91,6 +110,8 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             timeout=90.0,
             max_retries=1,
             disable_streaming=disable_streaming,
+            http_client=chat_http_client(),
+            http_async_client=chat_async_http_client(),
         )
     if provider == "custom":
         # Generic OpenAI-compatible endpoint (e.g. Ollama, LM Studio, Together AI)
@@ -102,6 +123,8 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             seed=configuration.seed,
             timeout=120.0,
             max_retries=1,
+            http_client=chat_http_client(),
+            http_async_client=chat_async_http_client(),
         )
     return init_chat_model(
         model_name,

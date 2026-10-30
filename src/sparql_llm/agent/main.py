@@ -59,6 +59,7 @@ from sparql_llm.indexing.drift import load_fingerprint
 from sparql_llm.indexing.rebuild import publication_pending, recover_after_restart, stop_rebuilds
 from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
+from sparql_llm.outbound import CHAT_REFUSED_MESSAGE, REFUSED_MESSAGE, DestinationRefused, find_refusal
 from sparql_llm.project import Project, get_projects
 from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
 
@@ -923,6 +924,8 @@ if settings.auth_enabled:
         # Validate the key by fetching models
         try:
             models = await validate_and_list_models(effective_url, body.api_key, body.provider)
+        except DestinationRefused:
+            return JSONResponse(status_code=422, content={"error": REFUSED_MESSAGE})
         except Exception as exc:
             reason = f"{type(exc).__name__}: {exc}"
             return JSONResponse(
@@ -978,6 +981,8 @@ if settings.auth_enabled:
         try:
             plain_key = decrypt_api_key(cfg.encrypted_api_key, settings.auth_secret)
             models = await validate_and_list_models(cfg.base_url, plain_key, cfg.provider)
+        except DestinationRefused:
+            return JSONResponse(status_code=422, content={"error": REFUSED_MESSAGE, "needs_setup": True})
         except Exception as exc:
             return JSONResponse(
                 status_code=401,
@@ -1186,7 +1191,7 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
             exc,
         )
         hint = ""
-        if use_tools:
+        if use_tools and not find_refusal(exc):
             hint = (
                 "\n\nThis happened in the experimental **MCP tools** mode. The selected "
                 "model may not support tool calling, or a tool call failed. Try turning "
@@ -1206,6 +1211,8 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
 
 def chat_error_message(exc: Exception) -> str:
     """What the user reads when answering failed: plain words, one line (F13)."""
+    if find_refusal(exc):
+        return CHAT_REFUSED_MESSAGE
     if isinstance(exc, openai.APIConnectionError | httpx.TimeoutException | TimeoutError):
         # APITimeoutError is an APIConnectionError: the model server did not answer.
         return "The language model did not answer in time. Please try again, or pick another model."
@@ -1427,6 +1434,8 @@ async def get_models(
     try:
         plain_key = decrypt_api_key(cfg.encrypted_api_key, settings.auth_secret)
         models = await validate_and_list_models(cfg.base_url, plain_key, cfg.provider)
+    except DestinationRefused:
+        return JSONResponse(status_code=422, content={"error": REFUSED_MESSAGE, "needs_setup": True})
     except Exception as exc:
         logger.error("Failed to fetch models for user %s: %s", _user.id, exc)
         return JSONResponse(

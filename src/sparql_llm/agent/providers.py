@@ -14,6 +14,7 @@ from dataclasses import dataclass
 
 import httpx
 
+from sparql_llm.outbound import guarded_async_client
 from sparql_llm.utils import logger
 
 
@@ -220,10 +221,11 @@ async def validate_and_list_models(
     For non-OpenAI providers, models that reject tool calling are filtered out
     (see :func:`_supports_tool_calling`).
     Returns a list of model IDs formatted as ``provider/model-name``.
-    Raises ``httpx.HTTPStatusError`` on 401/403 (invalid key) or network errors.
+    Raises ``httpx.HTTPStatusError`` on 401/403 (invalid key) or network errors, and
+    ``DestinationRefused`` when the outbound policy refuses ``base_url``.
     """
     url = f"{base_url.rstrip('/')}/models"
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with guarded_async_client("byok", timeout=15.0) as client:
         resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
         resp.raise_for_status()
         data = resp.json()
