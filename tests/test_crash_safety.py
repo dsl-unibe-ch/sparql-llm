@@ -17,12 +17,14 @@ from qdrant_client import QdrantClient, models
 from sparql_llm.config import settings
 from sparql_llm.indexing import rebuild
 from sparql_llm.indexing.publication import GENERATION_FILE, read_generation, record_path
+from sparql_llm.indexing.qdrant_meta import repair_meta
 from sparql_llm.project_files import save_upload
 from sparql_llm.utils import EndpointsMetadataManager
 
 from .crash_stubs import install_stubs
 
 ALIAS = "norssit__docs"
+REAL_DELETE = rebuild._delete_collections
 AFTER_COMMIT = ["_publish_alias", "apply_files", "write_generation", "reload_projects", "snapshot_meta", "_set_job_done", "clear_record"]
 
 
@@ -341,3 +343,81 @@ def test_a_process_killed_before_the_commit_point_changes_nothing(norssit_projec
         assert rebuild._collections() == []
     finally:
         client.close()
+
+
+def _restart(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
+    """Close the store and do what a new process does: repair meta.json, open it, recover."""
+    rebuild.qdrant_client.close()
+    repair_meta(Path(settings.vectordb_url))
+    client = QdrantClient(path=settings.vectordb_url)
+    request.addfinalizer(client.close)
+    monkeypatch.setattr(rebuild, "qdrant_client", client)
+    rebuild.recover_after_restart()
+
+
+def _truncated_meta_write(local, after_commit_write: int, error: BaseException):
+    """Make Qdrant's nth write of meta.json after the commit point truncate the file and fail, then behave."""
+    real_save = local._save
+    writes = [0]
+
+    def save():
+        if rebuild.publication_pending("norssit"):
+            writes[0] += 1
+            if writes[0] == after_commit_write:
+                (Path(local.location) / "meta.json").write_text("", encoding="utf-8")
+                raise error
+        real_save()
+
+    local._save = save
+
+
+@pytest.mark.parametrize("write", [1, 2])
+def test_a_kill_during_a_meta_write_after_the_commit_point_rolls_forward(
+    write, old_version, real_qdrant, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+):
+    _truncated_meta_write(real_qdrant._client, write, Crash())
+    _crash()
+    _restart(monkeypatch, request)
+    assert_serving("new", "done")
+
+
+def test_a_failed_meta_write_during_cleanup_keeps_the_publish_unfinished(
+    old_version, real_qdrant, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+):
+    # The second write is the old collection's deletion, whose failure is only a logged warning.
+    _truncated_meta_write(real_qdrant._client, 2, OSError(28, "No space left on device"))
+
+    rebuild.run_rebuild_job("norssit")
+
+    job = rebuild.read_job("norssit")
+    assert job["state"] == "failed"
+    assert "Publishing is unfinished" in job["message"]
+    assert record_path(old_version.dir).exists()
+
+    _restart(monkeypatch, request)
+
+    assert_serving("new", "done")
+
+
+def test_recovery_keeps_the_collection_of_the_published_files(old_version, real_qdrant, monkeypatch: pytest.MonkeyPatch):
+    """An older backup put the alias back on the old index: the published files decide, not the alias."""
+    monkeypatch.setattr(rebuild, "_delete_collections", lambda names: [])
+    old_collection = rebuild._alias_target(ALIAS)
+    rebuild.rebuild_index_with_alias("norssit")
+    rebuild._point_alias(ALIAS, old_collection)
+    monkeypatch.setattr(rebuild, "_delete_collections", REAL_DELETE)
+
+    rebuild.recover_after_restart()
+
+    assert_serving("new", "done")
+
+
+def test_the_built_files_are_flushed_before_the_commit_point(old_version, monkeypatch: pytest.MonkeyPatch):
+    steps = []
+    real_sync, real_record = rebuild.sync_files, rebuild.write_record
+    monkeypatch.setattr(rebuild, "sync_files", lambda project_dir: steps.append("sync") or real_sync(project_dir))
+    monkeypatch.setattr(rebuild, "write_record", lambda d, r: steps.append("record") or real_record(d, r))
+
+    rebuild.rebuild_index_with_alias("norssit")
+
+    assert steps == ["sync", "record"]

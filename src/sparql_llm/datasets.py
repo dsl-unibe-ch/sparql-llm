@@ -11,7 +11,6 @@ On upgrade the list is seeded from the install settings' ``projects``, all publi
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 from datetime import datetime, timezone
@@ -37,10 +36,9 @@ def _data_dir() -> Path:
 
 
 def _write(data_dir: Path, entries: list[dict[str, Any]]) -> None:
-    data_dir.mkdir(parents=True, exist_ok=True)
-    tmp = data_dir / f"{DATASETS_FILE}.tmp{os.getpid()}"
-    tmp.write_text(json.dumps(entries, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, data_dir / DATASETS_FILE)
+    from sparql_llm.indexing.publication import write_durable_json
+
+    write_durable_json(data_dir / DATASETS_FILE, entries)
 
 
 def _entries() -> list[dict[str, Any]]:

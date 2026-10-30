@@ -54,6 +54,7 @@ from sparql_llm.indexing.publication import (
     read_generation,
     read_record,
     record_path,
+    sync_files,
     write_generation,
     write_record,
 )
@@ -128,11 +129,17 @@ def _acquire_lock(project_id: str) -> str | None:
     token = secrets.token_hex(8)
     try:
         fd = os.open(lock_file(), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.write(fd, f"{os.getpid()} {_now()} {project_id} {token}".encode())
-        os.close(fd)
-        return token
     except FileExistsError:
         return None
+    try:
+        os.write(fd, f"{os.getpid()} {_now()} {project_id} {token}".encode())
+    except OSError:
+        # On a full disk: an empty lock left behind would refuse every rebuild until a restart.
+        os.close(fd)
+        lock_file().unlink(missing_ok=True)
+        raise
+    os.close(fd)
+    return token
 
 
 def running_dataset() -> str:
@@ -159,9 +166,13 @@ def _project_dir(project_id: str) -> Path:
 
 
 def _snapshot_vector_store() -> None:
-    """Back up Qdrant's list of collections and aliases; only local mode has that file."""
-    if not settings.vectordb_url.startswith(("http", "https")):
-        snapshot_meta(Path(settings.vectordb_url))
+    """Back up Qdrant's list of collections and aliases; only local mode has that file.
+
+    Raises when the file is damaged. A publish must not end on an old backup: restored at
+    the next start, it would put the alias back on the previous index.
+    """
+    if not settings.vectordb_url.startswith(("http", "https")) and not snapshot_meta(Path(settings.vectordb_url)):
+        raise RuntimeError("the list of indexes could not be saved")
 
 
 def publication_pending(project_id: str) -> bool:
@@ -296,14 +307,14 @@ def _tidy_index(project_id: str) -> None:
     alias = alias_for(project)  # type: ignore[arg-type]
     keep = _alias_target(alias)
     existing = _collections()
-    if keep is None:
-        generation = read_generation(_project_dir(project_id)) or {}
-        if generation.get("collection") in existing:
-            keep = generation["collection"]
-            logger.warning("The alias %s was lost: linking it to %s again.", alias, keep)
-            _publish_alias(alias, keep)
-        elif (_project_dir(project_id) / "fingerprint.json").exists():
-            return  # Published, and nothing says with which index: the health check reports it.
+    published = (read_generation(_project_dir(project_id)) or {}).get("collection")
+    if published in existing and published != keep:
+        # The live files say which index they belong to; an older backup of meta.json does not.
+        logger.warning("The alias %s points at %s: linking it to %s, the index of the published files.", alias, keep, published)
+        _publish_alias(alias, published)
+        keep = published
+    elif keep is None and (_project_dir(project_id) / "fingerprint.json").exists():
+        return  # Published, and nothing says with which index: the health check reports it.
     prefix = version_prefix(project)  # type: ignore[arg-type]
     _delete_collections([name for name in existing if name.startswith(prefix) and name != keep])
 
@@ -676,6 +687,7 @@ def _rebuild(project: Project) -> dict[str, Any]:
     )
 
     try:
+        sync_files(project.dir)
         # Lists the new collection, so a restored backup still knows it.
         _snapshot_vector_store()
         record = {
@@ -827,8 +839,13 @@ def start_rebuild(project_id: str) -> dict[str, Any]:
             "job": read_job(running) if running else {},
         }
 
-    _set_job(project_id, "running", "Starting rebuild…")
     global _worker
-    _worker = threading.Thread(target=run_rebuild_job, args=(project_id, lock_token), name=f"reindex-{project_id}", daemon=True)
-    _worker.start()
+    try:
+        _set_job(project_id, "running", "Starting rebuild…")
+        _worker = threading.Thread(target=run_rebuild_job, args=(project_id, lock_token), name=f"reindex-{project_id}", daemon=True)
+        _worker.start()
+    except BaseException:
+        # On a full disk: a lock nobody owns would refuse Rebuild, Upload and Remove until a restart.
+        _release_lock(lock_token)
+        raise
     return {"started": True, "job": read_job(project_id)}

@@ -1,6 +1,8 @@
 """A publish commits through one durable record, and its file moves can be replayed after any failure."""
 
 import json
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -157,3 +159,47 @@ def test_apply_files_resumes_when_the_old_file_moved_but_the_upload_did_not(nors
     publication.apply_files(live, files)
     assert (live / "examples.md").read_text(encoding="utf-8") == "new examples"
     assert (live / "examples.md.prev").read_text(encoding="utf-8") == "old examples"
+
+
+def _count_flushed_files(monkeypatch: pytest.MonkeyPatch, module) -> list[int]:
+    flushed: list[int] = []
+    real_fsync = module.os.fsync
+
+    def fsync(fd):
+        if stat.S_ISREG(os.fstat(fd).st_mode):
+            flushed.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(module.os, "fsync", fsync)
+    return flushed
+
+
+def test_sync_files_flushes_every_built_and_uploaded_file(norssit_project, monkeypatch: pytest.MonkeyPatch):
+    _stage(norssit_project)
+    flushed = _count_flushed_files(monkeypatch, publication)
+    publication.sync_files(norssit_project.dir)
+    assert len(flushed) == 5
+
+
+def test_sync_files_with_nothing_built_does_nothing(tmp_path):
+    publication.sync_files(tmp_path)
+
+
+def test_a_snapshot_of_the_vector_store_is_flushed(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    from sparql_llm.indexing.qdrant_meta import snapshot_meta
+
+    (tmp_path / "meta.json").write_text('{"collections": {}, "aliases": {}}', encoding="utf-8")
+    flushed = _count_flushed_files(monkeypatch, publication)
+    assert snapshot_meta(tmp_path) is True
+    assert len(flushed) == 1
+
+
+def test_the_dataset_list_is_written_durably(norssit_project, monkeypatch: pytest.MonkeyPatch):
+    from sparql_llm import datasets
+
+    flushed = _count_flushed_files(monkeypatch, publication)
+    datasets.set_published("norssit", False)
+    assert len(flushed) == 1
+    assert json.loads((norssit_project.dir.parent / "datasets.json").read_text(encoding="utf-8")) == [
+        {"id": "norssit", "published": False}
+    ]

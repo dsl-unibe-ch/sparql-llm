@@ -14,6 +14,8 @@ import os
 import shutil
 from pathlib import Path
 
+from sparql_llm.indexing.publication import fsync_file, fsync_folder
+
 logger = logging.getLogger("sparql_llm")
 
 META_FILE = "meta.json"
@@ -32,7 +34,9 @@ def _is_valid(path: Path) -> bool:
 def _copy(source: Path, target: Path) -> None:
     tmp = target.with_name(f"{target.name}.tmp{os.getpid()}")
     shutil.copyfile(source, tmp)
+    fsync_file(tmp)
     os.replace(tmp, target)
+    fsync_folder(target.parent)
 
 
 def snapshot_meta(vectordb_path: Path) -> bool:

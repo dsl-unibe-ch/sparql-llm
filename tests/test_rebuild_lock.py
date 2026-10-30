@@ -57,3 +57,23 @@ def test_app_startup_recovers(a):
     with TestClient(main.app):
         pass
     assert not rebuild.lock_file().exists()
+
+
+def test_a_start_that_fails_releases_the_lock(a, monkeypatch: pytest.MonkeyPatch):
+    def full_disk(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(rebuild, "_set_job", full_disk)
+    with pytest.raises(OSError):
+        rebuild.start_rebuild("a")
+    assert not rebuild.lock_file().exists()
+
+
+def test_a_lock_that_cannot_be_written_leaves_no_file(a, monkeypatch: pytest.MonkeyPatch):
+    def full_disk(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(rebuild.os, "write", full_disk)
+    with pytest.raises(OSError):
+        rebuild._acquire_lock("a")
+    assert not rebuild.lock_file().exists()

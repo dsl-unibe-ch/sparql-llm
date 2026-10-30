@@ -35,7 +35,7 @@ class PublicationError(Exception):
     """A publish record cannot be read. Plain message."""
 
 
-def write_durable_json(path: Path, payload: dict[str, Any]) -> None:
+def write_durable_json(path: Path, payload: dict[str, Any] | list[Any]) -> None:
     """Replace ``path`` so that it holds either the old content or all of the new, even after a power loss."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp{os.getpid()}-{threading.get_ident()}")
@@ -52,10 +52,16 @@ def write_durable_json(path: Path, payload: dict[str, Any]) -> None:
             if attempt == 9:
                 raise
             time.sleep(0.1)
-    _fsync_folder(path.parent)
+    fsync_folder(path.parent)
 
 
-def _fsync_folder(folder: Path) -> None:
+def fsync_file(path: Path) -> None:
+    """Flush a finished file to disk. Windows needs a writable handle for this."""
+    with open(path, "r+b") as f:
+        os.fsync(f.fileno())
+
+
+def fsync_folder(folder: Path) -> None:
     """Make a rename durable. Best effort: Windows refuses to open a folder."""
     try:
         fd = os.open(folder, os.O_RDONLY)
@@ -67,6 +73,16 @@ def _fsync_folder(folder: Path) -> None:
         pass
     finally:
         os.close(fd)
+
+
+def sync_files(project_dir: Path) -> None:
+    """Flush what a publish will move: the record must never commit files that a power loss can still empty."""
+    for folder in (project_dir / BUILD_DIR, project_dir / UPLOADED_DIR):
+        if folder.is_dir():
+            for path in folder.iterdir():
+                if path.is_file():
+                    fsync_file(path)
+            fsync_folder(folder)
 
 
 def files_for(project: Project) -> dict[str, list[str]]:
@@ -137,7 +153,7 @@ def write_record(project_dir: Path, record: dict[str, Any]) -> None:
 
 def clear_record(project_dir: Path) -> None:
     record_path(project_dir).unlink(missing_ok=True)
-    _fsync_folder(project_dir)
+    fsync_folder(project_dir)
 
 
 def read_generation(project_dir: Path) -> dict[str, Any] | None:
