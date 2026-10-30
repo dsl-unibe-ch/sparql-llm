@@ -186,7 +186,7 @@ def recover_after_restart() -> None:
     if lock_file().exists():
         logger.warning("Clearing the rebuild lock left by a stopped process: %s", lock_file().read_text(encoding="utf-8"))
         lock_file().unlink(missing_ok=True)
-    # Removal intents are finished here.
+    _finish_removals()
     for project_id in list_dataset_ids():
         try:
             _recover_dataset(project_id)
@@ -196,6 +196,23 @@ def recover_after_restart() -> None:
         _snapshot_vector_store()
     except Exception:
         logger.exception("Could not back up the vector store's meta.json")
+
+
+def _finish_removals() -> None:
+    """Finish the dataset removals a stop cut short. A failure keeps the intent for the next start."""
+    from sparql_llm.datasets import finish_removal, pending_removals
+
+    finished = False
+    for dataset_id in pending_removals():
+        try:
+            drop_index(dataset_id)
+            finish_removal(dataset_id)
+            finished = True
+        except Exception:
+            logger.exception("Could not finish removing dataset %s at startup", dataset_id)
+    if finished:
+        reload_projects()
+        endpoints_metadata.reload()
 
 
 def _recover_dataset(project_id: str) -> None:

@@ -129,6 +129,7 @@ def set_published(dataset_id: str, published: bool) -> None:
 
 #: Removed datasets' folders are moved here, not deleted: a developer can bring one back.
 REMOVED_DIR = "removed"
+REMOVAL_PREFIX = "removing-"
 
 #: Folders of the installation itself in the data folder, whether or not they exist yet.
 RESERVED_IDS = frozenset({REMOVED_DIR, "vectordb", "logs", "ontology", "fastembed_cache"})
@@ -163,21 +164,54 @@ def check_removable(dataset_id: str) -> None:
         )
 
 
+def removal_path(dataset_id: str) -> Path:
+    """The intent to remove a dataset: once written, the removal finishes, at the next start if need be."""
+    return _data_dir() / f"{REMOVAL_PREFIX}{dataset_id}.json"
+
+
+def begin_removal(dataset_id: str) -> None:
+    """Check the dataset may be removed and record the intent, keeping the archive name of an earlier try."""
+    from sparql_llm.indexing.publication import write_durable_json
+
+    check_removable(dataset_id)
+    if removal_path(dataset_id).exists():
+        return
+    archive = f"{REMOVED_DIR}/{dataset_id}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
+    write_durable_json(removal_path(dataset_id), {"dataset": dataset_id, "archive": archive})
+
+
+def finish_removal(dataset_id: str) -> Path | None:
+    """Do what is left of a removal; each step is skipped when already done. Returns the archive, if any.
+
+    It does not check ``check_removable`` again: the dataset passed it, and its folder may be gone by now.
+    """
+    intent = removal_path(dataset_id)
+    archived = _data_dir() / json.loads(intent.read_text(encoding="utf-8"))["archive"]
+    folder = _data_dir() / dataset_id
+    if folder.exists():
+        archived.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(folder), str(archived))
+    entries = _entries()
+    if any(entry["id"] == dataset_id for entry in entries):
+        _write(_data_dir(), [entry for entry in entries if entry["id"] != dataset_id])
+    intent.unlink(missing_ok=True)
+    return archived if archived.exists() else None
+
+
+def pending_removals() -> list[str]:
+    """The datasets whose removal began and did not finish."""
+    return sorted(p.name[len(REMOVAL_PREFIX) : -len(".json")] for p in _data_dir().glob(f"{REMOVAL_PREFIX}*.json"))
+
+
 def remove_dataset(dataset_id: str) -> Path | None:
     """Take a dataset out of the list and move its folder to ``removed/<id>-<time>``.
 
-    Its search index is dropped separately (``rebuild.drop_index``). Saved chats about it
-    stay in the database, hidden: no page lists a dataset that is not in the list.
+    Its search index is dropped separately (``rebuild.drop_index``), between the two steps
+    when both happen. Saved chats about it stay in the database, hidden: no page lists a
+    dataset that is not in the list.
     """
-    check_removable(dataset_id)
-    folder = _data_dir() / dataset_id
-    archived = None
-    if folder.exists():
-        archived = _data_dir() / REMOVED_DIR / f"{dataset_id}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}"
-        archived.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(folder), str(archived))
-    _write(_data_dir(), [entry for entry in _entries() if entry["id"] != dataset_id])
-    return archived
+    begin_removal(dataset_id)
+    return finish_removal(dataset_id)
 
 
 def datasets_for(user: Any) -> list[Project]:

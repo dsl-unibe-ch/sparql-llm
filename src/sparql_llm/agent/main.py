@@ -48,15 +48,15 @@ from sparql_llm.config import env_pins, runtime_settings_path, settings, write_r
 from sparql_llm.datasets import (
     DatasetError,
     add_dataset,
-    check_removable,
+    begin_removal,
     dataset_label,
     dataset_state,
+    finish_removal,
     list_dataset_ids,
-    remove_dataset,
     set_published,
 )
 from sparql_llm.indexing.drift import load_fingerprint
-from sparql_llm.indexing.rebuild import recover_after_restart, stop_rebuilds
+from sparql_llm.indexing.rebuild import publication_pending, recover_after_restart, stop_rebuilds
 from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
 from sparql_llm.project import Project, get_projects
@@ -118,6 +118,10 @@ if settings.auth_enabled:
         save_upload,
         validate_upload,
     )
+
+
+#: A new upload would be swept into the unfinished commit, so nothing changes a dataset until it is done.
+PUBLISH_UNFINISHED = "A publish of this dataset is unfinished. Press Rebuild to finish it first."
 
 
 def is_valid_login_redirect(value: str):
@@ -499,22 +503,24 @@ if settings.auth_enabled:
         body = await request.json()
         if str(body.get("confirm", "")).strip() != dataset_id:
             return JSONResponse({"error": f"Type the dataset id, {dataset_id}, to confirm."}, status_code=422)
+        if publication_pending(dataset_id):
+            return JSONResponse({"error": PUBLISH_UNFINISHED}, status_code=409)
         lock_token = _acquire_lock(dataset_id)
         if not lock_token:
             return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
         try:
-            check_removable(dataset_id)
+            begin_removal(dataset_id)
             # The index goes first, while the dataset is still listed: see drop_index.
             await run_in_threadpool(drop_index, dataset_id)
-            archived = remove_dataset(dataset_id)
+            archived = finish_removal(dataset_id)
         except DatasetError as exc:
             return JSONResponse({"error": str(exc)}, status_code=409)
         except OSError as exc:
-            # Every step can be repeated: a second Remove finishes what this one started.
+            # The intent stays: the next start finishes what this one started, or a second Remove.
             logger.exception("Removal of dataset %s cut short", dataset_id)
             return JSONResponse(
                 {"error": f"Removal incomplete: its index is gone, but its files could not be archived ({exc}). "
-                          "Fix the cause, then press Remove again."},
+                          "It finishes at the next start, or fix the cause and press Remove again."},
                 status_code=500,
             )
         finally:
@@ -652,6 +658,8 @@ if settings.auth_enabled:
             return JSONResponse({"error": "forbidden"}, status_code=403)
         if lock_file().exists():
             return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
+        if publication_pending(project_id):
+            return JSONResponse({"error": PUBLISH_UNFINISHED}, status_code=409)
         content = await file.read(MAX_UPLOAD_BYTES + 1)
         errors = validate_upload(project_id, name, content)
         if errors:
@@ -670,6 +678,8 @@ if settings.auth_enabled:
             return JSONResponse({"error": "forbidden"}, status_code=403)
         if lock_file().exists():
             return JSONResponse({"error": "A rebuild is running; try again when it finishes."}, status_code=409)
+        if publication_pending(project_id):
+            return JSONResponse({"error": PUBLISH_UNFINISHED}, status_code=409)
         try:
             restore_previous(project_id, name)
         except ProjectFileError as exc:

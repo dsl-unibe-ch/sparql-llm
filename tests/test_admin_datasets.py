@@ -214,3 +214,27 @@ def test_a_removal_cut_short_by_the_filesystem_says_so_and_a_retry_finishes(
     assert retry.status_code == 200, retry.text
     assert list_dataset_ids() == ["a"]
     assert not (tmp_path / "b").exists()
+
+
+def test_remove_upload_and_undo_are_refused_while_a_publish_is_unfinished(two, tmp_path: Path, fake_index):
+    """A new upload must not be swept into the old commit, nor a dataset removed under it."""
+    from sparql_llm.indexing.publication import record_path
+
+    client = _client_as(ADMIN)
+    client.post("/admin/datasets/b/unpublish")
+    staged = tmp_path / "b" / "uploaded"
+    staged.mkdir()
+    (staged / "dataset.md").write_text("## Waiting\n\nx\n", encoding="utf-8")
+    record_path(tmp_path / "b").write_text("{}", encoding="utf-8")
+
+    responses = [
+        client.post("/admin/datasets/b/remove", json={"confirm": "b"}),
+        client.post("/admin/project-files/b/dataset.md", files={"file": ("dataset.md", b"## New\n\ny\n", "text/markdown")}),
+        client.post("/admin/project-files/b/dataset.md/undo"),
+    ]
+
+    for response in responses:
+        assert response.status_code == 409, response.text
+        assert "unfinished" in response.json()["error"]
+    assert (staged / "dataset.md").read_text(encoding="utf-8") == "## Waiting\n\nx\n"
+    assert (tmp_path / "b").is_dir() and fake_index == []
