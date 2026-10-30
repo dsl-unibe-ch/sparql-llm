@@ -65,6 +65,12 @@ from sparql_llm.project import BUILD_DIR, Project, ProjectError, discard_build, 
 from sparql_llm.utils import EndpointsMetadataManager, logger
 
 
+#: Set on shutdown: a running rebuild stops at its next checkpoint.
+_stop = threading.Event()
+#: The thread of the last rebuild started.
+_worker: threading.Thread | None = None
+
+
 def job_file(project_id: str) -> Path:
     """A dataset's rebuild status, shared across workers. Written atomically; safe to read at any moment."""
     return Path(settings.data_dir) / project_id / "reindex_job.json"
@@ -176,6 +182,7 @@ def recover_after_restart() -> None:
     """
     from sparql_llm.datasets import list_dataset_ids
 
+    _stop.clear()
     if lock_file().exists():
         logger.warning("Clearing the rebuild lock left by a stopped process: %s", lock_file().read_text(encoding="utf-8"))
         lock_file().unlink(missing_ok=True)
@@ -325,8 +332,32 @@ class RebuildStopped(Exception):
     """A project failed a check: the rebuild stops before the alias swap. Plain message for the admin page."""
 
 
+class RebuildCancelled(Exception):
+    """A shutdown stopped the rebuild before its commit point."""
+
+
 class RebuildPartlyPublished(Exception):
     """A publish passed its commit point and could not finish: Rebuild finishes it. Plain message for the admin page."""
+
+
+def _check_stop() -> None:
+    if _stop.is_set():
+        raise RebuildCancelled
+
+
+def stop_rebuilds(timeout: float = 15.0) -> bool:
+    """Ask a running rebuild to stop and wait for it: True when none is alive afterwards.
+
+    A courtesy that lets a stop finish inside the container's grace period. A publish past
+    its commit point is not stopped, and a thread that does not answer dies with the
+    process: startup recovery is what guarantees a coherent state.
+    """
+    worker = _worker
+    if worker is None or not worker.is_alive():
+        return True
+    _stop.set()
+    worker.join(timeout)
+    return not worker.is_alive()
 
 
 def _project_headline(project: Project, report: dict[str, Any], fingerprint: Fingerprint) -> str:
@@ -457,6 +488,7 @@ def _rebuild(project: Project) -> dict[str, Any]:
 
     # 1. Check every project first: a misconfigured one must not produce a running bot
     #    that answers from the wrong data or schema.
+    _check_stop()
     for project in projects:
         _set_job(project.id, "running", f"{project.label}: checking the configuration…", collection=target)
         checks = run_preflight(project)
@@ -470,6 +502,7 @@ def _rebuild(project: Project) -> dict[str, Any]:
     # 2. Pull the curators' examples, so a rebuild always indexes what they have published.
     #    Every query is executed before it is written; the ones that fail are left out and
     #    reported. This never raises — an unreachable repo leaves the previous corpus in place.
+    _check_stop()
     _set_job(project.id, "running", "Fetching and testing the curators' example queries…", collection=target)
     examples_reports = {p.id: sync_curator_examples(p) for p in projects}
     synced = {pid: r for pid, r in examples_reports.items() if not r.get("skipped")}
@@ -484,6 +517,7 @@ def _rebuild(project: Project) -> dict[str, Any]:
     logger.info("Example sync: %s", examples_summary)
 
     # 3. Describe each endpoint's schema. An unreadable result stops the rebuild.
+    _check_stop()
     for project in projects:
         _set_job(project.id, "running", f"{project.label}: describing the schema…", collection=target)
         try:
@@ -497,6 +531,7 @@ def _rebuild(project: Project) -> dict[str, Any]:
 
     # 4. The query validator's schema and prefixes (each project's prefixes.json), from the
     #    VoID just written. Built aside; the live validator switches only after the swap.
+    _check_stop()
     metadata = EndpointsMetadataManager(projects, auto_init=False)
     try:
         metadata.refresh()
@@ -505,6 +540,7 @@ def _rebuild(project: Project) -> dict[str, Any]:
 
     # 5. The name → URI lists the entity resolver matches against. Never raises: on failure
     #    the previous list stays in use and the result message says so.
+    _check_stop()
     _set_job(project.id, "running", f"{examples_summary}. Collecting entity names…", collection=target)
     entity_reports = {}
     for project in projects:
@@ -522,6 +558,7 @@ def _rebuild(project: Project) -> dict[str, Any]:
         else ""
     )
 
+    _check_stop()
     _set_job(project.id, "running", f"{examples_summary}. Building new index '{target}'…", collection=target)
 
     # Fingerprint BEFORE building so the recorded snapshot can never claim to be newer
@@ -536,9 +573,10 @@ def _rebuild(project: Project) -> dict[str, Any]:
 
     # Each project's docs use its own prefixes.json from next/, written by the refresh above.
     try:
-        doc_count = init_vectordb(collection_name=target, projects=projects)
+        doc_count = init_vectordb(collection_name=target, projects=projects, checkpoint=_check_stop)
         if not doc_count:
             raise RebuildStopped("Indexing produced 0 documents — refusing to swap the alias.")
+        _check_stop()  # The last one: past here a publish is never cancelled.
     except BaseException:
         _drop_unpublished(target, alias, project)
         raise
@@ -691,6 +729,14 @@ def run_rebuild_job(project_id: str, lock_token: str = "") -> None:
     except PublicationError as exc:
         logger.error("%s", exc)
         _set_job(project_id, "failed", _unreadable_record(project_id), error="unreadable-record")
+    except RebuildCancelled:
+        logger.info("Index rebuild of %s stopped by a shutdown", project_id)
+        _set_job(
+            project_id,
+            "failed",
+            "The rebuild was stopped by a shutdown. Nothing changed. Press Rebuild to run it again.",
+            error="cancelled",
+        )
     except RebuildStopped as exc:
         logger.warning("Index rebuild of %s stopped: %s", project_id, exc)
         _set_job(project_id, "failed", f"Rebuild stopped: {exc} The previous index is still serving.", error=str(exc))
@@ -727,5 +773,7 @@ def start_rebuild(project_id: str) -> dict[str, Any]:
         }
 
     _set_job(project_id, "running", "Starting rebuild…")
-    threading.Thread(target=run_rebuild_job, args=(project_id, lock_token), name=f"reindex-{project_id}", daemon=True).start()
+    global _worker
+    _worker = threading.Thread(target=run_rebuild_job, args=(project_id, lock_token), name=f"reindex-{project_id}", daemon=True)
+    _worker.start()
     return {"started": True, "job": read_job(project_id)}

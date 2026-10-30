@@ -56,7 +56,7 @@ from sparql_llm.datasets import (
     set_published,
 )
 from sparql_llm.indexing.drift import load_fingerprint
-from sparql_llm.indexing.rebuild import recover_after_restart
+from sparql_llm.indexing.rebuild import recover_after_restart, stop_rebuilds
 from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
 from sparql_llm.project import Project, get_projects
@@ -165,8 +165,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                     )
                     await session.commit()
                     logger.info(f"🔐 Created initial admin user: {settings.admin_email}")
-    async with mcp_dispatcher.running():
-        yield
+    try:
+        async with mcp_dispatcher.running():
+            yield
+    finally:
+        # A rebuild would otherwise be cut off when the process ends.
+        await run_in_threadpool(stop_rebuilds)
 
 
 def _api_description() -> str:

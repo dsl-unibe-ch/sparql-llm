@@ -1,6 +1,7 @@
 import time
 
 import re
+from collections.abc import Callable
 from pathlib import Path
 
 import httpx
@@ -249,6 +250,7 @@ def init_vectordb(
     collection_name: str | None = None,
     projects: list[Project] | None = None,
     prefixes_map: dict[str, str] | None = None,
+    checkpoint: Callable[[], None] | None = None,
 ) -> int:
     """Build the retrieval index from the SPARQL endpoints.
 
@@ -256,6 +258,7 @@ def init_vectordb(
         collection_name: target Qdrant collection. Defaults to ``settings.docs_collection_name``.
             Pass a versioned name to build a replacement index without touching the live one —
             see :func:`rebuild_index_with_alias`.
+        checkpoint: called before each batch; it raises to stop the build.
 
     Returns:
         The number of documents indexed.
@@ -282,9 +285,12 @@ def init_vectordb(
 
     # Generate embeddings with the fastembed `TextEmbedding` instance and upload directly to Qdrant in batches
     # https://qdrant.tech/documentation/fastembed/fastembed-rerankers/
-    batch_size = 500
+    # Small enough that a shutdown stops the build within the container's grace period.
+    batch_size = 64
     total_docs = len(docs)
     for batch_start in range(0, total_docs, batch_size):
+        if checkpoint:
+            checkpoint()
         batch_end = min(batch_start + batch_size, total_docs)
         batch_docs = docs[batch_start:batch_end]
         # Generate embeddings for this batch
