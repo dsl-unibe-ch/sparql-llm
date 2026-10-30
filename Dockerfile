@@ -30,4 +30,4 @@ ENV PYTHONUNBUFFERED=1 \
 USER app
 EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10m --retries=3 CMD python -c "import os,urllib.request; urllib.request.urlopen(f'http://127.0.0.1:{os.environ.get(\"SERVER_PORT\",\"8000\")}/readyz', timeout=8)"
-CMD ["sh", "-c", "exec uvicorn sparql_llm.agent.main:app --host 0.0.0.0 --port ${SERVER_PORT} --log-config logging.yml"]
+CMD ["sh", "-c", "exec uvicorn sparql_llm.agent.main:app --host 0.0.0.0 --port ${SERVER_PORT} --log-config logging.yml --timeout-graceful-shutdown 10"]

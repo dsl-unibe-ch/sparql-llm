@@ -155,11 +155,11 @@ If you changed the code, build the image yourself instead of pulling it:
 docker compose up -d --build
 ```
 
-## Warning
+## If the app stops during a rebuild
 
-Don't restart, stop or update the app while an index rebuild is running. A rebuild is running when the Search index card on the admin page says so. Wait until it ends. An interrupted rebuild is marked as failed after the restart and changes nothing; start it again.
+You can stop, restart or update the app at any time. A rebuild that is stopped halfway changes nothing: the assistant keeps the current index and files, and your uploads keep waiting. Press **Rebuild** again. If the rebuild had already started switching to the new version, the app finishes the switch when it starts again.
 
 ## Checking the app
 
 - <http://localhost:8000/healthz> answers when the app is alive.
-- <http://localhost:8000/readyz> answers when the app is ready to serve (it fails while the data folder is unreadable).
+- <http://localhost:8000/readyz> answers when the app is ready to serve (it fails while the data folder is unreadable). It can also list a warning such as "1 dataset needs attention": the app is still running, and the admin page says what to do.

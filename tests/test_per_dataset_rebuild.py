@@ -98,6 +98,7 @@ def test_failed_check_of_b_does_not_block_a(two, monkeypatch: pytest.MonkeyPatch
 
 
 def test_second_rebuild_waits_for_the_first(two, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(rebuild, "_worker", None)  # restored after the test: the fake thread must not stay behind
     monkeypatch.setattr(rebuild.threading, "Thread", lambda **kwargs: type("T", (), {"start": lambda self: None})())
 
     assert rebuild.start_rebuild("a")["started"] is True

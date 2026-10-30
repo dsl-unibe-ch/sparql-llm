@@ -117,7 +117,7 @@ On the admin page (`/admin`), pick the dataset in the **Dataset** dropdown, then
 
 1. For each file: press **Upload** and pick it; it uploads straight away. A file with a problem is refused with a message. An accepted file **waits**: the card shows it as "waiting for the next Rebuild", and the assistant keeps using the file in service, even after a server restart. **Download** gives you the waiting file if there is one, else the one in service. Uploaded the wrong file? Upload the right one; it replaces the waiting one.
 2. Press **Check configuration** in the **Search index** card. Each check shows ✓ (fine), ⚠ (a warning; the rebuild still runs) or ✗ (an error; fix it first).
-3. Press **Rebuild index**. It checks again, then describes the endpoint's schema, collects the names and builds the search index, all from the waiting files. Only when everything succeeded does it put the files and the new index in service together. If anything fails, nothing changes: the assistant keeps the old files and index, and your uploads keep waiting.
+3. Press **Rebuild index**. It checks again, then describes the endpoint's schema, collects the names and builds the search index, all from the waiting files. Only when everything succeeded does it put the files and the new index in service together. If anything fails, nothing changes: the assistant keeps the old files and index, and your uploads keep waiting. If the admin page says publishing did not finish, fix the cause (usually a full disk) and press **Rebuild** to finish it. Upload and Remove are refused until then.
 
 A rebuild takes a few minutes. When it finishes, the status line reads like: *"Norssit: Person 10,137 · Group 2,368 · 330 → 40 classes · 6/6 examples OK."*
 
