@@ -1,6 +1,7 @@
 import time
 
 import re
+from pathlib import Path
 
 import httpx
 from bs4 import BeautifulSoup
@@ -17,6 +18,7 @@ from sparql_llm import (
     SparqlVoidShapesLoader,
 )
 from sparql_llm.config import SparqlEndpointLinks, settings
+from sparql_llm.indexing.qdrant_meta import repair_meta
 from sparql_llm.loaders.ontology_profiles_loader import (
     CLASSES_DOC_TYPE,
     OntologyProfilesLoader,
@@ -34,6 +36,10 @@ _DATASET_SECTION = re.compile(r"^##\s+(.+?)\s*$\n(.*?)(?=^##\s|\Z)", re.MULTILIN
 
 # Global instance, metadata loads lazily on first property access
 endpoints_metadata = EndpointsMetadataManager(auto_init=settings.auto_init)
+
+# A kill can truncate Qdrant's meta.json, which only local mode has: repair it before the client reads it.
+if not settings.vectordb_url.startswith(("http", "https")):
+    repair_meta(Path(settings.vectordb_url))
 
 # TODO: Getting `TypeError: cannot pickle '_thread.RLock' object` when doing `QdrantVectorStore.from_existing_collection(client=qdrant_client)`
 qdrant_client = (
