@@ -3,6 +3,8 @@ services:
     image: ${SPARQL_LLM_IMAGE:-ghcr.io/dsl-unibe-ch/sparql-llm}:${SPARQL_LLM_VERSION:-latest}
     build: .
     env_file: .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:8000:8000"
     volumes:

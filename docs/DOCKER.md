@@ -81,6 +81,22 @@ To give every user one shared key, set `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `
 
 Settings an admin saves in the UI (for example the retrieval settings) are stored in `/app/data/settings.runtime.json` inside the data volume. A value set in `.env` always wins over a value saved in the UI.
 
+## What the app may connect to
+
+The app connects to public addresses only: LLM providers, SPARQL endpoints, your homepage, and GitHub for example sync. Addresses on a private network or on the machine itself are refused, and the user sees a message saying so. This protects your network from people who have an account.
+
+To use an Ollama on the same machine:
+
+1. Start Ollama so it listens on more than `127.0.0.1` (`OLLAMA_HOST=0.0.0.0`). Don't publish its port to the internet.
+2. Set `OUTBOUND_ALLOW=host.docker.internal:11434` in `.env`, then run `docker compose up -d`.
+3. On the API Settings page choose Custom, with base URL `http://host.docker.internal:11434/v1` and any text as the API key.
+
+Everyone with an account on your instance can then use that Ollama.
+
+The same setting covers an endpoint or a shared LLM on a private network, including one set in `OPENAI_BASE_URL`. List each one as `host:port`, separated by commas.
+
+`HTTP_PROXY` and `HTTPS_PROXY` are ignored for these connections.
+
 ## Exposing it publicly
 
 By default only your own machine can reach the app. To let others reach it:
