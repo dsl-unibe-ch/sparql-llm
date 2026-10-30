@@ -108,7 +108,7 @@ if settings.auth_enabled:
     from sparql_llm.agent.providers import PROVIDERS, validate_and_list_models
     from sparql_llm.indexing.drift import check_drift
     from sparql_llm.indexing.preflight import run_checks
-    from sparql_llm.indexing.rebuild import lock_file, read_job, start_rebuild
+    from sparql_llm.indexing.rebuild import lock_file, publication_problems, read_job, start_rebuild
     from sparql_llm.project_files import (
         MAX_UPLOAD_BYTES,
         ProjectFileError,
@@ -571,7 +571,8 @@ if settings.auth_enabled:
         # The page polls every few seconds during a rebuild and shows no drift meanwhile:
         # three endpoint queries per poll would only compete with the rebuild's own.
         drift = None if job.get("state") == "running" else await run_in_threadpool(check_drift, project_id)
-        return JSONResponse({"dataset": project_id, "drift": drift, "job": job})
+        problems = (await run_in_threadpool(publication_problems)).get(project_id, [])
+        return JSONResponse({"dataset": project_id, "drift": drift, "job": job, "problems": problems})
 
     @app.post("/admin/reindex", include_in_schema=False)
     async def admin_reindex(
@@ -1484,12 +1485,13 @@ async def healthz() -> dict[str, str]:
 @app.get("/readyz", include_in_schema=False)
 async def readyz() -> JSONResponse:
     """Readiness for the container healthcheck: local state only, no login, no network."""
-    from sparql_llm.agent.health import readiness_checks
+    from sparql_llm.agent.health import readiness_checks, readiness_warnings
 
     failing = {name: reason for name, reason in (await run_in_threadpool(readiness_checks)).items() if reason}
     if failing:
         return JSONResponse({"status": "not ready", "failing": failing}, status_code=503)
-    return JSONResponse({"status": "ready"})
+    warnings = await run_in_threadpool(readiness_warnings)
+    return JSONResponse({"status": "ready", "warnings": warnings} if warnings else {"status": "ready"})
 
 
 #: Remembers the dataset a browser used last, so "/" opens on it.

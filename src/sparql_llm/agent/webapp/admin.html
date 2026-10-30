@@ -748,7 +748,13 @@
               if (!d) return false;
               var running = renderJob(d.job);
               // A failed rebuild's message stays in the banner rather than the drift report.
-              if (!running && !(d.job && d.job.state === 'failed')) renderDrift(d.drift);
+              if (running || (d.job && d.job.state === 'failed')) return running;
+              if (d.problems && d.problems.length) {
+                banner.className = 'idx-banner idx-error';
+                banner.innerHTML = esc(d.problems.join(' '));
+              } else {
+                renderDrift(d.drift);
+              }
               return running;
             })
             .catch(function () { return false; });

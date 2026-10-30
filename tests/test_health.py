@@ -8,6 +8,7 @@ from starlette.testclient import TestClient
 
 from sparql_llm.agent import main
 from sparql_llm.config import settings
+from sparql_llm.indexing import rebuild
 
 
 @pytest.fixture
@@ -67,3 +68,28 @@ def test_readyz_makes_no_network_call(client: TestClient, monkeypatch: pytest.Mo
     monkeypatch.setattr(httpx.HTTPTransport, "handle_request", boom)
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", boom)
     assert client.get("/readyz").status_code == 200
+
+
+@pytest.mark.parametrize(
+    ("problems", "warning"),
+    [
+        ({"secret-dataset": ["x"]}, "1 dataset needs attention"),
+        ({"secret-dataset": ["x", "y"], "other": ["z"]}, "2 datasets need attention"),
+    ],
+)
+def test_readyz_stays_ready_and_counts_problems(client: TestClient, monkeypatch: pytest.MonkeyPatch, problems, warning):
+    monkeypatch.setattr(rebuild, "publication_problems", lambda: problems)
+    resp = client.get("/readyz")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ready", "warnings": [warning]}
+    assert "secret-dataset" not in resp.text
+
+
+def test_readyz_survives_a_failing_problem_check(client: TestClient, monkeypatch: pytest.MonkeyPatch):
+    def broken():
+        raise RuntimeError("no")
+
+    monkeypatch.setattr(rebuild, "publication_problems", broken)
+    resp = client.get("/readyz")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ready"}

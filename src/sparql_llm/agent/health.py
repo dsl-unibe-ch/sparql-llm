@@ -67,6 +67,19 @@ CHECKS = {
 }
 
 
+def readiness_warnings() -> list[str]:
+    """Problems that do not stop the app, as a count: this answers without a login, so no dataset is named."""
+    try:
+        from sparql_llm.indexing.rebuild import publication_problems
+
+        count = len(publication_problems())
+    except Exception:
+        return []
+    if not count:
+        return []
+    return ["1 dataset needs attention" if count == 1 else f"{count} datasets need attention"]
+
+
 def readiness_checks() -> dict[str, str | None]:
     """Each check's result: ``None`` when ok, else a one-line reason."""
     results: dict[str, str | None] = {}

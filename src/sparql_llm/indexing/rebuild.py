@@ -215,6 +215,44 @@ def _finish_removals() -> None:
         endpoints_metadata.reload()
 
 
+def publication_problems() -> dict[str, list[str]]:
+    """Per dataset, what a stop or a failure left unfinished: plain messages, nothing when fine.
+
+    Local state only, cheap enough for the health check. Only one read of the aliases and
+    collections, however many datasets there are.
+    """
+    from sparql_llm.datasets import dataset_state, list_dataset_ids, pending_removals
+    from sparql_llm.project import project_problems
+
+    problems: dict[str, list[str]] = {}
+    for dataset_id in pending_removals():
+        problems.setdefault(dataset_id, []).append("Removing this dataset did not finish. It will be retried at the next start.")
+    aliases = {a.alias_name: a.collection_name for a in qdrant_client.get_aliases().aliases}
+    existing = set(_collections())
+    broken = project_problems()
+    alive = _worker is not None and _worker.is_alive() and lock_file().exists()
+    for position, project_id in enumerate(list_dataset_ids()):
+        if alive and running_dataset() == project_id:
+            continue  # Its record and index change under this check, and the job says what is happening.
+        found: list[str] = []
+        if publication_pending(project_id):
+            found.append("Publishing did not finish. Press Rebuild to finish it.")
+        elif project_id not in broken and dataset_state(project_id) != "new":
+            alias = alias_for(SimpleNamespace(id=project_id))  # type: ignore[arg-type]
+            # As collection_for: the first dataset may still be served by the single-dataset index.
+            legacy = settings.docs_collection_name if position == 0 else alias
+            generation = read_generation(_project_dir(project_id))
+            if not {alias, legacy} & (aliases.keys() | existing):
+                found.append("The search index is missing. Press Rebuild.")
+            elif generation and generation.get("collection") != aliases.get(alias):
+                found.append("The search index does not match the published files. Press Rebuild.")
+        if read_job(project_id).get("state") in ("running", "swapping"):
+            found.append("A rebuild is marked as running, but nothing is running.")
+        if found:
+            problems.setdefault(project_id, []).extend(found)
+    return problems
+
+
 def _recover_dataset(project_id: str) -> None:
     try:
         record = read_record(_project_dir(project_id))
