@@ -2,139 +2,75 @@
 
 # ✨ SPARQL query generation with LLMs 🦜
 
-[![PyPI - Version](https://img.shields.io/pypi/v/sparql-llm.svg?logo=pypi&label=PyPI&logoColor=silver)](https://pypi.org/project/sparql-llm/)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/sparql-llm.svg?logo=python&label=Python&logoColor=silver)](https://pypi.org/project/sparql-llm/)
-[![Tests](https://github.com/sib-swiss/sparql-llm/actions/workflows/test.yml/badge.svg)](https://github.com/sib-swiss/sparql-llm/actions/workflows/test.yml)
+[![Tests](https://github.com/dsl-unibe-ch/sparql-llm/actions/workflows/test.yml/badge.svg)](https://github.com/dsl-unibe-ch/sparql-llm/actions/workflows/test.yml)
+[![Docker image](https://github.com/dsl-unibe-ch/sparql-llm/actions/workflows/docker.yml/badge.svg)](https://github.com/dsl-unibe-ch/sparql-llm/actions/workflows/docker.yml)
 
 </div>
 
-This project provides tools to enhance the capabilities of Large Language Models (LLMs) in generating [SPARQL](https://www.w3.org/TR/sparql11-overview/) queries for specific endpoints:
+A self-hostable chat assistant that turns natural-language questions into [SPARQL](https://www.w3.org/TR/sparql11-overview/) queries, runs them and explains the results. One instance serves one or more datasets, each backed by a SPARQL endpoint.
 
-- a complete **chat web service** available at **[expasy.org/chat](https://expasy.org/chat)**
-- a **MCP server** exposing tools at **[chat.expasy.org/mcp](https://chat.expasy.org/mcp)**
-- **reusable components** published as the **[`sparql-llm`](https://pypi.org/project/sparql-llm/)** pip package
+This is the [Data Science Lab (University of Bern)](https://www.dsl.unibe.ch/) fork of SIB's [sparql-llm](https://github.com/sib-swiss/sparql-llm). It runs the **Swiss Elites** assistant at **[swiss-elites.dsl.unibe.ch](https://swiss-elites.dsl.unibe.ch)**, over the [Elites suisses](https://elites-suisses.lod4hss.org) knowledge graph. The fork adds what curators need to run their own instance:
 
-The system integrates Retrieval-Augmented Generation (RAG) and SPARQL query validation through endpoint schemas, to ensure more accurate and relevant query generation on large scale knowledge graphs.
+- **Datasets managed in the browser.** Curators add a dataset, upload its files, press **Check** and **Rebuild** on the `/admin` page. They never touch the code or the server.
+- **Accounts.** Login, invitations and roles. The first administrator comes from `.env`.
+- **Bring your own LLM key.** Each user can enter an OpenAI-compatible key and model, or the operator sets one for everyone. The app runs without an LLM and says so in the chat.
+- **Docker image.** A single container with an embedded vector store, published to `ghcr.io/dsl-unibe-ch/sparql-llm`.
+- **Crash-safe rebuilds.** A rebuild that is stopped or killed halfway changes nothing. One that had already started publishing finishes when the app starts again.
+- **Outbound policy.** URLs that users or curators enter can't reach private, loopback or link-local addresses, even through a redirect or a DNS change. The operator can allow specific private addresses with `OUTBOUND_ALLOW`.
+- **Health endpoints.** `/healthz` for liveness and `/readyz` for readiness, both without login.
 
-The components are designed to work either independently or as part of a full chat-based system that can be deployed for a set of SPARQL endpoints. It **requires endpoints to include metadata** such as [SPARQL query examples](https://github.com/sib-swiss/sparql-examples) and endpoint descriptions using the [Vocabulary of Interlinked Datasets (VoID)](https://www.w3.org/TR/void/), which can be automatically generated using the [void-generator](https://github.com/JervenBolleman/void-generator).
+The retrieval-augmented generation (RAG) and query validation come from upstream. The app indexes each endpoint's query examples, its [VoID](https://www.w3.org/TR/void/) schema (as ShEx shapes) and its ontology. It then validates each generated query against the schema and asks the LLM to fix any problems.
 
-## 🌈 Features
+## 🐳 Self-hosting with Docker
 
-- **Metadata Extraction**: Functions to extract and load relevant metadata from SPARQL endpoints. These loaders are compatible with [LangChain](https://python.langchain.com) but are flexible enough to be used independently, providing metadata as JSON for custom vector store integration.
-- **SPARQL Query Validation**: A function to automatically parse and validate federated SPARQL queries against the VoID description of the target endpoints.
-- **MCP server** with tools to help LLM write SPARQL queries for a set of endpoints
-- **Deployable Chat System**: A reusable and containerized system for deploying an LLM-based chat service with a web UI, API, and vector database. This system helps users write SPARQL queries by leveraging endpoint metadata (WIP).
-- **Live Example**: Configuration for **[expasy.org/chat](https://expasy.org/chat)**, an LLM-powered chat system supporting SPARQL query generation for endpoints maintained by the [SIB](https://www.sib.swiss/).
+Requirements: Docker with Compose, about 4 GB of RAM and 5 GB of disk. You don't need Python or Node.js.
 
-> [!TIP]
->
-> You can quickly check if an endpoint contains the expected metadata at [sib-swiss.github.io/sparql-editor/check](https://sib-swiss.github.io/sparql-editor/check)
+```sh
+cp .env.example .env      # fill in AUTH_SECRET, ADMIN_EMAIL, ADMIN_PASSWORD
+docker compose up -d
+```
+
+Then open <http://localhost:8000> and log in as the administrator. The first start downloads an embedding model of about 2 GB, so allow up to 30 minutes.
+
+- The app listens on `127.0.0.1:8000` only. Put a reverse proxy in front of it for public access.
+- Data lives in the `sparql-llm-data` volume (`/app/data`) and the model in `sparql-llm-cache` (`/cache`).
+- Images are published from `vX.Y.Z` tags. Pin one with `SPARQL_LLM_VERSION` in `.env`, or run `docker compose up -d --build` to build from source.
+
+The guides:
+
+- [`docs/DOCKER.md`](docs/DOCKER.md) is the step-by-step guide for curators. It covers users, LLM keys, what the app may connect to, the reverse proxy, backup and restore, and updating.
+- [`docs/ONBOARDING.md`](docs/ONBOARDING.md) explains how to add a SPARQL endpoint: the files a dataset needs, writing examples, and Upload, Check and Rebuild.
+
+## ⚙️ Configuration
+
+Settings are read in this order, and the first one found wins:
+
+1. Environment variables and `.env`. See [`.env.example`](.env.example) for the documented ones.
+2. `<data_dir>/settings.runtime.json`, which the admin page writes when you save settings.
+3. An install settings file named by `SETTINGS_FILEPATH`. One example is [`data/swiss-elites-settings.json`](data/swiss-elites-settings.json).
+4. The defaults in [`src/sparql_llm/config.py`](src/sparql_llm/config.py).
+
+The app refuses to start if a settings file is unreadable. Embeddings are computed locally with fastembed (`intfloat/multilingual-e5-large`). There is no default LLM: set `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `DEFAULT_LLM_MODEL`, or let users bring their own key.
 
 ## 🔌 MCP server
 
-The server exposes a [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) endpoint to access [biodata resources](https://www.expasy.org/) at the [SIB](https://www.sib.swiss/), through their [SPARQL](https://www.w3.org/TR/sparql12-query/) endpoints, such as UniProt, Bgee, OMA, SwissLipids, Cellosaurus at **[chat.expasy.org/mcp](https://chat.expasy.org/mcp)**
+Each published dataset is also served as a [Model Context Protocol](https://modelcontextprotocol.io/) server at `/mcp/<dataset-id>`. Bare `/mcp` serves the first dataset. Its tools retrieve relevant query examples and class schemas, and run a SPARQL query on the dataset's endpoint. To run the MCP server on its own during development, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-### 🛠️ Available tools
-
-- **📝 Retrieve relevant documents** (query examples and classes schema) to help writing SPARQL queries to access SIB biodata resources
-  - Arguments:
-    - `question` (string): the user's question
-    - `potential_classes` (list[string]): high level concepts and potential classes that could be found in the SPARQL endpoints
-    - `steps` (list[string]): split the question in standalone smaller parts if relevant
-- **🏷️ Retrieve relevant classes schema** to help writing SPARQL queries to access SIB biodata resources
-  - Arguments:
-    - `classes` (list[string]): high level concepts and potential classes that could be found in the SPARQL endpoints
-- 📡  **Execute a SPARQL query** against a SPARQL endpoint
-  - Arguments:
-    - `query` (string): a valid SPARQL query string
-    - `endpoint` (string): the SPARQL endpoint URL to execute the query against
-
-### ⚡️ Connect client to MCP server
-
-Follow the instructions of your client, and use the URL of the public server: **https://chat.expasy.org/mcp**
-
-For example, for GitHub Copilot in VSCode, to add a new MCP server through the VSCode UI:
-
-- [x] Open side panel chat (`ctrl+shift+i` or `cmd+shift+i`), and make sure the mode is set to `Agent` in the bottom right
-- [x] Open command palette (`ctrl+shift+p` or `cmd+shift+p`), and search for `MCP: Open User Configuration`, this will open a `mcp.json` file
-
-#### 📡 Use streamable HTTP server
-
-Connect to a running streamable HTTP MCP server, such as the publicly available [chat.expasy.org/mcp](https://chat.expasy.org/mcp).
-
-In your VSCode `mcp.json` you should have the following:
+## 🧑‍💻 Development
 
 ```sh
-{
-	"servers": {
-		"expasy-mcp-http": {
-			"url": "https://chat.expasy.org/mcp/",
-			"type": "http"
-		}
-	}
-}
+uv sync --extra agent
+uv run --extra agent pytest
+uv run --extra agent --env-file .env uvicorn src.sparql_llm.agent.main:app --port 8000 --log-config logging.yml --reload
 ```
 
-#### ⌨️ Use stdio transport
+The chat UI lives in `chat-with-context/`. Rebuild it with `npm i && npm run build:demo` after changing it. More detail is in [`CONTRIBUTING.md`](CONTRIBUTING.md), and [`system_architecture.md`](system_architecture.md) walks through a question end to end. That file was written in August 2026, before Docker and multi-dataset support, so some details there are out of date.
 
-```sh
-uvx sparql-llm
-```
-
-Optionally you can provide the path to a custom settings JSON file to configure the server (e.g. the list of endpoints that will be indexed and available through the server), see the [`Settings` class](https://github.com/sib-swiss/sparql-llm/blob/main/src/sparql_llm/config.py) for detailed available settings.
-
-Example settings file for your MCP server deployment:
-
-```json
-{
-    "app_org": "Your organization",
-    "app_topics": "genes, proteins, lipids, chemical reactions, and metabolomics data",
-    "endpoints" : [
-        {
-            "label": "UniProt",
-            "endpoint_url": "https://sparql.uniprot.org/sparql/",
-            "description": "UniProt is a comprehensive resource for protein sequence and annotation data."
-        },
-        {
-            "label": "Bgee",
-            "description": "Bgee is a database for retrieval and comparison of gene expression patterns across multiple animal species.",
-            "endpoint_url": "https://www.bgee.org/sparql/",
-            "homepage_url": "https://www.bgee.org/"
-        }
-    ]
-}
-```
-
-Example `mcp.json` file to add and configure the MCP server in a client (e.g. VSCode):
-
-```json
-{
-  "servers": {
-    "expasy-mcp": {
-      "type": "stdio",
-      "command": "uvx",
-      "env": {
-				"SETTINGS_FILEPATH": "/Users/you/sparql-mcp.json"
-			},
-      "args": [
-        "sparql-llm"
-      ]
-    }
-  }
-}
-```
-
-> [!IMPORTANT]
->
-> Click on `Start` just on top of `"openroute-mcp"` to start the connection to the MCP server.
->
-> You can click the wrench and screwdriver button 🛠️ (`Configure Tools...`) to enable/disable specific tools
-
-> [!NOTE]
->
-> More details available in [the VSCode MCP official docs](https://code.visualstudio.com/docs/copilot/chat/mcp-servers).
+The agent pipeline is `extract → resolve_entities → retrieve → call_model → validate`. Its nodes are in `src/sparql_llm/agent/nodes/`. Indexing, publishing and crash recovery are in `src/sparql_llm/indexing/`.
 
 ## 📦️ Reusable components
+
+These components come from upstream and work on their own. The PyPI package is SIB's release, not this fork.
 
 ### Installation
 
@@ -270,98 +206,9 @@ issues = validate_sparql_with_void(sparql_query, "https://sparql.omabrowser.org/
 print("\n".join(issues))
 ```
 
-## 🚀 Complete chat system
+## 🧑‍🏫 Upstream tutorial and benchmarks
 
-> [!WARNING]
->
-> To deploy the complete chat system right now you will need to fork/clone this repository, change the configuration in `src/sparql-llm/config.py` and `compose.yml`, then deploy with docker/podman compose. It can easily be adapted to use any LLM served through an OpenAI-compatible API.
->
-
-Requirements: Docker, nodejs (to build the frontend), and optionally [`uv`](https://docs.astral.sh/uv/getting-started/installation/) if you want to run scripts outside of docker.
-
-1. Explore and change the system configuration in `src/sparql-llm/config.py`
-
-2. Create a `.env` file at the root of the repository to provide secrets and API keys:
-
-   ```sh
-   CHAT_API_KEY=NOT_SO_SECRET_API_KEY_USED_BY_FRONTEND_TO_AVOID_SPAM_FROM_CRAWLERS
-   LOGS_API_KEY=SECRET_PASSWORD_TO_EASILY_ACCESS_LOGS_THROUGH_THE_API
-
-   OPENROUTER_API_KEY=sk-YYY
-   OPENAI_API_KEY=sk-proj-YYY
-
-   LANGFUSE_HOST=https://cloud.langfuse.com
-   LANGFUSE_PUBLIC_KEY=
-   LANGFUSE_SECRET_KEY=
-   ```
-
-3. Optionally, if you made changes to it, build the chat UI webpage:
-
-   ```sh
-   cd chat-with-context
-   npm i
-   npm run build:demo
-   cd ..
-   ```
-
-   > You can change the UI around the chat in `chat-with-context/demo/index.html`
-
-4. **Start** the app (single container, embedded vector store) with docker compose, after copying `.env.example` to `.env` and filling it in:
-
-   ```bash
-   docker compose up
-   ```
-
-   * Chat web UI available at http://localhost:8000
-   * OpenAPI Swagger UI available at http://localhost:8000/docs
-
-   > Persistent data lives in the `sparql-llm-data` docker volume (mounted at `/app/data`) and the downloaded embedding model in `sparql-llm-cache` (mounted at `/cache`). The port is bound to `127.0.0.1` only: put a reverse proxy in front for public access.
-   >
-   > Curators who self-host: see the step-by-step guide in [`docs/DOCKER.md`](docs/DOCKER.md).
-
-> [!NOTE]
->
-> Query the chat API:
->
-> ```sh
-> curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"messages": [{"role": "user", "content": "What is the HGNC symbol for the P68871 protein?"}], "model": "mistralai/mistral-small-latest", "stream": true}'
-> ```
-
-> [!WARNING]
->
-> **Experimental entities indexing**: it can take a lot of time to generate embeddings for millions of entities. So we recommend to run the script to generate embeddings on a machine with GPU (does not need to be a powerful one, but at least with a GPU, checkout [fastembed GPU docs](https://qdrant.github.io/fastembed/examples/FastEmbed_GPU/) to install the GPU drivers and dependencies)
->
-> ```sh
-> docker compose up vectordb -d
-> VECTORDB_URL=http://localhost:6334 nohup uv run --extra gpu src/sparql_llm/indexing/index_entities.py --gpu &
-> ```
->
->Then move the entities collection containing the embeddings in `data/qdrant/collections/entities` before starting the stack
-
-### 🥇 Benchmarks
-
-There are a few benchmarks available for the system:
-
-- The `tests/benchmark.py` script will run a list of questions and compare their results to a reference SPARQL queries, with and without query validation, against a list of LLM providers. You will need to change the list of queries if you want to use it for different endpoints. You will need to start the stack in development mode to run it:
-
-  ```sh
-  uv run --env-file .env tests/benchmark.py
-  ```
-
-  > It takes time to run and will log the output and results in `data/benchmarks`
-
-- Follow [these instructions](tests/text2sparql/README.md) to run the `Text2SPARQL Benchmark`.
-
-- For biodata benchmark:
-
-  ```sh
-  docker compose up -d
-  VECTORDB_URL=http://localhost:6334 uv run tests/benchmark_biodata.py
-  ```
-
-## 🧑‍🏫 Tutorial
-
-There is a step by step tutorial to show how a LLM-based chat system for generating SPARQL queries can be easily built here: https://sib-swiss.github.io/sparql-llm
+SIB's step-by-step tutorial on building such a chat system is at https://sib-swiss.github.io/sparql-llm. Their benchmark scripts (`tests/benchmark*.py`, [`tests/text2sparql`](tests/text2sparql/README.md)) are kept from upstream. They target the SIB biodata endpoints and still assume upstream's separate Qdrant service.
 
 ## 🧑‍💻 Contributing
 
