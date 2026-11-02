@@ -230,7 +230,8 @@ async def validate_and_list_models(
         resp.raise_for_status()
         data = resp.json()
 
-        raw_models: list[dict] = data.get("data", [])
+        # Ollama with no model pulled sends "data": null.
+        raw_models: list[dict] = data.get("data") or []
         model_ids: list[str] = sorted(
             m["id"] for m in raw_models if _is_chat_model(m, provider)
         )

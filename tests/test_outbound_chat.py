@@ -156,3 +156,15 @@ def test_a_refusal_in_tools_mode_does_not_blame_the_model():
 
     payload = json.loads(asyncio.run(collect())[0].removeprefix("data: "))
     assert payload["data"][0]["content"] == f"⚠️ {CHAT_REFUSED_MESSAGE}"
+
+
+def test_a_server_with_no_models_lists_none(monkeypatch):
+    """Ollama with no model pulled answers {"object": "list", "data": null}."""
+    from sparql_llm.agent import providers
+
+    def no_models(purpose, **kwargs):
+        transport = httpx.MockTransport(lambda request: httpx.Response(200, json={"object": "list", "data": None}))
+        return httpx.AsyncClient(transport=transport, **kwargs)
+
+    monkeypatch.setattr(providers, "guarded_async_client", no_models)
+    assert asyncio.run(validate_and_list_models("http://host.docker.internal:11434/v1", "k", "custom")) == []
