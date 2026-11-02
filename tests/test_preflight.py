@@ -90,3 +90,16 @@ def test_failing_example_is_warning_not_error(norssit_project):
     assert results["examples"].status == "warning"
     assert "Find a person by name" in results["examples"].message
     assert "5/6" in results["examples"].message
+
+
+def test_the_placeholder_endpoint_from_add_dataset_is_one_plain_error(norssit_project):
+    from sparql_llm.project import PLACEHOLDER_ENDPOINT
+
+    def never(query, endpoint_url, **kwargs):
+        raise AssertionError("the placeholder endpoint must not be queried")
+
+    project = norssit_project.model_copy(update={"endpoint_url": PLACEHOLDER_ENDPOINT})
+    results = run_preflight(project, fetch=never)
+    assert len(results) == 1
+    assert (results[0].step, results[0].status) == ("endpoint", "error")
+    assert "placeholder" in results[0].message and "Upload your own project.json" in results[0].message

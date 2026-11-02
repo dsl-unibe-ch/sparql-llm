@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from sparql_llm.indexing.sync_examples import parse_examples
-from sparql_llm.project import UPLOADED_DIR, Project
+from sparql_llm.project import PLACEHOLDER_ENDPOINT, UPLOADED_DIR, Project
 
 FILE_NAMES = ("project.json", "dataset.md", "examples.md")
 MAX_UPLOAD_BYTES = 1_000_000
@@ -197,6 +197,15 @@ def list_files(project_id: str) -> list[dict[str, Any]]:
                 "has_previous": (directory / f"{name}.prev").exists(),
                 # Uploaded and not live yet: the next successful Rebuild makes it live.
                 "pending": (directory / UPLOADED_DIR / name).is_file(),
+                # The minimal project.json Add dataset staged, which nobody has replaced yet.
+                "starter": name == "project.json" and _is_starter(directory / UPLOADED_DIR / name),
             }
         )
     return files
+
+
+def _is_starter(path: Path) -> bool:
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("endpoint_url") == PLACEHOLDER_ENDPOINT
+    except (OSError, ValueError, AttributeError):
+        return False

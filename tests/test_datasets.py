@@ -91,3 +91,20 @@ def test_upload_reusing_another_endpoint_is_refused(use_projects):
     assert validate_upload("norssit", "project.json", content) == [
         "endpoint_url: is already used by dataset 'swiss'. Each dataset needs its own endpoint."
     ]
+
+
+def test_the_staged_project_file_of_a_new_dataset_is_listed_as_a_starter(swiss_project):
+    from sparql_llm.datasets import add_dataset
+    from sparql_llm.project_files import list_files, save_upload
+
+    add_dataset("norssit", "Norssit")
+    listed = {f["name"]: f for f in list_files("norssit")}
+    assert listed["project.json"]["pending"] is True
+    assert listed["project.json"]["starter"] is True
+    assert listed["dataset.md"]["starter"] is False
+
+    real = {"id": "norssit", "label": "Norssit", "endpoint_url": NORSSIT}
+    save_upload("norssit", "project.json", json.dumps(real).encode("utf-8"), "curator@example.org")
+    listed = {f["name"]: f for f in list_files("norssit")}
+    assert listed["project.json"]["pending"] is True
+    assert listed["project.json"]["starter"] is False

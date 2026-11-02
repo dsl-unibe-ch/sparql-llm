@@ -16,7 +16,7 @@ import httpx
 
 from sparql_llm.indexing.sync_examples import parse_examples
 from sparql_llm.outbound import DestinationRefused
-from sparql_llm.project import Project, graph_pattern
+from sparql_llm.project import PLACEHOLDER_ENDPOINT, Project, graph_pattern
 from sparql_llm.utils import query_sparql
 
 STEPS = ("endpoint", "graphs", "entities", "files", "examples")
@@ -56,6 +56,13 @@ def _ask(project: Project, query: str, fetch: Callable[..., Any]) -> bool:
 
 def _check_endpoint(project: Project, fetch: Callable[..., Any]) -> CheckResult:
     url = project.endpoint_url
+    if url.rstrip("/") == PLACEHOLDER_ENDPOINT:
+        return CheckResult(
+            "endpoint",
+            "error",
+            f"{project.label}: project.json still has the placeholder endpoint {url} that Add dataset wrote. "
+            "Upload your own project.json with the dataset's endpoint_url.",
+        )
     try:
         has_data = _ask(project, "ASK { ?s ?p ?o }", fetch)
     except Exception as exc:

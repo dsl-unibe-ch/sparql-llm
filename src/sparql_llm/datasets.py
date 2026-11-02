@@ -17,12 +17,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from sparql_llm.project import PROJECT_FILE, UPLOADED_DIR, Project
+from sparql_llm.project import PLACEHOLDER_ENDPOINT, PROJECT_FILE, UPLOADED_DIR, Project
 
 DATASETS_FILE = "datasets.json"
 _ID = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-#: Staged for a new dataset until its curator uploads the real project.json.
-PLACEHOLDER_ENDPOINT = "https://example.org/sparql"
 
 
 class DatasetError(Exception):

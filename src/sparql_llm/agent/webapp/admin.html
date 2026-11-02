@@ -588,7 +588,9 @@
             html += '<div class="pf-project">' + esc(pid) + '</div>';
             projects[pid].forEach(function (f) {
               var base = '/admin/project-files/' + encodeURIComponent(pid) + '/' + encodeURIComponent(f.name);
-              var meta = f.pending
+              var meta = f.starter
+                ? 'starter file with a placeholder endpoint: upload your own'
+                : f.pending
                 ? '<strong>uploaded' + (f.uploaded_by ? ' by ' + esc(f.uploaded_by) : '') + ', waiting for the next Rebuild</strong>'
                 : f.exists ? 'in service since ' + esc(f.modified) : 'not uploaded yet';
               html += '<div class="pf-row">'

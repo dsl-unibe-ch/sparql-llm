@@ -34,7 +34,7 @@ An **admin** adds the dataset; no restart, no developer and no server change is 
 
 1. On the admin page (`/admin`), open the **Dataset** dropdown at the top of the dataset section and choose its last entry, **＋ Add a dataset…**. Fill in **Id** (lowercase letters, digits and dashes, e.g. `norssit`) and **Name** (shown to users, e.g. `Norssit`), and press **Add dataset**.
 2. The dataset is selected and shows 🔴 **new** in the dropdown. Every card of the dataset section (Project files, Search index) works on the dataset selected in that dropdown; the cards under **For all datasets** (Retrieval settings, Users) do not. The dots in the dropdown: 🟢 published, 🟡 ready, not published, 🔴 new.
-3. Upload its three files, then Check and Rebuild (section 6). Rebuilding one dataset never touches another dataset's files or index, and a failed rebuild changes nothing.
+3. Upload its three files, then Check and Rebuild (section 6). Until you upload `project.json`, the card lists it as a "starter file with a placeholder endpoint": Add dataset writes one so the dataset has a name, and Check refuses it. Rebuilding one dataset never touches another dataset's files or index, and a failed rebuild changes nothing.
 4. After the first successful rebuild the dataset is **ready, not published**. Admins and curators see it in the chat's dataset list, marked "only visible to curators", and can try it there. Ordinary users don't see it.
 5. When it answers well, an admin presses **Publish**. Every user sees it from then on. **Unpublish** takes it out of their list again; nothing is deleted. A rebuild never publishes a dataset on its own.
 
