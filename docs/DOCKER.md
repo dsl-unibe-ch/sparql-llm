@@ -87,7 +87,9 @@ The app connects to public addresses only: LLM providers, SPARQL endpoints, your
 
 To use an Ollama on the same machine:
 
-1. Start Ollama so it listens on more than `127.0.0.1` (`OLLAMA_HOST=0.0.0.0`). Don't publish its port to the internet.
+1. Start Ollama.
+   - With Docker Desktop (Windows, macOS), leave Ollama as it is: the app reaches it through `host.docker.internal` even though Ollama listens only on `127.0.0.1`. Don't set `OLLAMA_HOST=0.0.0.0`; that opens Ollama to your whole network.
+   - With Docker Engine on Linux, the app arrives from the Docker bridge, so Ollama has to listen there: `OLLAMA_HOST=172.17.0.1` (check the address with `ip addr show docker0`). Keep port 11434 closed in your firewall. (Not yet tested on a Linux host.)
 2. Set `OUTBOUND_ALLOW=host.docker.internal:11434` in `.env`, then run `docker compose up -d`.
 3. On the API Settings page choose Custom, with base URL `http://host.docker.internal:11434/v1` and any text as the API key.
 
