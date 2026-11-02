@@ -31,25 +31,22 @@ jobs:
     - name: Run tests
       run: uv run --extra agent pytest
 
-  generate-changelog:
-    name: 🏔️ Generate changelog for the GitHub release
+  release:
+    name: 🏔️ Publish the GitHub release
     if: startsWith(github.ref, 'refs/tags/')
+    needs: tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
 
-      - name: Generate a changelog
-        uses: orhun/git-cliff-action@v4
-        id: git-cliff
-        with:
-          config: cliff.toml
-          args: -vv --latest --strip header
-        env:
-          OUTPUT: CHANGES.md
+      # Release notes are written by hand, one file per tag: docs/releases/<tag>.md
+      - name: Check the release notes exist
+        run: test -f "docs/releases/${{ github.ref_name }}.md" || { echo "::error::Write docs/releases/${{ github.ref_name }}.md before tagging"; exit 1; }
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          body_path: CHANGES.md
+          body_path: docs/releases/${{ github.ref_name }}.md
+          prerelease: ${{ contains(github.ref_name, '-') }}

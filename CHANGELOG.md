@@ -1,5 +1,9 @@
 # 🪵 Changelog
 
+## [0.2.0](https://github.com/dsl-unibe-ch/sparql-llm/releases/tag/v0.2.0) - 2026-11-02
+
+First release of the Data Science Lab (University of Bern) fork: datasets managed on the admin page, accounts, your own LLM key, a Docker image, crash-safe rebuilds and an outbound policy. See [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md). Release notes for this fork live in `docs/releases/`; the entries below are upstream's.
+
 ## [0.1.4](https://github.com/sib-swiss/sparql-llm/compare/v0.1.3..v0.1.4) - 2026-01-21
 
 ### 🚜 Refactor
