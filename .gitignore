@@ -36,3 +36,6 @@ PIPELINE_AND_CURATORS.md
 
 # Data volume backups made with docs/DOCKER.md
 sparql-llm-data.tgz
+
+# Session handoffs (unified-chat) stay local
+HANDOFF-*.md
