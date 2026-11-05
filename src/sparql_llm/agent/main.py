@@ -61,7 +61,7 @@ from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
 from sparql_llm.outbound import CHAT_REFUSED_MESSAGE, REFUSED_MESSAGE, DestinationRefused, find_refusal
 from sparql_llm.project import Project, get_projects
-from sparql_llm.utils import logger, strip_sparql_stream, strip_think_stream
+from sparql_llm.utils import logger, normalize_typography, strip_sparql_stream, strip_think_stream
 
 if settings.sentry_url:
     import sentry_sdk
@@ -1161,7 +1161,8 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
                 # it would open an empty "Thought process" step.
                 if isinstance(content, str) and content and getattr(msg, "type", "") != "tool":
                     think_buffer += content
-                    visible = strip_think_stream(think_buffer)
+                    # One character for one, so emitted_len stays a valid offset.
+                    visible = normalize_typography(strip_think_stream(think_buffer))
                     if natural_language_only:
                         visible = strip_sparql_stream(visible)
                     if len(visible) <= emitted_len:
@@ -1340,7 +1341,8 @@ async def chat(
         callbacks=langfuse_handler,  # type: ignore
     )
     inputs: Any = {
-        "messages": [(msg.role, msg.content) for msg in chat_request.messages[-10:]],
+        # Earlier answers come back from the client, and users paste names from them.
+        "messages": [(msg.role, normalize_typography(msg.content)) for msg in chat_request.messages[-10:]],
     }
 
     # The MCP tool-calling agent, or the retrieval + validation pipeline.

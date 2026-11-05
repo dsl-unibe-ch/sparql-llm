@@ -16,7 +16,22 @@ from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.agent.utils import count_tool_rounds, fenced, get_msg_text, load_chat_model
 from sparql_llm.config import Configuration
 from sparql_llm.mcp_server import agent_connection
-from sparql_llm.utils import extract_think_blocks, strip_think_blocks
+from sparql_llm.utils import extract_think_blocks, normalize_typography, normalize_typography_deep, strip_think_blocks
+
+
+def normalize_message_typography(msg: AIMessage) -> None:
+    """Plain hyphens and spaces in the model's text and tool-call arguments.
+
+    The stored message is what validation extracts SPARQL from and what the next turn
+    sees, so a U+2011 left there turns into a FILTER that matches nothing.
+    """
+    # Text, or a list of content blocks (strings and {"type": "text", "text": …} dicts).
+    msg.content = normalize_typography_deep(msg.content)
+    for call in getattr(msg, "tool_calls", None) or []:
+        call["args"] = normalize_typography_deep(call.get("args", {}))
+    for call in getattr(msg, "invalid_tool_calls", None) or []:
+        if isinstance(call.get("args"), str):
+            call["args"] = normalize_typography(call["args"])
 
 
 async def call_model(state: State, config: RunnableConfig) -> dict[str, list[AnyMessage] | bool]:
@@ -91,6 +106,7 @@ async def call_model(state: State, config: RunnableConfig) -> dict[str, list[Any
     # ``ainvoke``, not ``invoke``: a blocking call would stall the event loop that
     # streams the response, freezing the chat until the model returns.
     response_msg = await model.ainvoke(message_value, config)
+    normalize_message_typography(response_msg)
 
     # Reasoning models (e.g. minimax-m2.7) emit their chain-of-thought inline as
     # <think>…</think>. Show it as a "💭 Thought process" step and strip it from the

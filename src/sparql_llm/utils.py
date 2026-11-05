@@ -13,6 +13,36 @@ from sparql_llm.project import Project
 
 THINK_BLOCK_RE = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
 
+# Typographic look-alikes some models (gpt-oss) put in place of plain characters:
+# "Perret\u2011Gentil" with U+2011 looks right but matches nothing in a SPARQL filter, and a
+# name copied from such an answer into a follow-up question finds nobody. One character
+# for one, so stream offsets stay valid. En and em dashes are left alone: they are used
+# on purpose (e.g. "\u2013" for an empty table cell).
+_TYPOGRAPHY = str.maketrans(
+    {
+        "\u2010": "-",  # hyphen
+        "\u2011": "-",  # non-breaking hyphen
+        "\u00a0": " ",  # no-break space
+        "\u202f": " ",  # narrow no-break space (French "Nom :")
+    }
+)
+
+
+def normalize_typography(text: str) -> str:
+    """Replace typographic hyphens and no-break spaces with their plain ASCII forms."""
+    return text.translate(_TYPOGRAPHY)
+
+
+def normalize_typography_deep(value: Any) -> Any:
+    """``normalize_typography`` applied to every string inside dicts and lists (tool-call args)."""
+    if isinstance(value, str):
+        return normalize_typography(value)
+    if isinstance(value, dict):
+        return {k: normalize_typography_deep(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize_typography_deep(v) for v in value]
+    return value
+
 
 def strip_think_blocks(text: str) -> str:
     """Remove <think>…</think> reasoning blocks emitted by some LLMs."""
