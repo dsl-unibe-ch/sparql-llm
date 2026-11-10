@@ -29,6 +29,7 @@ from starlette.concurrency import run_in_threadpool
 
 from sparql_llm.agent.graph import get_graph, graph
 from sparql_llm.agent.request_project import ProjectRefused, allowed_datasets, resolve_request_project
+from sparql_llm.agent.utils import TokenUsage
 from sparql_llm.agent.roles import (
     ADMIN,
     ROLE_LABELS,
@@ -1110,8 +1111,13 @@ def hide_sparql_in_answers(response_dict: dict[str, Any]) -> dict[str, Any]:
     return response_dict
 
 
-async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = graph) -> AsyncGenerator[str, Any]:
+async def stream_response(
+    inputs: Any, config: RunnableConfig, run_graph: Any = graph, usage: TokenUsage | None = None
+) -> AsyncGenerator[str, Any]:
     """Stream the graph's run to the chat UI as server-sent events.
+
+    When ``usage`` collects the run's token counts, they are sent as a last "usage"
+    event, also after a failure: the calls made before it are paid for all the same.
 
     Reasoning models (e.g. minimax-m2.7 on GPUStack) interleave ``<think>…</think>``
     blocks with their answer, and a tag can be split across any number of tokens. So
@@ -1207,6 +1213,8 @@ async def stream_response(inputs: Any, config: RunnableConfig, run_graph: Any = 
         }
         yield f"data: {json.dumps(error_msg)}\n\n"
         await asyncio.sleep(0)
+    if usage and (totals := usage.summary()):
+        yield f"data: {json.dumps({'event': 'usage', 'data': totals})}\n\n"
     yield "data: [DONE]"
 
 
@@ -1319,6 +1327,8 @@ async def chat(
     # A fix attempt or a tool round takes ~2 graph steps. Size the recursion limit for
     # whichever mode runs, never below LangGraph's default of 25.
     recursion_limit = max(25, 2 * max_try + 10, 2 * max_tool_iterations + 10)
+    # Tokens spent on this request, over every LLM call, shown under the answer.
+    usage = TokenUsage()
 
     config = RunnableConfig(
         configurable={
@@ -1338,7 +1348,7 @@ async def chat(
         },
         metadata=langfuse_metadata,
         recursion_limit=recursion_limit,
-        callbacks=langfuse_handler,  # type: ignore
+        callbacks=[*langfuse_handler, usage],
     )
     inputs: Any = {
         # Earlier answers come back from the client, and users paste names from them.
@@ -1350,7 +1360,7 @@ async def chat(
 
     if chat_request.stream:
         return StreamingResponse(
-            stream_response(inputs, config, run_graph),
+            stream_response(inputs, config, run_graph, usage),
             media_type="text/event-stream",
         )
 
@@ -1358,11 +1368,17 @@ async def chat(
         response = await run_graph.ainvoke(inputs, config=config)
     except Exception as exc:
         error_logger.exception("Chat failed (model=%s): %s", chat_request.model, exc)
-        return JSONResponse(content={"messages": [{"role": "assistant", "content": chat_error_message(exc)}]})
+        return JSONResponse(
+            content={
+                "messages": [{"role": "assistant", "content": chat_error_message(exc)}],
+                "usage": usage.summary(),
+            }
+        )
     # Convert LangChain message objects to dicts for JSON serialization
     response_dict = convert_chunk_to_dict(response)
     if chat_request.natural_language_only:
         hide_sparql_in_answers(response_dict)
+    response_dict["usage"] = usage.summary()
     return JSONResponse(content=response_dict)
 
 

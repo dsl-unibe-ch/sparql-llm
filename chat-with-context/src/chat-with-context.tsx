@@ -14,7 +14,7 @@ import squareIcon from "./assets/square.svg";
 import thumbsDownIcon from "./assets/thumbs-down.svg";
 import thumbsUpIcon from "./assets/thumbs-up.svg";
 import "./style.css";
-import {streamResponse, ChatState} from "./providers";
+import {streamResponse, ChatState, formatUsage} from "./providers";
 
 /** A saved conversation as the history endpoint lists it. */
 type ConversationSummary = {id: string; title: string; updated_at: string};
@@ -561,6 +561,15 @@ customElement(
                       </a>
                     )}
                   </For>
+
+                  {/* Tokens the answer took, for users paying for their own key */}
+                  <Show when={msg.role === "assistant" && msg.usage()}>
+                    {usage => (
+                      <p class="mt-2 text-xs text-slate-400" title="Summed over every LLM call made for this answer">
+                        {formatUsage(usage())}
+                      </p>
+                    )}
+                  </Show>
 
                   {/* Feedback buttons */}
                   {feedbackEndpoint() &&

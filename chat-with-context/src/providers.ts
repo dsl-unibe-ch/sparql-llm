@@ -19,6 +19,18 @@ type Step = {
   isActivity?: boolean;
 };
 
+/** Tokens spent on the request that produced an answer, summed over its LLM calls.
+ *
+ * The token fields are null when the provider reported no counts at all.
+ */
+export type Usage = {
+  calls: number;
+  unreported_calls: number;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  reasoning_tokens: number | null;
+};
+
 export type Message = {
   role: "assistant" | "user";
   content: Accessor<string>;
@@ -27,6 +39,8 @@ export type Message = {
   setSteps: Setter<Step[]>;
   links: Accessor<Links[]>;
   setLinks: Setter<Links[]>;
+  usage: Accessor<Usage | null>;
+  setUsage: Setter<Usage | null>;
 };
 
 /** A message as plain data: what a saved conversation stores and feedback sends. */
@@ -35,13 +49,21 @@ export type StoredMessage = {
   content: string;
   steps: Step[];
   links: Links[];
+  usage?: Usage | null;
 };
 
-function newMessage(role: "assistant" | "user", text = "", initialSteps: Step[] = [], initialLinks: Links[] = []) {
+function newMessage(
+  role: "assistant" | "user",
+  text = "",
+  initialSteps: Step[] = [],
+  initialLinks: Links[] = [],
+  initialUsage: Usage | null = null,
+) {
   const [content, setContent] = createSignal(text);
   const [steps, setSteps] = createSignal<Step[]>(initialSteps);
   const [links, setLinks] = createSignal<Links[]>(initialLinks);
-  const msg: Message = {content, setContent, steps, setSteps, role, links, setLinks};
+  const [usage, setUsage] = createSignal<Usage | null>(initialUsage);
+  const msg: Message = {content, setContent, steps, setSteps, role, links, setLinks, usage, setUsage};
   return msg;
 }
 
@@ -101,13 +123,21 @@ export class ChatState {
 
   /** The chat as plain data, as it is saved to the history and sent with feedback. */
   serialize = (): StoredMessage[] =>
-    this.messages().map(msg => ({role: msg.role, content: msg.content(), steps: msg.steps(), links: msg.links()}));
+    this.messages().map(msg => ({
+      role: msg.role,
+      content: msg.content(),
+      steps: msg.steps(),
+      links: msg.links(),
+      usage: msg.usage(),
+    }));
 
   /** Show a saved chat in place of the current one; it then continues under its own id. */
   loadConversation = (id: string, messages: StoredMessage[]) => {
     this.sessionId = id;
     this.beginTurn();
-    this.setMessages(messages.map(msg => newMessage(msg.role, msg.content, msg.steps ?? [], msg.links ?? [])));
+    this.setMessages(
+      messages.map(msg => newMessage(msg.role, msg.content, msg.steps ?? [], msg.links ?? [], msg.usage ?? null)),
+    );
   };
 
   appendContentToLastMsg = (newContent: string, newline: boolean = false) => {
@@ -241,6 +271,11 @@ async function processLangGraphChunk(state: ChatState, chunk: any) {
   if (chunk.event === "error") {
     throw new Error(`An error occurred. Please try again. ${chunk.data.error}: ${chunk.data.message}`);
   }
+  // Token counts of the whole request, sent once at the end: they belong to the final answer
+  if (chunk.event === "usage") {
+    state.lastMsg()?.setUsage(chunk.data);
+    return;
+  }
   // Handle updates to the state (nodes that are retrieving stuff without querying the LLM usually)
   if (chunk.event === "updates") {
     for (const nodeId of Object.keys(chunk.data)) {
@@ -342,4 +377,18 @@ async function streamCustomLangGraph(state: ChatState) {
       }
     }
   }
+}
+
+/** One line under an answer saying how many LLM calls and tokens it took. */
+export function formatUsage(usage: Usage): string {
+  const calls = `${usage.calls} LLM call${usage.calls === 1 ? "" : "s"}`;
+  if (usage.input_tokens === null || usage.output_tokens === null) {
+    return `${calls} · token usage not reported by the provider`;
+  }
+  const n = (value: number) => value.toLocaleString("en-US");
+  let line = `${calls} · ${n(usage.input_tokens)} input / ${n(usage.output_tokens)} output tokens`;
+  if (usage.reasoning_tokens) line += ` (${n(usage.reasoning_tokens)} reasoning)`;
+  if (usage.unreported_calls)
+    line += ` · ${usage.unreported_calls} call${usage.unreported_calls === 1 ? "" : "s"} not counted`;
+  return line;
 }

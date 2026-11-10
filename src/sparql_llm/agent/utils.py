@@ -3,14 +3,16 @@
 import functools
 import os
 import re
+import threading
 from collections.abc import Sequence
 from typing import Any
 
 import httpx
 from langchain.chat_models import init_chat_model
+from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, AnyMessage
-from langchain_core.outputs import ChatResult
+from langchain_core.outputs import ChatGeneration, ChatResult, LLMResult
 from langchain_openai import ChatOpenAI
 from pydantic import SecretStr
 
@@ -49,6 +51,51 @@ def chat_async_http_client() -> httpx.AsyncClient:
     return guarded_async_client("chat", follow_redirects=True)
 
 
+class TokenUsage(BaseCallbackHandler):
+    """Tokens spent on one chat request, summed over every LLM call it made.
+
+    One answer takes several calls: the question extraction, then a call per
+    validation retry or tool round. Users who bring a paid key see the total
+    under the answer. A call whose provider reports no counts is still counted
+    as a call, so the chat can say the total is incomplete.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._lock = threading.Lock()
+        self.calls = 0
+        self.unreported_calls = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.reasoning_tokens = 0
+
+    def on_llm_end(self, response: LLMResult, **kwargs: Any) -> None:
+        generation = response.generations[0][0] if response.generations and response.generations[0] else None
+        message = generation.message if isinstance(generation, ChatGeneration) else None
+        usage = message.usage_metadata if isinstance(message, AIMessage) else None
+        with self._lock:
+            self.calls += 1
+            if not usage:
+                self.unreported_calls += 1
+                return
+            self.input_tokens += usage.get("input_tokens", 0)
+            self.output_tokens += usage.get("output_tokens", 0)
+            self.reasoning_tokens += (usage.get("output_token_details") or {}).get("reasoning", 0)
+
+    def summary(self) -> dict[str, Any] | None:
+        """The totals as sent to the chat, or None when no LLM call was made."""
+        if not self.calls:
+            return None
+        reported = self.calls > self.unreported_calls
+        return {
+            "calls": self.calls,
+            "unreported_calls": self.unreported_calls,
+            "input_tokens": self.input_tokens if reported else None,
+            "output_tokens": self.output_tokens if reported else None,
+            "reasoning_tokens": self.reasoning_tokens if reported else None,
+        }
+
+
 def load_chat_model(configuration: Configuration) -> BaseChatModel:
     """Load the chat model named by ``configuration.model``, in the format 'provider/model'.
 
@@ -56,6 +103,10 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
     *configuration*, which is populated from the ``RunnableConfig`` at request
     time.  Falls back to environment variables for backwards compatibility
     (e.g. CLI usage, tests).
+
+    ``stream_usage=True`` asks for token counts on streamed replies too: ChatOpenAI
+    only does so by itself for the default OpenAI URL and client, and the chat shows
+    the counts under each answer (see :class:`TokenUsage`).
     """
     provider, model_name = configuration.model.split("/", maxsplit=1)
 
@@ -77,6 +128,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             temperature=safe_temperature,
             api_key=SecretStr(os.getenv("OPENROUTER_API_KEY") or ""),
             seed=configuration.seed,
+            stream_usage=True,
             http_client=chat_http_client(),
             http_async_client=chat_async_http_client(),
             openai_proxy=None,  # With a client passed, ChatOpenAI refuses to start if OPENAI_PROXY is set
@@ -88,6 +140,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             temperature=safe_temperature,
             api_key=SecretStr(api_key),
             seed=configuration.seed,
+            stream_usage=True,
             timeout=120.0,
             max_retries=1,
             http_client=chat_http_client(),
@@ -109,6 +162,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             temperature=safe_temperature,
             api_key=SecretStr(api_key),
             seed=configuration.seed,
+            stream_usage=True,
             timeout=90.0,
             max_retries=1,
             disable_streaming=disable_streaming,
@@ -124,6 +178,7 @@ def load_chat_model(configuration: Configuration) -> BaseChatModel:
             temperature=safe_temperature,
             api_key=SecretStr(api_key),
             seed=configuration.seed,
+            stream_usage=True,
             timeout=120.0,
             max_retries=1,
             http_client=chat_http_client(),

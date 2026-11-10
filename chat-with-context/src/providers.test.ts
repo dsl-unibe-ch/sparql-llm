@@ -1,7 +1,7 @@
 import {marked} from "marked";
-import {describe, expect, test} from "vitest";
+import {describe, expect, test, vi} from "vitest";
 
-import {ChatState} from "./providers";
+import {ChatState, formatUsage, streamResponse, Usage} from "./providers";
 
 const ANSWER = "Ernst Brenner's spouse was Lina Sturzenegger.";
 
@@ -194,5 +194,52 @@ describe("tool activity folding", () => {
     const msg = assistantMessages(state)[0];
     expect(msg.steps().length).toBe(0);
     expect(msg.content()).toBe(ANSWER);
+  });
+});
+
+describe("token usage", () => {
+  const usage: Usage = {calls: 3, unreported_calls: 0, input_tokens: 5210, output_tokens: 840, reasoning_tokens: 0};
+
+  test("the usage event lands on the final answer and is saved with the chat", async () => {
+    const events = [
+      {event: "messages", data: [{content: ANSWER, type: "AIMessageChunk"}, {langgraph_node: "call_model"}]},
+      {event: "usage", data: usage},
+    ];
+    const body = events.map(e => `data: ${JSON.stringify(e)}\n\n`).join("") + "data: [DONE]\n";
+    vi.stubGlobal("fetch", async () => new Response(body));
+    try {
+      const state = new ChatState({apiUrl: "http://localhost/chat"});
+      await streamResponse(state, "Who was the spouse of Ernst Brenner?");
+
+      expect(state.lastMsg().content()).toBe(ANSWER);
+      expect(state.lastMsg().usage()).toEqual(usage);
+      const reopened = new ChatState({apiUrl: "http://localhost/chat"});
+      reopened.loadConversation("chat-1", JSON.parse(JSON.stringify(state.serialize())));
+      expect(reopened.lastMsg().usage()).toEqual(usage);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("a chat saved before token counts reopens without them", () => {
+    const state = new ChatState({apiUrl: "http://localhost/chat"});
+    state.loadConversation("old", [{role: "assistant", content: ANSWER, steps: [], links: []}]);
+    expect(state.lastMsg().usage()).toBeNull();
+  });
+
+  test("the line names calls, input and output tokens", () => {
+    expect(formatUsage(usage)).toBe("3 LLM calls · 5,210 input / 840 output tokens");
+    expect(formatUsage({...usage, calls: 1, reasoning_tokens: 300, unreported_calls: 0})).toBe(
+      "1 LLM call · 5,210 input / 840 output tokens (300 reasoning)",
+    );
+  });
+
+  test("missing counts are said, not shown as zero", () => {
+    expect(
+      formatUsage({...usage, input_tokens: null, output_tokens: null, reasoning_tokens: null, unreported_calls: 3}),
+    ).toBe("3 LLM calls · token usage not reported by the provider");
+    expect(formatUsage({...usage, unreported_calls: 1})).toBe(
+      "3 LLM calls · 5,210 input / 840 output tokens · 1 call not counted",
+    );
   });
 });

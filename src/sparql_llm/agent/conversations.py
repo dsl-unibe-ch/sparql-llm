@@ -50,6 +50,8 @@ class StoredMessage(BaseModel):
     content: str
     steps: list[dict[str, Any]] = []
     links: list[dict[str, Any]] = []
+    # Token counts of the request that produced an assistant answer (see TokenUsage).
+    usage: dict[str, Any] | None = None
 
 
 class ChatSettings(BaseModel):
@@ -212,7 +214,8 @@ async def save_conversation(
         payload = SaveRequest.model_validate_json(body)
     except ValidationError as exc:
         raise RequestValidationError(exc.errors()) from exc
-    messages = [message.model_dump() for message in payload.messages]
+    # Only `usage` can be None: a message without token counts is stored as it came.
+    messages = [message.model_dump(exclude_none=True) for message in payload.messages]
 
     conv = await session.get(Conversation, conversation_id)
     if conv is not None and conv.user_id != user.id:
