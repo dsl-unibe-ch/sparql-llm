@@ -1,6 +1,6 @@
 <div align="center">
 
-# ✨ SPARQL query generation with LLMs 🦜
+#  SPARQL query generation with LLMs 
 
 [![Tests](https://github.com/dsl-unibe-ch/sparql-llm/actions/workflows/test.yml/badge.svg)](https://github.com/dsl-unibe-ch/sparql-llm/actions/workflows/test.yml)
 [![Docker image](https://github.com/dsl-unibe-ch/sparql-llm/actions/workflows/docker.yml/badge.svg)](https://github.com/dsl-unibe-ch/sparql-llm/actions/workflows/docker.yml)
@@ -21,7 +21,7 @@ This is the [Data Science Lab (University of Bern)](https://www.dsl.unibe.ch/) f
 
 The retrieval-augmented generation (RAG) and query validation come from upstream. The app indexes each endpoint's query examples, its [VoID](https://www.w3.org/TR/void/) schema (as ShEx shapes) and its ontology. It then validates each generated query against the schema and asks the LLM to fix any problems.
 
-## 🐳 Self-hosting with Docker
+##  Self-hosting with Docker
 
 Requirements: Docker with Compose, about 4 GB of RAM and 5 GB of disk. You don't need Python or Node.js.
 
@@ -41,7 +41,7 @@ The guides:
 - [`docs/DOCKER.md`](docs/DOCKER.md) is the step-by-step guide for curators. It covers users, LLM keys, what the app may connect to, the reverse proxy, backup and restore, and updating.
 - [`docs/ONBOARDING.md`](docs/ONBOARDING.md) explains how to add a SPARQL endpoint: the files a dataset needs, writing examples, and Upload, Check and Rebuild.
 
-## ⚙️ Configuration
+##  Configuration
 
 Settings are read in this order, and the first one found wins:
 
@@ -52,7 +52,7 @@ Settings are read in this order, and the first one found wins:
 
 The app refuses to start if a settings file is unreadable. Embeddings are computed locally with fastembed (`intfloat/multilingual-e5-large`). There is no default LLM: set `OPENAI_BASE_URL`, `OPENAI_API_KEY` and `DEFAULT_LLM_MODEL`, or let users bring their own key.
 
-## 🔌 MCP server
+##  MCP server
 
 Each published dataset is also served as a [Model Context Protocol](https://modelcontextprotocol.io/) server at `/mcp/<dataset-id>`. Bare `/mcp` serves the first dataset. Its tools retrieve relevant query examples and class schemas, and run a SPARQL query on the dataset's endpoint. To run the MCP server on its own during development, see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
@@ -68,7 +68,7 @@ The chat UI lives in `chat-with-context/`. Rebuild it with `npm i && npm run bui
 
 The agent pipeline is `extract → resolve_entities → retrieve → call_model → validate`. Its nodes are in `src/sparql_llm/agent/nodes/`. Indexing, publishing and crash recovery are in `src/sparql_llm/indexing/`.
 
-## 📦️ Reusable components
+##  Reusable components
 
 These components come from upstream and work on their own. The PyPI package is SIB's release, not this fork.
 
@@ -206,17 +206,14 @@ issues = validate_sparql_with_void(sparql_query, "https://sparql.omabrowser.org/
 print("\n".join(issues))
 ```
 
-## 🧑‍🏫 Upstream tutorial and benchmarks
 
-SIB's step-by-step tutorial on building such a chat system is at https://sib-swiss.github.io/sparql-llm. Their benchmark scripts (`tests/benchmark*.py`, [`tests/text2sparql`](tests/text2sparql/README.md)) are kept from upstream. They target the SIB biodata endpoints and still assume upstream's separate Qdrant service.
-
-## 🧑‍💻 Contributing
+##  Contributing
 
 Checkout the [`CONTRIBUTING.md`](https://github.com/sib-swiss/sparql-llm/blob/main/CONTRIBUTING.md) page.
 
-## 🪶 How to cite this work
+## References 
 
-If you reuse any part of this work, please cite at least one of our articles below:
+
 
 - [SPARQL-LLM: Real-Time SPARQL Query Generation from Natural Language Questions](https://arxiv.org/abs/2512.14277)
 ```bibtex
