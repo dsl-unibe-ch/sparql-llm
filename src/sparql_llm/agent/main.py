@@ -386,6 +386,10 @@ if settings.auth_enabled:
                     status_code=401,
                 )
 
+        return await _signed_in_redirect(user, next)
+
+    async def _signed_in_redirect(user: "User", next: str) -> RedirectResponse:
+        """Set the auth cookie for ``user`` and send them on to ``next`` (if safe)."""
         token = await get_jwt_strategy().write_token(user)
         response = RedirectResponse(url=next if is_valid_login_redirect(next) else "/", status_code=302)
         # The cookie the fastapi-users transport reads back on every request.
@@ -398,6 +402,58 @@ if settings.auth_enabled:
             samesite=cookie_transport.cookie_samesite,
         )
         return response
+
+    # Anyone may create an account: each user brings their own LLM API key, so an account
+    # costs the instance nothing. New accounts are always plain users; only an admin can
+    # promote one (on the admin page).
+
+    @app.get("/register", response_class=HTMLResponse, include_in_schema=False)
+    async def register_page(request: Request, next: str = "/") -> HTMLResponse:
+        return templates.TemplateResponse(request, "register.html", {"error": "", "email": "", "next": next})
+
+    @app.post("/register", response_class=HTMLResponse, include_in_schema=False)
+    async def register_form(
+        request: Request,
+        email: str = Form(...),
+        password: str = Form(...),
+        confirm_password: str = Form(...),
+        next: str = Form("/"),
+    ) -> HTMLResponse:
+        """Create a plain-user account from the sign-up form and sign the new user in."""
+        from fastapi_users.exceptions import InvalidPasswordException, UserAlreadyExists
+        from fastapi_users.schemas import BaseUserCreate
+        from pydantic import ValidationError
+
+        def _render(error: str, status_code: int = 400) -> HTMLResponse:
+            return templates.TemplateResponse(
+                request,
+                "register.html",
+                {"error": error, "email": email, "next": next},
+                status_code=status_code,
+            )
+
+        email = email.strip()
+        if password != confirm_password:
+            return _render("Passwords do not match.")
+        if len(password) < 8:
+            return _render("Password must be at least 8 characters.")
+        try:
+            # Only email and password are taken from the form: the role flags are never read
+            # from the request, and safe=True makes fastapi-users drop them regardless.
+            user_create = BaseUserCreate(email=email, password=password)
+        except ValidationError:
+            return _render("Please enter a valid email address.")
+
+        async with async_session_maker() as session:
+            manager = UserManager(SQLAlchemyUserDatabase(session, User))
+            try:
+                user = await manager.create(user_create, safe=True, request=request)
+            except UserAlreadyExists:
+                return _render("An account with this email already exists.", status_code=409)
+            except InvalidPasswordException as exc:
+                return _render(str(exc.reason))
+        logger.info("New user registered: %s (%s)", user.email, role_of(user))
+        return await _signed_in_redirect(user, next)
 
     #: How the admin picker names each dataset state.
     STATE_LABELS = {"published": "published", "ready": "ready, not published", "new": "new"}
