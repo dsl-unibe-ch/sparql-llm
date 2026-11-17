@@ -12,6 +12,8 @@ from sparql_llm.agent.state import State
 from sparql_llm.config import Configuration
 from sparql_llm.mcp_server import EMPTY_RESULT_PROMPT, FIXED_QUERY_HEADING, QUERY_RESULTS_HEADING, agent_connection
 from sparql_llm.project import Project, allowed_endpoint
+from sparql_llm.utils import logger
+from sparql_llm.validate_sparql import extract_sparql_queries
 
 # The "tools" node of the MCP tools agent: it runs the tool calls call_model's model made.
 
@@ -37,6 +39,44 @@ def executed_query(tool_call: dict[str, Any], content: str, project: Project) ->
         return None
     endpoint_url, _ = allowed_endpoint(args.get("endpoint_url"), project)
     return {"sparql_query": query, "sparql_endpoint_url": endpoint_url}
+
+
+def _comparable(query: str) -> str:
+    """A query without its ``#+ endpoint:`` line and with whitespace collapsed."""
+    lines = [line for line in query.splitlines() if not line.strip().startswith("#+ endpoint:")]
+    return re.sub(r"\s+", " ", " ".join(lines)).strip()
+
+
+def log_query_link_mismatch(answer: str, query_link: Any) -> bool | None:
+    """Log whether the answer's last ```sparql block is the query behind "Run or edit the query".
+
+    The link carries the last query that ran; the answer's block is the model's own
+    re-typing of it, which nothing checks. Returns True when they match, False when
+    they differ, None when there is nothing to compare.
+    """
+    linked = query_link.get("sparql_query") if isinstance(query_link, dict) else None
+    printed = extract_sparql_queries(answer or "")
+    if not linked and not printed:
+        return None
+    if not linked or not printed:
+        logger.info(
+            "Query link check: %s",
+            "answer prints a query but none ran (no link)"
+            if printed
+            else "a query ran (link) but the answer prints none",
+        )
+        return None
+    printed_query = printed[-1]["query"]
+    if _comparable(printed_query) == _comparable(linked):
+        logger.info("Query link check: the answer's query is the one that ran")
+        return True
+    logger.warning(
+        "Query link check: MISMATCH, the answer prints a query that is not the one that ran.\n"
+        "--- printed in the answer:\n%s\n--- ran (Run or edit the query):\n%s",
+        printed_query,
+        linked,
+    )
+    return False
 
 
 async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, Any]:
@@ -115,7 +155,12 @@ async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, Any]
                         tool_call_id=tool_call["id"],
                     )
                 )
-                query_link = executed_query(tool_call, content, project) or query_link
+                ran = executed_query(tool_call, content, project)
+                if ran:
+                    logger.info(
+                        "Query link: execute_sparql_query ran (link now points to it):\n%s", ran["sparql_query"]
+                    )
+                query_link = ran or query_link
 
             except Exception as e:
                 # Handle tool execution errors

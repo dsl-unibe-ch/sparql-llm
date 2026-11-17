@@ -1,6 +1,6 @@
 """MCP tools mode offers the query it ran under the answer, like the pipeline's "Run or edit the query"."""
 
-from sparql_llm.agent.nodes.mcp_tools import executed_query
+from sparql_llm.agent.nodes.mcp_tools import executed_query, log_query_link_mismatch
 from sparql_llm.mcp_server import EMPTY_RESULT_PROMPT, FIXED_QUERY_HEADING, QUERY_RESULTS_HEADING
 
 QUERY = "SELECT (COUNT(?p) AS ?n) WHERE { ?p a <http://www.cidoc-crm.org/cidoc-crm/E21> }"
@@ -37,3 +37,33 @@ def test_refused_or_failed_query_is_not_linked(swiss_project):
 def test_other_tools_are_not_linked(swiss_project):
     content = f"{QUERY_RESULTS_HEADING} x:\n```\n{{}}\n```"
     assert executed_query(call(name="validate_sparql_query"), content, swiss_project) is None
+
+
+# The answer's ```sparql block against the query behind "Run or edit the query"
+# (curators' report 2026-11-17: gpt-oss ran one query and printed a trimmed copy).
+RAN = """PREFIX sdh-sls: <https://sdhss.org/ontology/social-life-specific/>
+SELECT ?person ?titleLabel WHERE {
+  ?event sdh-sls:P9 ?person .
+  OPTIONAL { ?event sdh-sls:P10 ?title . ?title sdh-short:P9 ?titleLabel }
+}
+LIMIT 100"""
+TITLE_OPTIONAL = "  OPTIONAL { ?event sdh-sls:P10 ?title . ?title sdh-short:P9 ?titleLabel }\n"
+
+
+def answer(query: str) -> str:
+    return f"Here are the persons.\n\n```sparql\n#+ endpoint: https://example.org/sparql\n{query}\n```\n"
+
+
+def test_answer_query_matching_the_link_is_a_match():
+    # Only the endpoint line and the indentation differ.
+    assert log_query_link_mismatch(answer(RAN.replace("\n  ", "\n    ")), {"sparql_query": RAN}) is True
+
+
+def test_answer_query_differing_from_the_link_is_a_mismatch():
+    assert log_query_link_mismatch(answer(RAN.replace(TITLE_OPTIONAL, "")), {"sparql_query": RAN}) is False
+
+
+def test_nothing_to_compare_without_a_link_or_a_printed_query():
+    assert log_query_link_mismatch("No query here.", []) is None
+    assert log_query_link_mismatch(answer(RAN), []) is None
+    assert log_query_link_mismatch("No query here.", {"sparql_query": RAN}) is None

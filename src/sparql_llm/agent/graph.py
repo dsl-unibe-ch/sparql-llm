@@ -8,7 +8,7 @@ from langgraph.graph import StateGraph
 
 from sparql_llm.agent.nodes.call_model import call_model
 from sparql_llm.agent.nodes.llm_extraction import extract_user_question
-from sparql_llm.agent.nodes.mcp_tools import mcp_tools_node
+from sparql_llm.agent.nodes.mcp_tools import log_query_link_mismatch, mcp_tools_node
 from sparql_llm.agent.nodes.retrieval_docs import retrieve
 from sparql_llm.agent.nodes.retrieval_entities import resolve_entities
 from sparql_llm.agent.nodes.validation import validate_output
@@ -75,6 +75,9 @@ def route_tools_output(state: State, config: RunnableConfig) -> Literal["__end__
             return "max_tries_reached"
         return "tools"
 
+    # Final answer: record whether the query it prints is the one behind the link.
+    if isinstance(last_msg, AIMessage):
+        log_query_link_mismatch(str(last_msg.content), state.structured_output)
     return "__end__"
 
 
