@@ -42,7 +42,8 @@ PROVIDERS: dict[str, ProviderInfo] = {
         label="Custom (OpenAI-compatible)",
         default_base_url="",
         help_text=(
-            "Any OpenAI-compatible API (e.g. Ollama, LM Studio, Together AI). Provide the base URL and API key."
+            "Any OpenAI-compatible API (e.g. Ollama, LM Studio, Together AI). "
+            "Provide the base URL and API key."
         ),
     ),
 }
@@ -57,36 +58,15 @@ _OPENAI_CHAT_RE = re.compile(r"^(gpt-|chatgpt-|o\d+(-|$))")
 # Only distinctive keywords that won't collide with LLM names.
 _REJECT_SUBSTRINGS = (
     # Embeddings / retrieval
-    "embed",
-    "rerank",
-    "colbert",
-    "minilm",
-    "mpnet",
-    "sentence-transformers",
+    "embed", "rerank", "colbert", "minilm", "mpnet", "sentence-transformers",
     # Audio
-    "whisper",
-    "tts",
-    "transcribe",
-    "speech",
-    "wav2vec",
-    "parakeet",
-    "kokoro",
-    "realtime",
-    "audio",
+    "whisper", "tts", "transcribe", "speech", "wav2vec", "parakeet", "kokoro",
+    "realtime", "audio",
     # Images / video
-    "diffusion",
-    "sdxl",
-    "dall-e",
-    "dalle",
-    "flux",
-    "kandinsky",
-    "imagen",
-    "gpt-image",
-    "sora",
+    "diffusion", "sdxl", "dall-e", "dalle", "flux", "kandinsky", "imagen",
+    "gpt-image", "sora",
     # Moderation / safety classifiers
-    "moderation",
-    "llama-guard",
-    "shieldgemma",
+    "moderation", "llama-guard", "shieldgemma",
 )
 
 # Short keywords that must appear as whole tokens (delimited by - _ / . : or
@@ -97,18 +77,8 @@ _REJECT_TOKENS_RE = re.compile(
 
 # Values of model metadata fields that indicate a non-chat model.
 _NON_CHAT_TYPES = {
-    "embedding",
-    "embeddings",
-    "rerank",
-    "reranker",
-    "image",
-    "audio",
-    "transcribe",
-    "moderation",
-    "speech_to_text",
-    "text_to_speech",
-    "tts",
-    "stt",
+    "embedding", "embeddings", "rerank", "reranker", "image", "audio",
+    "transcribe", "moderation", "speech_to_text", "text_to_speech", "tts", "stt",
 }
 
 
@@ -188,7 +158,6 @@ def _remember_tool_support(base_url: str, model_id: str, supported: bool, ttl: f
     _TOOL_SUPPORT_CACHE[(base_url, model_id)] = (supported, time.monotonic() + ttl)
     return supported
 
-
 _PROBE_TOOL = {
     "type": "function",
     "function": {
@@ -252,7 +221,9 @@ async def _supports_tool_calling(
     elif resp.is_success:
         supported = True
     else:
-        logger.warning("Tool-calling probe for %s returned %d; assuming supported", model_id, resp.status_code)
+        logger.warning(
+            "Tool-calling probe for %s returned %d; assuming supported", model_id, resp.status_code
+        )
         return _remember_tool_support(base_url, model_id, True, _TOOL_PROBE_RETRY_AFTER)
 
     _remember_tool_support(base_url, model_id, supported, _TOOL_SUPPORT_TTL)
@@ -319,7 +290,9 @@ async def validate_and_list_models(
 
         # Ollama with no model pulled sends "data": null.
         raw_models: list[dict] = data.get("data") or []
-        model_ids: list[str] = sorted(m["id"] for m in raw_models if _is_chat_model(m, provider))
+        model_ids: list[str] = sorted(
+            m["id"] for m in raw_models if _is_chat_model(m, provider)
+        )
 
     # OpenAI chat models all support tools; other servers depend on how
     # each model was deployed, so probe them.
