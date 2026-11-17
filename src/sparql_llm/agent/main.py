@@ -366,7 +366,9 @@ if settings.auth_enabled:
 
     @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
     async def login_page(request: Request, error: str = "", next: str = "/") -> HTMLResponse:
-        return templates.TemplateResponse(request, "login.html", {"error": error, "next": next})
+        return templates.TemplateResponse(
+            request, "login.html", {"error": error, "next": next, "allow_signup": settings.allow_signup}
+        )
 
     @app.post("/login", response_class=HTMLResponse, include_in_schema=False)
     async def login_form(
@@ -388,7 +390,7 @@ if settings.auth_enabled:
                 return templates.TemplateResponse(
                     request,
                     "login.html",
-                    {"error": "Invalid email or password.", "next": next},
+                    {"error": "Invalid email or password.", "next": next, "allow_signup": settings.allow_signup},
                     status_code=401,
                 )
 
@@ -409,15 +411,19 @@ if settings.auth_enabled:
         )
         return response
 
-    # Anyone may create an account: each user brings their own LLM API key, so an account
-    # costs the instance nothing. New accounts are always plain users; only an admin can
-    # promote one (on the admin page).
+    # With ALLOW_SIGNUP, anyone may create an account. It is off by default: an account
+    # without its own LLM key chats on the instance's OPENAI_API_KEY, if one is set. New
+    # accounts are always plain users; only an admin can promote one (on the admin page).
 
-    @app.get("/register", response_class=HTMLResponse, include_in_schema=False)
+    def _signup_open() -> None:
+        if not settings.allow_signup:
+            raise HTTPException(status_code=404)
+
+    @app.get("/register", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(_signup_open)])
     async def register_page(request: Request, next: str = "/") -> HTMLResponse:
         return templates.TemplateResponse(request, "register.html", {"error": "", "email": "", "next": next})
 
-    @app.post("/register", response_class=HTMLResponse, include_in_schema=False)
+    @app.post("/register", response_class=HTMLResponse, include_in_schema=False, dependencies=[Depends(_signup_open)])
     async def register_form(
         request: Request,
         email: str = Form(...),

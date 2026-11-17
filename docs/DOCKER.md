@@ -57,6 +57,8 @@ The app listens on `127.0.0.1:8000`, so only this machine can reach it. See "Exp
 2. Open the admin page at <http://localhost:8000/admin>.
 3. In the **Add user** card, enter the person's email and a starting password, choose a role and press **Add user**. Send them the address and the password. Admins can add users and curators; curators can add plain users.
 
+To let people create their own account instead, set `ALLOW_SIGNUP=true` in `.env` and run `docker compose up -d` again. The sign-in page then shows a **Create one** link. Accounts created this way are plain users. Sign-up is off by default: if you also set a shared key (see "Adding your LLM key"), everyone who signs up can use it.
+
 Roles:
 
 - **Admin**: everything, including publishing datasets and managing users.

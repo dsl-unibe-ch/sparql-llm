@@ -180,6 +180,10 @@ class Settings(BaseSettings):
     """Email for the initial admin account created on first run (set via ADMIN_EMAIL env var)."""
     admin_password: str = ""
     """Password for the initial admin account (set via ADMIN_PASSWORD env var)."""
+    allow_signup: bool = False
+    """Let anyone create a plain-user account at /register (set via ALLOW_SIGNUP). Off by
+    default: an account without its own LLM key chats on the instance's OPENAI_API_KEY, so on
+    a public instance with a shared key, open sign-up lets strangers spend it."""
 
     server_port: int = 8000
     """The port this instance listens on; the tools agent fetches its MCP tools from it."""

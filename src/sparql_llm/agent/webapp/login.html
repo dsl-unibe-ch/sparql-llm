@@ -104,7 +104,9 @@
           </div>
           <button type="submit" class="btn-primary">Sign in</button>
         </form>
+        {% if allow_signup %}
         <p class="alt-link">No account yet? <a href="/register?next={{ next | urlencode }}">Create one</a></p>
+        {% endif %}
       </div>
     </div>
 

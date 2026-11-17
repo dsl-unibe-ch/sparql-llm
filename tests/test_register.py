@@ -1,4 +1,5 @@
-"""Anyone may sign up; a new account is always a plain user, never admin or curator."""
+"""With ALLOW_SIGNUP, anyone may sign up; a new account is always a plain user, never admin
+or curator. Sign-up is off by default."""
 
 import httpx
 import pytest
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from starlette.testclient import TestClient
 
 from sparql_llm.agent import auth, main
-from sparql_llm.config import settings
+from sparql_llm.config import Settings, settings
 
 PASSWORD = "pw-" + "x" * 20
 
@@ -22,6 +23,7 @@ def site(tmp_path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings, "admin_email", "admin@example.org")
     monkeypatch.setattr(settings, "admin_password", PASSWORD)
     monkeypatch.setattr(settings, "cookie_secure", False)
+    monkeypatch.setattr(settings, "allow_signup", True)
 
     # The auth engine binds to the install's database file at import: point it at this one.
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
@@ -57,6 +59,18 @@ def _register(site, email="new@example.org", password=PASSWORD, confirm=None, **
 def test_login_page_links_to_registration(site):
     assert 'href="/register' in site.get("/login").text
     assert site.get("/register").status_code == 200
+
+
+def test_signup_is_off_by_default():
+    assert Settings.model_fields["allow_signup"].default is False
+
+
+def test_with_signup_off_there_is_no_link_and_no_registration(site, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings, "allow_signup", False)
+    assert 'href="/register' not in site.get("/login").text
+    assert site.get("/register").status_code == 404
+    assert _register(site).status_code == 404
+    assert _user(site, "new@example.org") is None
 
 
 def test_register_creates_a_plain_user_and_signs_in(site):
