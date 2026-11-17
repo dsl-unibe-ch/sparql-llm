@@ -42,8 +42,7 @@ PROVIDERS: dict[str, ProviderInfo] = {
         label="Custom (OpenAI-compatible)",
         default_base_url="",
         help_text=(
-            "Any OpenAI-compatible API (e.g. Ollama, LM Studio, Together AI). "
-            "Provide the base URL and API key."
+            "Any OpenAI-compatible API (e.g. Ollama, LM Studio, Together AI). Provide the base URL and API key."
         ),
     ),
 }
@@ -58,15 +57,36 @@ _OPENAI_CHAT_RE = re.compile(r"^(gpt-|chatgpt-|o\d+(-|$))")
 # Only distinctive keywords that won't collide with LLM names.
 _REJECT_SUBSTRINGS = (
     # Embeddings / retrieval
-    "embed", "rerank", "colbert", "minilm", "mpnet", "sentence-transformers",
+    "embed",
+    "rerank",
+    "colbert",
+    "minilm",
+    "mpnet",
+    "sentence-transformers",
     # Audio
-    "whisper", "tts", "transcribe", "speech", "wav2vec", "parakeet", "kokoro",
-    "realtime", "audio",
+    "whisper",
+    "tts",
+    "transcribe",
+    "speech",
+    "wav2vec",
+    "parakeet",
+    "kokoro",
+    "realtime",
+    "audio",
     # Images / video
-    "diffusion", "sdxl", "dall-e", "dalle", "flux", "kandinsky", "imagen",
-    "gpt-image", "sora",
+    "diffusion",
+    "sdxl",
+    "dall-e",
+    "dalle",
+    "flux",
+    "kandinsky",
+    "imagen",
+    "gpt-image",
+    "sora",
     # Moderation / safety classifiers
-    "moderation", "llama-guard", "shieldgemma",
+    "moderation",
+    "llama-guard",
+    "shieldgemma",
 )
 
 # Short keywords that must appear as whole tokens (delimited by - _ / . : or
@@ -77,8 +97,18 @@ _REJECT_TOKENS_RE = re.compile(
 
 # Values of model metadata fields that indicate a non-chat model.
 _NON_CHAT_TYPES = {
-    "embedding", "embeddings", "rerank", "reranker", "image", "audio",
-    "transcribe", "moderation", "speech_to_text", "text_to_speech", "tts", "stt",
+    "embedding",
+    "embeddings",
+    "rerank",
+    "reranker",
+    "image",
+    "audio",
+    "transcribe",
+    "moderation",
+    "speech_to_text",
+    "text_to_speech",
+    "tts",
+    "stt",
 }
 
 
@@ -132,12 +162,32 @@ def _is_chat_model(model: dict, provider: str) -> bool:
     return True
 
 
-# Tool-calling probe results, keyed by (base_url, model_id) -> (supports_tools, checked_at).
-# Only conclusive results are cached; transient failures are retried next time.
+# Tool-calling probe results, keyed by (base_url, model_id) -> (supports_tools, expires_at).
+# A conclusive answer is kept for hours. An inconclusive one (timeout, 5xx) counts as
+# "supported" and is kept for minutes, so a model that hangs is not probed again on
+# every page load: on 2026-11-17 a hanging gpt-oss made each /models call wait 20 s.
 _TOOL_SUPPORT_CACHE: dict[tuple[str, str], tuple[bool, float]] = {}
 _TOOL_SUPPORT_TTL = 6 * 3600
+_TOOL_PROBE_RETRY_AFTER = 600
 _TOOL_PROBE_TIMEOUT = 20.0
-_TOOL_PROBE_CONCURRENCY = 8
+# How long a model list waits for probes. A model still unanswered by then is listed
+# (as an inconclusive probe would) and its probe goes on in the background.
+_TOOL_PROBE_WAIT = 3.0
+# Probes running, so that page loads close together share one probe per model.
+_PROBES_IN_FLIGHT: dict[tuple[str, str], asyncio.Task[bool]] = {}
+
+
+def _cached_tool_support(base_url: str, model_id: str) -> bool | None:
+    cached = _TOOL_SUPPORT_CACHE.get((base_url, model_id))
+    if cached and time.monotonic() < cached[1]:
+        return cached[0]
+    return None
+
+
+def _remember_tool_support(base_url: str, model_id: str, supported: bool, ttl: float) -> bool:
+    _TOOL_SUPPORT_CACHE[(base_url, model_id)] = (supported, time.monotonic() + ttl)
+    return supported
+
 
 _PROBE_TOOL = {
     "type": "function",
@@ -163,10 +213,9 @@ async def _supports_tool_calling(
     (success, timeout, 5xx, rate limit) is treated as "supported" so that
     transient errors never hide a working model.
     """
-    key = (base_url, model_id)
-    cached = _TOOL_SUPPORT_CACHE.get(key)
-    if cached and time.monotonic() - cached[1] < _TOOL_SUPPORT_TTL:
-        return cached[0]
+    cached = _cached_tool_support(base_url, model_id)
+    if cached is not None:
+        return cached
 
     try:
         resp = await client.post(
@@ -182,8 +231,11 @@ async def _supports_tool_calling(
             timeout=_TOOL_PROBE_TIMEOUT,
         )
     except httpx.HTTPError as exc:
-        logger.warning("Tool-calling probe for %s failed (%s); assuming supported", model_id, exc)
-        return True
+        # The class name too: a timeout's message is empty.
+        logger.warning(
+            "Tool-calling probe for %s failed (%s: %s); assuming supported", model_id, type(exc).__name__, exc
+        )
+        return _remember_tool_support(base_url, model_id, True, _TOOL_PROBE_RETRY_AFTER)
 
     try:
         body = resp.json()
@@ -200,15 +252,50 @@ async def _supports_tool_calling(
     elif resp.is_success:
         supported = True
     else:
-        logger.warning(
-            "Tool-calling probe for %s returned %d; assuming supported", model_id, resp.status_code
-        )
-        return True
+        logger.warning("Tool-calling probe for %s returned %d; assuming supported", model_id, resp.status_code)
+        return _remember_tool_support(base_url, model_id, True, _TOOL_PROBE_RETRY_AFTER)
 
-    _TOOL_SUPPORT_CACHE[key] = (supported, time.monotonic())
+    _remember_tool_support(base_url, model_id, supported, _TOOL_SUPPORT_TTL)
     if not supported:
         logger.info("Model %s at %s does not support tool calling; hiding it", model_id, base_url)
     return supported
+
+
+async def _probe_in_background(base_url: str, api_key: str, model_id: str) -> bool:
+    """One probe with its own client, so it can outlive the request that started it."""
+    try:
+        async with guarded_async_client("byok") as client:
+            return await _supports_tool_calling(client, base_url, api_key, model_id)
+    except Exception as exc:  # a refusal or anything else: never hide a model over it
+        logger.warning("Tool-calling probe for %s failed (%s); assuming supported", model_id, type(exc).__name__)
+        return True
+    finally:
+        _PROBES_IN_FLIGHT.pop((base_url, model_id), None)
+
+
+async def _tool_support(base_url: str, api_key: str, model_ids: list[str]) -> dict[str, bool]:
+    """Which of *model_ids* accept tool calls, waiting at most ``_TOOL_PROBE_WAIT`` seconds.
+
+    A model whose probe has not answered by then counts as supported, as a probe that
+    times out does; the probe goes on and caches its answer for the next model list.
+    """
+    verdicts: dict[str, bool] = {}
+    running: dict[str, asyncio.Task[bool]] = {}
+    for mid in model_ids:
+        cached = _cached_tool_support(base_url, mid)
+        if cached is not None:
+            verdicts[mid] = cached
+            continue
+        task = _PROBES_IN_FLIGHT.get((base_url, mid))
+        if task is None:
+            task = asyncio.create_task(_probe_in_background(base_url, api_key, mid))
+            _PROBES_IN_FLIGHT[(base_url, mid)] = task
+        running[mid] = task
+    if running:
+        await asyncio.wait(running.values(), timeout=_TOOL_PROBE_WAIT)
+        for mid, task in running.items():
+            verdicts[mid] = task.result() if task.done() and not task.cancelled() else True
+    return verdicts
 
 
 async def validate_and_list_models(
@@ -232,21 +319,13 @@ async def validate_and_list_models(
 
         # Ollama with no model pulled sends "data": null.
         raw_models: list[dict] = data.get("data") or []
-        model_ids: list[str] = sorted(
-            m["id"] for m in raw_models if _is_chat_model(m, provider)
-        )
+        model_ids: list[str] = sorted(m["id"] for m in raw_models if _is_chat_model(m, provider))
 
-        # OpenAI chat models all support tools; other servers depend on how
-        # each model was deployed, so probe them.
-        if provider != "openai" and model_ids:
-            semaphore = asyncio.Semaphore(_TOOL_PROBE_CONCURRENCY)
-
-            async def probe(mid: str) -> bool:
-                async with semaphore:
-                    return await _supports_tool_calling(client, base_url, api_key, mid)
-
-            supported = await asyncio.gather(*(probe(mid) for mid in model_ids))
-            model_ids = [mid for mid, ok in zip(model_ids, supported) if ok]
+    # OpenAI chat models all support tools; other servers depend on how
+    # each model was deployed, so probe them.
+    if provider != "openai" and model_ids:
+        supported = await _tool_support(base_url, api_key, model_ids)
+        model_ids = [mid for mid in model_ids if supported[mid]]
 
     logger.info("Provider %s at %s: %d chat models found", provider, base_url, len(model_ids))
     return [f"{provider}/{mid}" for mid in model_ids]
