@@ -8,12 +8,12 @@ from langchain_core.runnables import RunnableConfig
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from sparql_llm.agent.request_project import project_of
-from sparql_llm.agent.state import State
+from sparql_llm.agent.state import State, StepOutput
 from sparql_llm.config import Configuration
 from sparql_llm.mcp_server import EMPTY_RESULT_PROMPT, FIXED_QUERY_HEADING, QUERY_RESULTS_HEADING, agent_connection
 from sparql_llm.project import Project, allowed_endpoint
 from sparql_llm.utils import logger
-from sparql_llm.validate_sparql import extract_sparql_queries
+from sparql_llm.validate_sparql import endpoint_pattern, extract_sparql_queries, queries_pattern
 
 # The "tools" node of the MCP tools agent: it runs the tool calls call_model's model made.
 
@@ -71,12 +71,44 @@ def log_query_link_mismatch(answer: str, query_link: Any) -> bool | None:
         logger.info("Query link check: the answer's query is the one that ran")
         return True
     logger.warning(
-        "Query link check: MISMATCH, the answer prints a query that is not the one that ran.\n"
+        "Query link check: MISMATCH, the answer prints a query that is not the one that ran; showing the one that ran.\n"
         "--- printed in the answer:\n%s\n--- ran (Run or edit the query):\n%s",
         printed_query,
         linked,
     )
     return False
+
+
+def with_query_that_ran(answer: str, query_link: dict[str, str]) -> str:
+    """The answer with its last ```sparql block replaced by the query that ran."""
+    blocks = list(queries_pattern.finditer(answer))
+    query = query_link["sparql_query"].strip()
+    endpoint_url = query_link.get("sparql_endpoint_url")
+    if endpoint_url and not endpoint_pattern.search(query):
+        query = f"#+ endpoint: {endpoint_url}\n{query}"
+    last = blocks[-1]
+    return f"{answer[: last.start(1)]}\n{query}\n{answer[last.end(1) :]}"
+
+
+def show_query_that_ran(state: State) -> dict[str, Any]:
+    """Make the answer print the query that ran, the one "Run or edit the query" opens.
+
+    In MCP tools mode the model re-types the query in its final answer, and may change
+    it on the way (curators' report 2026-11-17: gpt-oss ran a query with a degree-title
+    OPTIONAL and printed it without). The query that ran is the one the results, and so
+    the answer, come from. The UI takes the corrected answer as a "fix-message" step.
+    """
+    last_msg = state.messages[-1] if state.messages else None
+    if not isinstance(last_msg, AIMessage) or last_msg.tool_calls:
+        return {}
+    answer = str(last_msg.content)
+    if log_query_link_mismatch(answer, state.structured_output) is not False:
+        return {}
+    fixed = with_query_that_ran(answer, state.structured_output)  # type: ignore[arg-type]
+    return {
+        "messages": [AIMessage(content=fixed, id=last_msg.id)],
+        "steps": [StepOutput(type="fix-message", label="", fixed_message=fixed)],
+    }
 
 
 async def mcp_tools_node(state: State, config: RunnableConfig) -> dict[str, Any]:

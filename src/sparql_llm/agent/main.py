@@ -62,7 +62,13 @@ from sparql_llm.mcp_server import McpDispatcher
 from sparql_llm.migration import migrate_configured
 from sparql_llm.outbound import CHAT_REFUSED_MESSAGE, REFUSED_MESSAGE, DestinationRefused, find_refusal
 from sparql_llm.project import Project, get_projects
-from sparql_llm.utils import logger, normalize_typography, strip_sparql_stream, strip_think_stream
+from sparql_llm.utils import (
+    logger,
+    normalize_typography,
+    strip_sparql_stream,
+    strip_think_blocks,
+    strip_think_stream,
+)
 
 if settings.sentry_url:
     import sentry_sdk
@@ -1145,6 +1151,12 @@ async def stream_response(
                             s for s in node_data["steps"]
                             if s.get("label") or s.get("type") == "fix-message"
                         ]
+                        # A corrected answer replaces the streamed one in the UI: give it
+                        # the treatment the streamed text got.
+                        for s in node_data["steps"]:
+                            if s.get("fixed_message"):
+                                fixed = normalize_typography(strip_think_blocks(s["fixed_message"]))
+                                s["fixed_message"] = strip_sparql_stream(fixed) if natural_language_only else fixed
                 yield f"data: {json.dumps(chunk_dict)}\n\n"
                 await asyncio.sleep(0)
                 continue

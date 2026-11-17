@@ -1,6 +1,11 @@
 """MCP tools mode offers the query it ran under the answer, like the pipeline's "Run or edit the query"."""
 
-from sparql_llm.agent.nodes.mcp_tools import executed_query, log_query_link_mismatch
+from typing import Any
+
+from langchain_core.messages import AIMessage
+
+from sparql_llm.agent.nodes.mcp_tools import executed_query, log_query_link_mismatch, show_query_that_ran
+from sparql_llm.agent.state import State
 from sparql_llm.mcp_server import EMPTY_RESULT_PROMPT, FIXED_QUERY_HEADING, QUERY_RESULTS_HEADING
 
 QUERY = "SELECT (COUNT(?p) AS ?n) WHERE { ?p a <http://www.cidoc-crm.org/cidoc-crm/E21> }"
@@ -61,6 +66,38 @@ def test_answer_query_matching_the_link_is_a_match():
 
 def test_answer_query_differing_from_the_link_is_a_mismatch():
     assert log_query_link_mismatch(answer(RAN.replace(TITLE_OPTIONAL, "")), {"sparql_query": RAN}) is False
+
+
+def final_state(content: str, link: Any, **msg: Any) -> State:
+    return State(messages=[AIMessage(content=content, id="answer-1", **msg)], structured_output=link)
+
+
+def test_an_answer_printing_another_query_shows_the_one_that_ran():
+    trimmed = RAN.replace(TITLE_OPTIONAL, "")
+    content = f"Intro.\n\n```sparql\n#+ endpoint: https://example.org/sparql\n{trimmed}\n```\n\nOutro."
+    link = {"sparql_query": RAN, "sparql_endpoint_url": "https://swiss.example/sparql"}
+
+    update = show_query_that_ran(final_state(content, link))
+
+    fixed = update["messages"][0]
+    assert fixed.id == "answer-1"  # replaces the answer in the state, not appended
+    assert fixed.content == f"Intro.\n\n```sparql\n#+ endpoint: https://swiss.example/sparql\n{RAN}\n```\n\nOutro."
+    assert update["steps"][0].type == "fix-message"
+    assert update["steps"][0].fixed_message == fixed.content
+
+
+def test_only_the_last_query_of_the_answer_is_replaced():
+    first = "```sparql\nSELECT ?x WHERE { ?x ?p ?o }\n```"
+    content = f"{first}\n\nThen:\n\n```sparql\n{RAN.replace(TITLE_OPTIONAL, '')}\n```"
+    fixed = show_query_that_ran(final_state(content, {"sparql_query": RAN}))["messages"][0].content
+    assert fixed.startswith(first)
+    assert fixed.endswith(f"```sparql\n{RAN}\n```")
+
+
+def test_an_answer_printing_the_query_that_ran_is_left_alone():
+    assert show_query_that_ran(final_state(answer(RAN), {"sparql_query": RAN})) == {}
+    assert show_query_that_ran(final_state("No query here.", {"sparql_query": RAN})) == {}
+    assert show_query_that_ran(final_state(answer(RAN), [])) == {}
 
 
 def test_nothing_to_compare_without_a_link_or_a_printed_query():
