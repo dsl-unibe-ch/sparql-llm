@@ -1,5 +1,9 @@
 # 🪵 Changelog
 
+## [0.3.0](https://github.com/dsl-unibe-ch/sparql-llm/releases/tag/v0.3.0) - 2026-11-17
+
+Optional sign-up (`ALLOW_SIGNUP`, off by default), the tokens each answer used, a model list that no longer waits on a slow model, answers that show the query that ran in MCP tools mode, and plain hyphens and spaces. See [`docs/releases/v0.3.0.md`](docs/releases/v0.3.0.md).
+
 ## [0.2.0](https://github.com/dsl-unibe-ch/sparql-llm/releases/tag/v0.2.0) - 2026-11-02
 
 First release of the Data Science Lab (University of Bern) fork: datasets managed on the admin page, accounts, your own LLM key, a Docker image, crash-safe rebuilds and an outbound policy. See [`docs/releases/v0.2.0.md`](docs/releases/v0.2.0.md). Release notes for this fork live in `docs/releases/`; the entries below are upstream's.
